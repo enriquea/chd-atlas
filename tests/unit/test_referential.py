@@ -79,6 +79,11 @@ def test_reports_an_assertion_gene_absent_from_the_gene_registry() -> None:
     assert "HGNC:11604" in issues[0].message
 
 
+def test_gene_checks_are_skipped_when_the_registry_is_unavailable() -> None:
+    """None means genes.tsv did not load; hundreds of REF001s would bury the cause."""
+    assert validate_references(_corpus(), known_genes=None) == []
+
+
 def test_reports_evidence_citing_an_unknown_publication() -> None:
     corpus = _corpus(assertions=(_assertion(evidence=[_evidence(publication="PMID:1")]),))
     issues = validate_references(corpus, known_genes={"HGNC:11604"})
@@ -117,6 +122,54 @@ def test_resolves_a_present_functional_evidence_reference() -> None:
     assert validate_references(corpus, known_genes={"HGNC:11604"}) == []
 
 
+def test_reports_a_functional_record_about_a_different_gene() -> None:
+    functional = FunctionalEvidence.model_validate(
+        {
+            "id": "CHDA:FUN:0000009",
+            "gene": "HGNC:4173",
+            "organism": "NCBITaxon:10090",
+            "perturbation": "knockout",
+            "zygosity": "heterozygous",
+            "cardiac_phenotype": ["MP:0010402"],
+            "phenocopies_human": "partial",
+            "rescue_outcome": "not_attempted",
+            "publication": "PMID:8988165",
+        }
+    )
+    evidence = _evidence(
+        evidence_class="functional_model", functional_evidence="CHDA:FUN:0000009"
+    )
+    corpus = _corpus(
+        assertions=(_assertion(evidence=[evidence]),), functional=(functional,)
+    )
+
+    issues = validate_references(corpus, known_genes={"HGNC:11604", "HGNC:4173"})
+
+    assert [i.code for i in issues] == ["REF008"]
+    assert "HGNC:4173" in issues[0].message
+
+
+def test_reports_a_functional_record_with_an_unknown_gene_and_publication() -> None:
+    functional = FunctionalEvidence.model_validate(
+        {
+            "id": "CHDA:FUN:0000009",
+            "gene": "HGNC:99999",
+            "organism": "NCBITaxon:10090",
+            "perturbation": "knockout",
+            "zygosity": "heterozygous",
+            "cardiac_phenotype": ["MP:0010402"],
+            "phenocopies_human": "partial",
+            "rescue_outcome": "not_attempted",
+            "publication": "PMID:999",
+        }
+    )
+    corpus = _corpus(functional=(functional,))
+
+    issues = validate_references(corpus, known_genes={"HGNC:11604"})
+
+    assert sorted(i.code for i in issues) == ["REF001", "REF002"]
+
+
 def test_reports_a_featured_manuscript_citing_an_unknown_publication() -> None:
     featured = FeaturedManuscript(
         publication="PMID:999", order=1, blurb="b", topic="genomics"
@@ -143,12 +196,18 @@ def test_phenotype_consistent_with_declared_lesion_group_passes() -> None:
 
 
 def test_reports_a_phenotype_contradicting_its_lesion_group() -> None:
+    """REF009 joins it: septal is missing *and* nothing declared justifies conotruncal.
+
+    Both statements are independently true of this record, and together they say
+    what to do — drop conotruncal, add septal — where REF007 alone leaves the
+    unjustified group standing.
+    """
     corpus = _corpus(
         assertions=(_assertion(lesion_groups=["conotruncal"]),),
         phenotypes=(_septal_term(),),
     )
     issues = validate_references(corpus, known_genes={"HGNC:11604"})
-    assert [i.code for i in issues] == ["REF007"]
+    assert [i.code for i in issues] == ["REF007", "REF009"]
     assert "septal" in issues[0].message
 
 
@@ -156,6 +215,46 @@ def test_unmapped_phenotype_is_not_reported_as_inconsistent() -> None:
     """A phenotype absent from curation/phenotypes.yaml has no group to contradict."""
     corpus = _corpus(phenotypes=())
     assert validate_references(corpus, known_genes={"HGNC:11604"}) == []
+
+
+def test_reports_an_unjustified_lesion_group() -> None:
+    corpus = _corpus(
+        assertions=(_assertion(lesion_groups=["septal", "conotruncal"]),),
+        phenotypes=(_septal_term(),),
+    )
+
+    issues = validate_references(corpus, known_genes={"HGNC:11604"})
+
+    assert [i.code for i in issues] == ["REF009"]
+    assert "conotruncal" in issues[0].message
+
+
+def test_unmapped_phenotype_exempts_the_unjustified_group_check() -> None:
+    """An unmapped phenotype could legitimately justify the extra group."""
+    corpus = _corpus(
+        assertions=(
+            _assertion(
+                phenotypes=["HP:0001631", "HP:0001629"],
+                lesion_groups=["septal", "conotruncal"],
+            ),
+        ),
+        phenotypes=(_septal_term(),),
+    )
+
+    assert validate_references(corpus, known_genes={"HGNC:11604"}) == []
+
+
+def test_reports_a_cardiac_lesion_listed_as_an_extracardiac_feature() -> None:
+    corpus = _corpus(
+        assertions=(
+            _assertion(syndromic="syndromic", extracardiac_features=["HP:0001631"]),
+        ),
+        phenotypes=(_septal_term(),),
+    )
+
+    issues = validate_references(corpus, known_genes={"HGNC:11604"})
+
+    assert [i.code for i in issues] == ["REF010"]
 
 
 DATASET_YAML = """\
@@ -181,6 +280,14 @@ EXPRESSION_TSV_HEADER = (
     "n_case\tn_control\ttissue\tstage\n"
 )
 
+# profiles is the one dataset-linked schema with no contrast column.
+PROFILES_TSV_HEADER = (
+    "dataset\tgene\ttissue\tstage\tmedian_abundance\tunit\tq25\tq75\tn_samples\n"
+)
+VALID_EXPRESSION_ROW = (
+    "PXD012345\ttof_vs_control\tHGNC:11604\t1.2\t0.001\t0.01\tup\t10\t10\tRV\tinfant\n"
+)
+
 
 def _mirror_repo(tmp_path: Path, row: str) -> Path:
     from chd_atlas.corpus import load_curation
@@ -204,13 +311,20 @@ def _mirror_repo(tmp_path: Path, row: str) -> Path:
     return tmp_path
 
 
+def _profiles_repo(tmp_path: Path, row: str) -> Path:
+    """A repository whose expression shard is clean, so only profiles can fail."""
+    root = _mirror_repo(tmp_path, VALID_EXPRESSION_ROW)
+    (root / "mirrors" / "profiles").mkdir(parents=True)
+    (root / "mirrors" / "profiles" / "PXD012345.tsv").write_text(
+        PROFILES_TSV_HEADER + row
+    )
+    return root
+
+
 def test_mirror_rows_referencing_a_known_contrast_pass(tmp_path: Path) -> None:
     from chd_atlas.corpus import load_curation
 
-    root = _mirror_repo(
-        tmp_path,
-        "PXD012345\ttof_vs_control\tHGNC:11604\t1.2\t0.001\t0.01\tup\t10\t10\tRV\tinfant\n",
-    )
+    root = _mirror_repo(tmp_path, VALID_EXPRESSION_ROW)
     corpus, _ = load_curation(root)
 
     assert validate_mirror_references(root, corpus) == []
@@ -243,3 +357,57 @@ def test_reports_a_mirror_row_referencing_an_unknown_contrast(tmp_path: Path) ->
 
     assert [i.code for i in issues] == ["REF006"]
     assert "mystery_contrast" in issues[0].message
+
+
+def test_a_profiles_shard_is_checked_although_it_has_no_contrast_column(
+    tmp_path: Path,
+) -> None:
+    """profiles rows are two columns wide here; indexing row[1] would raise."""
+    from chd_atlas.corpus import load_curation
+
+    root = _profiles_repo(
+        tmp_path, "PXD012345\tHGNC:11604\tRV\tinfant\t12.5\ttpm\t8.0\t20.0\t24\n"
+    )
+    corpus, _ = load_curation(root)
+
+    assert validate_mirror_references(root, corpus) == []
+
+
+def test_reports_a_profiles_row_referencing_an_unknown_dataset(tmp_path: Path) -> None:
+    from chd_atlas.corpus import load_curation
+
+    root = _profiles_repo(
+        tmp_path, "PXD999999\tHGNC:11604\tRV\tinfant\t12.5\ttpm\t8.0\t20.0\t24\n"
+    )
+    corpus, _ = load_curation(root)
+
+    issues = validate_mirror_references(root, corpus)
+
+    assert [i.code for i in issues] == ["REF005"]
+    assert "PXD999999" in issues[0].message
+
+
+def test_a_null_dataset_cell_is_not_reported_as_a_missing_dataset(tmp_path: Path) -> None:
+    """A null dataset is TBL003's job; REF005 would name a dataset called None."""
+    from chd_atlas.corpus import load_curation
+
+    root = _mirror_repo(
+        tmp_path,
+        "\ttof_vs_control\tHGNC:11604\t1.2\t0.001\t0.01\tup\t10\t10\tRV\tinfant\n",
+    )
+    corpus, _ = load_curation(root)
+
+    assert validate_mirror_references(root, corpus) == []
+
+
+def test_a_null_contrast_cell_is_not_reported_as_a_missing_contrast(tmp_path: Path) -> None:
+    """Likewise TBL003's job; REF006 would quote a contrast called None."""
+    from chd_atlas.corpus import load_curation
+
+    root = _mirror_repo(
+        tmp_path,
+        "PXD012345\t\tHGNC:11604\t1.2\t0.001\t0.01\tup\t10\t10\tRV\tinfant\n",
+    )
+    corpus, _ = load_curation(root)
+
+    assert validate_mirror_references(root, corpus) == []
