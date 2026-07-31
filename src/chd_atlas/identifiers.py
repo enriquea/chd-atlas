@@ -51,7 +51,10 @@ UniprotAccession = NewType(
     Annotated[
         str,
         StringConstraints(
-            pattern=r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+)?$"
+            pattern=(
+                r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|"
+                r"[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+)?$"
+            )
         ),
     ],
 )
