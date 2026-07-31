@@ -10,6 +10,7 @@ from chd_atlas.tables import (
     TableSchema,
     mirror_paths,
     read_table,
+    unexpected_mirror_entries,
     validate_table,
 )
 
@@ -220,3 +221,50 @@ def test_missing_file_is_reported_not_raised(tmp_path: Path) -> None:
     issues = validate_table(tmp_path / "absent.tsv", SCHEMA)
 
     assert [i.code for i in issues] == ["TBL000"]
+
+
+def test_unexpected_mirror_entries_reports_a_directory_no_schema_claims(tmp_path: Path) -> None:
+    """`mirrors/variants` renamed to `mirrors/varaints` glob-matches nothing at all."""
+    (tmp_path / "mirrors" / "varaints").mkdir(parents=True)
+
+    issues = unexpected_mirror_entries(tmp_path)
+
+    assert [i.code for i in issues] == ["TBL009"]
+    assert "unexpected directory" in issues[0].message
+    assert issues[0].location.endswith("varaints")
+
+
+def test_unexpected_mirror_entries_reports_a_shard_directory_that_is_a_file(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "mirrors").mkdir(parents=True)
+    (tmp_path / "mirrors" / "variants").write_text("oops\n")
+
+    issues = unexpected_mirror_entries(tmp_path)
+
+    assert [i.code for i in issues] == ["TBL009"]
+    assert "should be a directory of shards" in issues[0].message
+
+
+def test_unexpected_mirror_entries_reports_a_file_no_schema_claims(tmp_path: Path) -> None:
+    (tmp_path / "mirrors").mkdir(parents=True)
+    (tmp_path / "mirrors" / "notes.txt").write_text("stray\n")
+
+    issues = unexpected_mirror_entries(tmp_path)
+
+    assert [i.code for i in issues] == ["TBL009"]
+    assert "unexpected file" in issues[0].message
+
+
+def test_unexpected_mirror_entries_accepts_the_declared_layout(tmp_path: Path) -> None:
+    """An absent shard directory is legitimate: nothing curated yet."""
+    (tmp_path / "mirrors" / "variants").mkdir(parents=True)
+    (tmp_path / "mirrors" / "genes.tsv").write_text("hgnc_id\n")
+    (tmp_path / "mirrors" / "ptm_sites.tsv").write_text("site_id\n")
+    (tmp_path / "mirrors" / "sources.yaml").write_text("sources: []\n")
+
+    assert unexpected_mirror_entries(tmp_path) == []
+
+
+def test_unexpected_mirror_entries_ignores_a_missing_mirrors_directory(tmp_path: Path) -> None:
+    assert unexpected_mirror_entries(tmp_path) == []

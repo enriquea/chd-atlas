@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from chd_atlas.corpus import load_curation
 from chd_atlas.issues import Severity, ValidationIssue
-from chd_atlas.tables import TABLE_SCHEMAS, mirror_paths, read_table, validate_table
+from chd_atlas.tables import (
+    TABLE_SCHEMAS,
+    mirror_paths,
+    read_table,
+    unexpected_mirror_entries,
+    validate_table,
+)
 from chd_atlas.validate.ids import load_id_registry, validate_ids
 from chd_atlas.validate.ontology import OntologyRegistry, validate_terms
 from chd_atlas.validate.referential import validate_mirror_references, validate_references
@@ -81,6 +87,20 @@ def _known_genes(root: Path) -> set[str] | None:
     return {value for value in frame["hgnc_id"].to_list() if value is not None}
 
 
+def _relative_to_root(issues: list[ValidationIssue], root: Path) -> list[ValidationIssue]:
+    """Rewrite absolute locations as repo-relative.
+
+    Locations are embedded verbatim in the rendered report, so absolute paths
+    would make output differ between a curator's machine and CI, and would sort
+    a hardcoded relative literal away from the same file's other issues.
+    """
+    prefix = f"{root}/"
+    return [
+        replace(issue, location=issue.location.removeprefix(prefix))
+        for issue in issues
+    ]
+
+
 def validate_repository(root: Path) -> ValidationReport:
     issues: list[ValidationIssue] = []
 
@@ -97,6 +117,9 @@ def validate_repository(root: Path) -> ValidationReport:
         schema = TABLE_SCHEMAS[schema_name]
         issues.extend(validate_table(path, schema))
         issues.extend(validate_sort_order(path, schema))
+    # Unconditional: the loop above iterates what the schemas expect, so an entry
+    # nothing claims — a shard directory lost to a typo — is invisible to it.
+    issues.extend(unexpected_mirror_entries(root))
 
     # Referential checks over a corpus that failed to load would compare against a
     # knowingly incomplete set. The file wrappers validate their whole record list
@@ -143,24 +166,40 @@ def validate_repository(root: Path) -> ValidationReport:
     else:
         issues.extend(validate_source_references(_used_sources(root), registry))
 
-    for assertion in corpus.assertions:
-        issues.extend(
-            validate_terms(
-                [*assertion.phenotypes, *assertion.extracardiac_features],
-                ontologies,
-                f"assertion {assertion.id}",
+    # The ontology pins live in sources.yaml, so a registry that failed to load
+    # pins nothing and every term reports ONT003 "no pinned ontology" — one per
+    # term, burying the single SRC001 that caused them. Same cascade as above.
+    if source_issues:
+        issues.append(
+            ValidationIssue(
+                "ONT000",
+                Severity.WARNING,
+                str(root / "mirrors" / "sources.yaml"),
+                "skipped ontology checks: the source registry did not load, "
+                "so no releases are pinned",
             )
         )
-    for record in corpus.functional:
-        issues.extend(
-            validate_terms(
-                [record.organism, *record.cardiac_phenotype],
-                ontologies,
-                f"functional evidence {record.id}",
+    else:
+        for assertion in corpus.assertions:
+            issues.extend(
+                validate_terms(
+                    [*assertion.phenotypes, *assertion.extracardiac_features],
+                    ontologies,
+                    f"assertion {assertion.id}",
+                )
             )
-        )
-    for term in corpus.phenotypes:
-        issues.extend(validate_terms([term.id], ontologies, "curation/phenotypes.yaml"))
+        for record in corpus.functional:
+            issues.extend(
+                validate_terms(
+                    [record.organism, *record.cardiac_phenotype],
+                    ontologies,
+                    f"functional evidence {record.id}",
+                )
+            )
+        for term in corpus.phenotypes:
+            issues.extend(
+                validate_terms([term.id], ontologies, str(root / "curation" / "phenotypes.yaml"))
+            )
 
     id_registry, id_issues = load_id_registry(root)
     issues.extend(id_issues)
@@ -176,4 +215,6 @@ def validate_repository(root: Path) -> ValidationReport:
             )
         )
 
-    return ValidationReport(issues=issues)
+    # Relativised before the report is built, so `__post_init__` sorts the
+    # locations the reader will actually see.
+    return ValidationReport(issues=_relative_to_root(issues, root))

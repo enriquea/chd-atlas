@@ -407,6 +407,61 @@ FLAT_TABLES: Final[dict[str, str]] = {
 }
 
 
+def unexpected_mirror_entries(root: Path) -> list[ValidationIssue]:
+    """Anything under ``mirrors/`` that no schema claims.
+
+    ``Path.glob`` yields nothing for a missing or non-directory path, so a shard
+    directory lost to a typo — ``mirrors/varaints`` — simply vanishes from
+    validation and the repository reports clean. Naming the stray entry is what
+    catches that. An *absent* shard directory stays legitimate: before any
+    variants are curated there is no ``mirrors/variants/``.
+    """
+    mirrors = root / "mirrors"
+    if not mirrors.is_dir():
+        return []
+
+    expected_dirs = set(SHARDED_TABLES.values())
+    expected_files = set(FLAT_TABLES.values()) | {"sources.yaml"}
+    issues: list[ValidationIssue] = []
+
+    for entry in sorted(mirrors.iterdir()):
+        if entry.is_dir():
+            if entry.name not in expected_dirs:
+                issues.append(
+                    ValidationIssue(
+                        "TBL009",
+                        Severity.ERROR,
+                        str(entry),
+                        f"unexpected directory under mirrors/; expected one of "
+                        f"{sorted(expected_dirs)}",
+                    )
+                )
+        # A shard directory replaced by a regular file is checked before the
+        # unexpected-file case: the two name sets are disjoint, so testing
+        # membership of `expected_files` first would report `mirrors/variants`
+        # as merely unnamed rather than as the wrong kind of entry.
+        elif entry.name in expected_dirs:
+            issues.append(
+                ValidationIssue(
+                    "TBL009",
+                    Severity.ERROR,
+                    str(entry),
+                    f"'{entry.name}' should be a directory of shards, not a file",
+                )
+            )
+        elif entry.name not in expected_files:
+            issues.append(
+                ValidationIssue(
+                    "TBL009",
+                    Severity.ERROR,
+                    str(entry),
+                    f"unexpected file under mirrors/; expected one of "
+                    f"{sorted(expected_files)}",
+                )
+            )
+    return issues
+
+
 def mirror_paths(root: Path) -> list[tuple[Path, str]]:
     """Every mirror TSV under ``root/mirrors``, paired with its schema name."""
     paths: list[tuple[Path, str]] = []
