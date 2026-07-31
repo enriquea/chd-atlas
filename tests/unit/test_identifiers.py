@@ -6,11 +6,13 @@ from chd_atlas.identifiers import (
     AccessionId,
     AssertionId,
     ContrastId,
+    Doi,
     FunctionalId,
     HgncId,
     ModelPhenotypeId,
     ModificationId,
     PhenotypeId,
+    Pmcid,
     Pmid,
     SequenceOntologyId,
     TaxonId,
@@ -42,6 +44,8 @@ from chd_atlas.identifiers import (
         (ModificationId, "MOD:00046"),
         (AccessionId, "EGAS00001000123"),
         (AccessionId, "PXD1234567"),
+        (Doi, "10.1038/ng0197-30"),
+        (Pmcid, "PMC1234567"),
     ],
 )
 def test_accepts_well_formed_identifiers(type_: type, value: str) -> None:
@@ -69,6 +73,9 @@ def test_accepts_well_formed_identifiers(type_: type, value: str) -> None:
         (ModificationId, "MOD:123456"),
         (FunctionalId, "CHDA:AST:0000001"),
         (AccessionId, "EGAS0001"),
+        (Doi, "not-a-doi"),
+        (Doi, "10.1038"),
+        (Pmcid, "1234567"),
     ],
 )
 def test_rejects_malformed_identifiers(type_: type, value: str) -> None:

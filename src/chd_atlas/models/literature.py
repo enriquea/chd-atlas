@@ -6,13 +6,19 @@ from collections.abc import Hashable, Iterable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from chd_atlas.identifiers import PhenotypeId, Pmid
+from chd_atlas.identifiers import Doi, PhenotypeId, Pmcid, Pmid
 from chd_atlas.vocab import FeaturedTopic, LesionGroup, StudyType
 
 
-def _first_duplicate(values: Iterable[Hashable]) -> Hashable | None:
+def _duplicates[T: Hashable](values: Iterable[T]) -> list[T]:
+    """Every value appearing more than once, in first-seen order.
+
+    Returns all of them rather than just the first: the corpus loader
+    accumulates errors so one run reports every problem, and a per-file check
+    that stopped at the first duplicate would make a curator fix them serially.
+    """
     counts = Counter(values)
-    return next((value for value, count in counts.items() if count > 1), None)
+    return [value for value, count in counts.items() if count > 1]
 
 
 class Publication(BaseModel):
@@ -24,8 +30,8 @@ class Publication(BaseModel):
     year: int = Field(ge=1900, le=2100)
     authors: list[str] = Field(min_length=1)
     study_type: StudyType
-    doi: str | None = None
-    pmcid: str | None = None
+    doi: Doi | None = None
+    pmcid: Pmcid | None = None
     own_lab: bool = False
     cohort_size: int | None = Field(default=None, ge=1)
     ancestry: list[str] = Field(default_factory=list)
@@ -40,9 +46,9 @@ class PublicationFile(BaseModel):
 
     @model_validator(mode="after")
     def ids_are_unique(self) -> PublicationFile:
-        duplicate = _first_duplicate(p.id for p in self.publications)
-        if duplicate is not None:
-            raise ValueError(f"duplicate publication {duplicate}")
+        duplicates = _duplicates(p.id for p in self.publications)
+        if duplicates:
+            raise ValueError(f"duplicate publication ids: {duplicates}")
         return self
 
 
@@ -64,9 +70,9 @@ class FeaturedFile(BaseModel):
 
     @model_validator(mode="after")
     def display_order_is_unique(self) -> FeaturedFile:
-        duplicate = _first_duplicate(entry.order for entry in self.featured)
-        if duplicate is not None:
-            raise ValueError(f"duplicate display order {duplicate}")
+        duplicates = _duplicates(entry.order for entry in self.featured)
+        if duplicates:
+            raise ValueError(f"duplicate display order: {duplicates}")
         return self
 
 
@@ -88,7 +94,7 @@ class PhenotypeFile(BaseModel):
 
     @model_validator(mode="after")
     def ids_are_unique(self) -> PhenotypeFile:
-        duplicate = _first_duplicate(term.id for term in self.phenotypes)
-        if duplicate is not None:
-            raise ValueError(f"duplicate phenotype {duplicate}")
+        duplicates = _duplicates(term.id for term in self.phenotypes)
+        if duplicates:
+            raise ValueError(f"duplicate phenotype ids: {duplicates}")
         return self

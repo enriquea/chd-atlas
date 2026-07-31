@@ -23,6 +23,8 @@ MODIFICATION_PATTERN: Final = r"^MOD:\d{5}$"
 
 HgncId = NewType("HgncId", Annotated[str, StringConstraints(pattern=HGNC_PATTERN)])
 Pmid = NewType("Pmid", Annotated[str, StringConstraints(pattern=r"^PMID:\d+$")])
+Doi = NewType("Doi", Annotated[str, StringConstraints(pattern=r"^10\.\d{4,9}/\S+$")])
+Pmcid = NewType("Pmcid", Annotated[str, StringConstraints(pattern=r"^PMC\d+$")])
 PhenotypeId = NewType(
     "PhenotypeId", Annotated[str, StringConstraints(pattern=r"^(HP|MONDO):\d{7}$")]
 )
