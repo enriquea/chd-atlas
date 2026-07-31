@@ -1,0 +1,29 @@
+# Every external resource the atlas mirrors, with the release it was taken from
+# and the licence that governs republishing it. Verified against each authority
+# on the `retrieved_on` date recorded below.
+sources:
+  - id: hgnc
+    name: HUGO Gene Nomenclature Committee
+    # The REST service has no release identifier; `https://rest.genenames.org/info`
+    # reports lastModified 2026-07-31T11:49:58.141Z for the index queried here.
+    version: "2026-07-31"
+    retrieved_on: 2026-07-31
+    url: https://www.genenames.org/
+    # "all data is released under the Creative Commons Public Domain (CC0)
+    # License ... any form of reuse of the content is permitted"
+    # — https://www.genenames.org/about/license/
+    licence: CC0-1.0
+    redistribution: permitted
+  - id: hpo
+    name: Human Phenotype Ontology
+    # `data-version` recorded in the header of the pinned release below.
+    version: "hp/releases/2026-06-23"
+    retrieved_on: 2026-07-31
+    url: https://hpo.jax.org/
+    # HPO uses a custom licence with no SPDX identifier. The pinned release
+    # declares `property_value: terms:license https://hpo.jax.org/app/license`,
+    # and both the OBO Foundry and Bioregistry registries record the same URL.
+    licence: https://hpo.jax.org/app/license
+    redistribution: permitted_with_attribution
+    ontology_prefix: HP
+    ontology_file: ontologies/hp-2026-06-23.obo

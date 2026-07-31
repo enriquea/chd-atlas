@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "FunctionalEvidence": {
+      "additionalProperties": false,
+      "description": "Animal- or cell-model evidence, weighted explicitly in classification.",
+      "properties": {
+        "cardiac_phenotype": {
+          "items": {
+            "pattern": "^(MP|ZP|HP):\\d{7}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Cardiac Phenotype",
+          "type": "array"
+        },
+        "gene": {
+          "pattern": "^HGNC:\\d+$",
+          "title": "Gene",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^CHDA:FUN:\\d{7}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "organism": {
+          "pattern": "^NCBITaxon:\\d+$",
+          "title": "Organism",
+          "type": "string"
+        },
+        "perturbation": {
+          "$ref": "#/$defs/Perturbation"
+        },
+        "phenocopies_human": {
+          "$ref": "#/$defs/PhenocopyAssessment"
+        },
+        "publication": {
+          "pattern": "^PMID:\\d+$",
+          "title": "Publication",
+          "type": "string"
+        },
+        "rescue_outcome": {
+          "$ref": "#/$defs/RescueOutcome"
+        },
+        "zygosity": {
+          "$ref": "#/$defs/Zygosity"
+        }
+      },
+      "required": [
+        "id",
+        "gene",
+        "organism",
+        "perturbation",
+        "zygosity",
+        "cardiac_phenotype",
+        "phenocopies_human",
+        "rescue_outcome",
+        "publication"
+      ],
+      "title": "FunctionalEvidence",
+      "type": "object"
+    },
+    "Perturbation": {
+      "enum": [
+        "knockout",
+        "knockin",
+        "conditional_ko",
+        "morpholino",
+        "crispr",
+        "overexpression",
+        "patient_variant_knockin"
+      ],
+      "title": "Perturbation",
+      "type": "string"
+    },
+    "PhenocopyAssessment": {
+      "enum": [
+        "yes",
+        "partial",
+        "no",
+        "not_assessed"
+      ],
+      "title": "PhenocopyAssessment",
+      "type": "string"
+    },
+    "RescueOutcome": {
+      "enum": [
+        "not_attempted",
+        "no_rescue",
+        "partial_rescue",
+        "full_rescue"
+      ],
+      "title": "RescueOutcome",
+      "type": "string"
+    },
+    "Zygosity": {
+      "enum": [
+        "homozygous",
+        "heterozygous",
+        "compound_het",
+        "hemizygous",
+        "n/a"
+      ],
+      "title": "Zygosity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top level of ``curation/functional/<SYMBOL>.yaml``.",
+  "properties": {
+    "functional_evidence": {
+      "items": {
+        "$ref": "#/$defs/FunctionalEvidence"
+      },
+      "minItems": 1,
+      "title": "Functional Evidence",
+      "type": "array"
+    }
+  },
+  "required": [
+    "functional_evidence"
+  ],
+  "title": "FunctionalFile",
+  "type": "object"
+}

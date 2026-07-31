@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "Archive": {
+      "enum": [
+        "pride",
+        "geo",
+        "arrayexpress",
+        "ega"
+      ],
+      "title": "Archive",
+      "type": "string"
+    },
+    "Contrast": {
+      "additionalProperties": false,
+      "description": "A named comparison within a dataset.\n\nA fold change is uninterpretable without knowing what was compared to what,\nso contrasts are modelled explicitly rather than left as a free-text column.",
+      "properties": {
+        "case_group": {
+          "minLength": 1,
+          "title": "Case Group",
+          "type": "string"
+        },
+        "control_group": {
+          "minLength": 1,
+          "title": "Control Group",
+          "type": "string"
+        },
+        "covariates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Covariates",
+          "type": "array"
+        },
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z0-9]+(_[a-z0-9]+)*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "software": {
+          "minLength": 1,
+          "title": "Software",
+          "type": "string"
+        },
+        "statistical_method": {
+          "minLength": 1,
+          "title": "Statistical Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "case_group",
+        "control_group",
+        "statistical_method",
+        "software"
+      ],
+      "title": "Contrast",
+      "type": "object"
+    },
+    "Technology": {
+      "enum": [
+        "bulk_rnaseq",
+        "scrnaseq",
+        "microarray",
+        "tmt_ms",
+        "lfq_ms",
+        "phosphoproteomics"
+      ],
+      "title": "Technology",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top level of ``curation/datasets/<ACCESSION>.yaml``.",
+  "properties": {
+    "archive": {
+      "$ref": "#/$defs/Archive"
+    },
+    "contrasts": {
+      "items": {
+        "$ref": "#/$defs/Contrast"
+      },
+      "minItems": 1,
+      "title": "Contrasts",
+      "type": "array"
+    },
+    "developmental_stage": {
+      "minLength": 1,
+      "title": "Developmental Stage",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^(PXD\\d{6,}|GSE\\d+|E-[A-Z]{4}-\\d+|EGA[SD]\\d{11})$",
+      "title": "Id",
+      "type": "string"
+    },
+    "licence": {
+      "minLength": 1,
+      "title": "Licence",
+      "type": "string"
+    },
+    "n_samples": {
+      "minimum": 2,
+      "title": "N Samples",
+      "type": "integer"
+    },
+    "organism": {
+      "pattern": "^NCBITaxon:\\d+$",
+      "title": "Organism",
+      "type": "string"
+    },
+    "publication": {
+      "anyOf": [
+        {
+          "pattern": "^PMID:\\d+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Publication"
+    },
+    "technology": {
+      "$ref": "#/$defs/Technology"
+    },
+    "tissue": {
+      "minLength": 1,
+      "title": "Tissue",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "archive",
+    "technology",
+    "tissue",
+    "developmental_stage",
+    "organism",
+    "n_samples",
+    "licence",
+    "contrasts"
+  ],
+  "title": "Dataset",
+  "type": "object"
+}

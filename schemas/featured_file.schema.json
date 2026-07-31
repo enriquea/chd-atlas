@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "FeaturedManuscript": {
+      "additionalProperties": false,
+      "properties": {
+        "blurb": {
+          "minLength": 1,
+          "title": "Blurb",
+          "type": "string"
+        },
+        "order": {
+          "minimum": 1,
+          "title": "Order",
+          "type": "integer"
+        },
+        "publication": {
+          "pattern": "^PMID:\\d+$",
+          "title": "Publication",
+          "type": "string"
+        },
+        "topic": {
+          "$ref": "#/$defs/FeaturedTopic"
+        }
+      },
+      "required": [
+        "publication",
+        "order",
+        "blurb",
+        "topic"
+      ],
+      "title": "FeaturedManuscript",
+      "type": "object"
+    },
+    "FeaturedTopic": {
+      "enum": [
+        "genomics",
+        "variants",
+        "expression",
+        "proteomics",
+        "review"
+      ],
+      "title": "FeaturedTopic",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top level of ``curation/featured.yaml``.",
+  "properties": {
+    "featured": {
+      "items": {
+        "$ref": "#/$defs/FeaturedManuscript"
+      },
+      "minItems": 1,
+      "title": "Featured",
+      "type": "array"
+    }
+  },
+  "required": [
+    "featured"
+  ],
+  "title": "FeaturedFile",
+  "type": "object"
+}
