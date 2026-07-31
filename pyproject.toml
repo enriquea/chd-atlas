@@ -35,6 +35,14 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+# B008 guards against a mutable default being built once at definition time and
+# then shared across calls. `typer.Option` is the opposite: the OptionInfo it
+# returns is metadata that typer strips off and replaces with the parsed value
+# before the command body ever runs, so no state is shared between invocations.
+# Ruff provides this setting for exactly this pattern.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
