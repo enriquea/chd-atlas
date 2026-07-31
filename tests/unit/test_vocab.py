@@ -4,10 +4,22 @@ import pytest
 from chd_atlas.vocab import (
     CLASSIFICATION_RANK,
     MODEL_ORGANISMS,
+    Archive,
     Classification,
     EvidenceClass,
+    EvidenceStrength,
+    FeaturedTopic,
+    Inheritance,
     LesionGroup,
+    Mechanism,
+    Perturbation,
+    PhenocopyAssessment,
     SourceTier,
+    StudyType,
+    SyndromicStatus,
+    Technology,
+    Zygosity,
+    has_conflicting_evidence,
     strongest,
 )
 
@@ -58,3 +70,52 @@ def test_source_tiers_distinguish_own_curation() -> None:
 def test_model_organisms_map_taxon_ids_to_labels() -> None:
     assert MODEL_ORGANISMS["NCBITaxon:10090"] == "Mus musculus"
     assert "NCBITaxon:7955" in MODEL_ORGANISMS
+
+
+def test_strongest_hides_a_refutation_behind_a_stronger_claim() -> None:
+    """Deliberate, and the reason has_conflicting_evidence exists.
+
+    Pinned so that changing CLASSIFICATION_RANK alters this on purpose rather
+    than by accident.
+    """
+    assert (
+        strongest([Classification.DEFINITIVE, Classification.REFUTED])
+        is Classification.DEFINITIVE
+    )
+
+
+def test_conflicting_evidence_detects_a_contested_gene() -> None:
+    assert has_conflicting_evidence([Classification.DEFINITIVE, Classification.REFUTED])
+    assert has_conflicting_evidence([Classification.MODERATE, Classification.DISPUTED])
+
+
+def test_uncontested_classifications_are_not_conflicting() -> None:
+    assert not has_conflicting_evidence([Classification.DEFINITIVE, Classification.MODERATE])
+    assert not has_conflicting_evidence([Classification.REFUTED])
+    assert not has_conflicting_evidence([])
+
+
+def test_enum_values_are_unique_within_each_enum() -> None:
+    """StrEnum silently aliases a duplicate value instead of raising.
+
+    Iterating an Enum skips aliases, so __members__ is used: it includes them.
+    """
+    for enum_cls in (
+        Archive,
+        Classification,
+        EvidenceClass,
+        EvidenceStrength,
+        FeaturedTopic,
+        Inheritance,
+        LesionGroup,
+        Mechanism,
+        PhenocopyAssessment,
+        Perturbation,
+        SourceTier,
+        StudyType,
+        SyndromicStatus,
+        Technology,
+        Zygosity,
+    ):
+        members = enum_cls.__members__
+        assert len({m.value for m in members.values()}) == len(members), enum_cls.__name__

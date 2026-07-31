@@ -30,11 +30,38 @@ CLASSIFICATION_RANK: Final[dict[Classification, int]] = {
 
 
 def strongest(classifications: Iterable[Classification]) -> Classification:
-    """Return the highest-ranked classification, used to derive headline confidence."""
+    """Return the highest-ranked classification, used to derive headline confidence.
+
+    This does not flag conflicting evidence: DISPUTED and REFUTED still sit on the
+    same linear rank as the rest, so a REFUTED classification will not surface if a
+    higher-ranked classification is also present for the same gene. Callers that
+    need to know whether a gene's evidence is contested must also call
+    `has_conflicting_evidence()`.
+    """
     items = list(classifications)
     if not items:
         raise ValueError("strongest() requires at least one classification")
     return max(items, key=lambda c: CLASSIFICATION_RANK[c])
+
+
+CONTESTED: Final[frozenset[Classification]] = frozenset(
+    {Classification.DISPUTED, Classification.REFUTED}
+)
+
+
+def has_conflicting_evidence(classifications: Iterable[Classification]) -> bool:
+    """True when a gene carries both a supportive and a contesting classification.
+
+    ClinGen treats disputed and refuted as a separate axis rather than weaker
+    rungs of the definitive-to-limited ladder, so they cannot be compared on the
+    single rank `strongest()` uses. Callers displaying headline confidence must
+    call this alongside `strongest()`, so a contested gene is never presented as
+    settled.
+    """
+    items = set(classifications)
+    contesting = items & CONTESTED
+    supportive = items - CONTESTED - {Classification.NO_KNOWN_ASSOCIATION}
+    return bool(contesting and supportive)
 
 
 class LesionGroup(StrEnum):
