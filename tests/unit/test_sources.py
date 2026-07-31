@@ -110,6 +110,71 @@ def test_ontology_prefix_requires_a_pinned_file(tmp_path: Path) -> None:
     assert "ontology_file" in issues[0].message
 
 
+def test_out_of_range_date_is_reported_rather_than_raised(tmp_path: Path) -> None:
+    """Unquoted dates are the house style; ruamel raises a bare ValueError on month 13."""
+    _write_sources(tmp_path, SOURCES_YAML.replace("2026-07-15", "2026-13-45"))
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["YAML001"]
+
+
+def test_schema_violation_still_reports_src002_not_yaml001(tmp_path: Path) -> None:
+    """ValidationError is a ValueError; it must not be swallowed by the YAML guard."""
+    _write_sources(tmp_path, SOURCES_YAML.replace("    licence: public-domain\n", ""))
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["SRC002"]
+
+
+def test_duplicate_ontology_prefix_is_rejected(tmp_path: Path) -> None:
+    extra = (
+        "  - id: hpo_old\n"
+        "    name: Human Phenotype Ontology\n"
+        '    version: "2020-01-01"\n'
+        "    retrieved_on: 2026-07-15\n"
+        "    url: https://hpo.jax.org/\n"
+        "    licence: HPO-1.0\n"
+        "    redistribution: permitted\n"
+        "    ontology_prefix: HP\n"
+        "    ontology_file: ontologies/hp-2020-01-01.obo\n"
+    )
+    _write_sources(tmp_path, SOURCES_YAML + extra)
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["SRC002"]
+    assert "ontology prefix" in issues[0].message
+
+
+def test_ontology_file_without_a_prefix_is_rejected(tmp_path: Path) -> None:
+    _write_sources(tmp_path, SOURCES_YAML.replace("    ontology_prefix: HP\n", ""))
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["SRC002"]
+
+
+def test_absolute_ontology_file_is_rejected(tmp_path: Path) -> None:
+    _write_sources(
+        tmp_path,
+        SOURCES_YAML.replace("ontologies/hp-2026-06-01.obo", "/etc/passwd"),
+    )
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["SRC002"]
+
+
+def test_whitespace_licence_is_rejected(tmp_path: Path) -> None:
+    _write_sources(tmp_path, SOURCES_YAML.replace("licence: public-domain", 'licence: "   "'))
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["SRC002"]
+
+
 def test_source_referenced_by_a_record_must_have_a_registry_entry(tmp_path: Path) -> None:
     from chd_atlas.validate.sources import validate_source_references
 
@@ -129,3 +194,18 @@ def test_registered_sources_pass_the_reference_check(tmp_path: Path) -> None:
     registry, _ = load_sources(tmp_path)
 
     assert validate_source_references({"mirrors/variants/12.tsv": {"clinvar"}}, registry) == []
+
+
+def test_prohibited_source_used_by_a_mirror_is_reported(tmp_path: Path) -> None:
+    from chd_atlas.validate.sources import validate_source_references
+
+    _write_sources(
+        tmp_path,
+        SOURCES_YAML.replace("redistribution: permitted", "redistribution: prohibited", 1),
+    )
+    registry, _ = load_sources(tmp_path)
+
+    issues = validate_source_references({"mirrors/variants/12.tsv": {"clinvar"}}, registry)
+
+    assert [i.code for i in issues] == ["SRC004"]
+    assert "clinvar" in issues[0].message

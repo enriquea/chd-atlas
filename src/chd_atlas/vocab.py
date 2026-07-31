@@ -124,6 +124,19 @@ class SourceTier(StrEnum):
     DATABASE_MIRROR = "database_mirror"
 
 
+class Redistribution(StrEnum):
+    """What the source's licence permits the atlas to republish.
+
+    Read by `validate_source_references`, so a source marked `prohibited` is
+    reported rather than silently mirrored.
+    """
+
+    PERMITTED = "permitted"
+    PERMITTED_WITH_ATTRIBUTION = "permitted_with_attribution"
+    NON_COMMERCIAL_ONLY = "non_commercial_only"
+    PROHIBITED = "prohibited"
+
+
 class StudyType(StrEnum):
     TRIO_WES = "trio_wes"
     TRIO_WGS = "trio_wgs"

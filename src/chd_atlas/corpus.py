@@ -61,7 +61,13 @@ def _read_yaml(path: Path, acc: _Accumulator) -> Any:
     yaml = YAML(typ="safe")
     try:
         return yaml.load(path.read_text(encoding="utf-8"))
-    except (YAMLError, UnicodeDecodeError) as exc:
+    # ruamel builds a `datetime.date` directly and raises a bare ValueError on
+    # an out-of-range literal such as `curated_on: 2026-13-45`, which YAMLError
+    # does not cover. UnicodeDecodeError is already a ValueError subclass; it is
+    # kept listed to document that non-UTF-8 bytes are handled here too.
+    # Pydantic's ValidationError is also a ValueError but is raised in `_parse`,
+    # so it is not swallowed by this guard.
+    except (YAMLError, UnicodeDecodeError, ValueError) as exc:
         acc.error("YAML001", path, f"could not read YAML: {exc}")
         return _UNREADABLE
 

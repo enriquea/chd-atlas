@@ -86,6 +86,17 @@ def test_malformed_yaml_becomes_a_parse_issue(tmp_path: Path) -> None:
     assert [issue.code for issue in issues] == ["YAML001"]
 
 
+def test_out_of_range_date_is_reported_rather_than_raised(tmp_path: Path) -> None:
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "assertions" / "TBX5.yaml").write_text(
+        ASSERTION_YAML.replace("2026-07-01", "2026-13-45")
+    )
+
+    _, issues = load_curation(tmp_path)
+
+    assert [issue.code for issue in issues] == ["YAML001"]
+
+
 def test_missing_curation_directory_is_reported(tmp_path: Path) -> None:
     _, issues = load_curation(tmp_path)
 
