@@ -268,3 +268,21 @@ def test_unexpected_mirror_entries_accepts_the_declared_layout(tmp_path: Path) -
 
 def test_unexpected_mirror_entries_ignores_a_missing_mirrors_directory(tmp_path: Path) -> None:
     assert unexpected_mirror_entries(tmp_path) == []
+
+
+def test_a_shard_with_the_wrong_extension_is_reported(tmp_path: Path) -> None:
+    """mirror_paths globs *.tsv, so 12.txt is invisible to every table check."""
+    (tmp_path / "mirrors" / "variants").mkdir(parents=True)
+    (tmp_path / "mirrors" / "variants" / "12.txt").write_text("vrs_id\n")
+
+    issues = unexpected_mirror_entries(tmp_path)
+
+    assert [i.code for i in issues] == ["TBL009"]
+    assert "12.txt" in issues[0].location
+
+
+def test_a_correctly_named_shard_is_not_reported(tmp_path: Path) -> None:
+    (tmp_path / "mirrors" / "variants").mkdir(parents=True)
+    (tmp_path / "mirrors" / "variants" / "12.tsv").write_text("vrs_id\n")
+
+    assert unexpected_mirror_entries(tmp_path) == []

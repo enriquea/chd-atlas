@@ -6,6 +6,28 @@ import pytest
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.validate.runner import ValidationReport, validate_repository
 
+ASSERTION_YAML = """\
+assertions:
+  - id: CHDA:AST:0000001
+    gene: HGNC:11604
+    phenotypes: [HP:0001631]
+    lesion_groups: [septal]
+    classification: definitive
+    inheritance: [AD]
+    mechanism: haploinsufficiency
+    syndromic: both
+    source_tier: own_curation
+    curator: 0000-0002-1825-0097
+    curated_on: 2026-07-01
+    last_reviewed: 2026-07-15
+    evidence:
+      - publication: PMID:8988165
+        evidence_class: genetic_case
+        locator: {kind: supplementary, file: TableS3.xlsx, sheet: S3, row: 42}
+        summary: De novo nonsense variant in a proband with ASD.
+        strength: strong
+"""
+
 VALID_SOURCES_YAML = """sources:
   - id: clinvar
     name: ClinVar
@@ -199,3 +221,54 @@ def test_locations_are_repo_relative(tmp_path: Path) -> None:
     assert report.issues
     for issue in report.issues:
         assert not issue.location.startswith(str(tmp_path)), issue.location
+
+
+def _seeded(tmp_path: Path) -> Path:
+    """A corpus with one assertion, enough to make the guards below reachable."""
+    (tmp_path / "curation" / "assertions").mkdir(parents=True)
+    (tmp_path / "curation" / "assertions" / "TBX5.yaml").write_text(ASSERTION_YAML)
+    return tmp_path
+
+
+def test_a_missing_phenotype_vocabulary_is_an_error(tmp_path: Path) -> None:
+    """Without it REF007/REF009/REF010 silently no-op. An error, not a warning,
+    because ValidationReport.ok ignores warnings."""
+    report = validate_repository(_seeded(tmp_path))
+
+    assert "CUR002" in [issue.code for issue in report.issues]
+    assert report.ok is False
+
+
+def test_a_missing_publication_registry_is_an_error(tmp_path: Path) -> None:
+    """Otherwise every citation reports REF002 and nothing names the cause."""
+    report = validate_repository(_seeded(tmp_path))
+
+    assert "CUR003" in [issue.code for issue in report.issues]
+
+
+def test_ontology_checks_are_skipped_when_a_pinned_release_fails(tmp_path: Path) -> None:
+    """ONT003 says the prefix is unpinned, which is false when the file is
+    merely unreadable - it would send a curator to add a pin that exists."""
+    root = _seeded(tmp_path)
+    (root / "mirrors").mkdir(parents=True, exist_ok=True)
+    (root / "mirrors" / "sources.yaml").write_text(
+        "sources:\n"
+        "  - id: hpo\n"
+        "    name: Human Phenotype Ontology\n"
+        '    version: "2026-06-23"\n'
+        "    retrieved_on: 2026-07-31\n"
+        "    url: https://hpo.jax.org/\n"
+        "    licence: custom\n"
+        "    redistribution: permitted_with_attribution\n"
+        "    ontology_prefix: HP\n"
+        "    ontology_file: ontologies/broken.obo\n"
+    )
+    (root / "ontologies").mkdir()
+    (root / "ontologies" / "broken.obo").write_text("not an ontology\n")
+
+    report = validate_repository(root)
+
+    codes = [issue.code for issue in report.issues]
+    assert "ONT004" in codes
+    assert "ONT000" in codes
+    assert "ONT003" not in codes

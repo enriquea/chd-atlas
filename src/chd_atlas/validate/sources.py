@@ -158,7 +158,10 @@ def load_sources(root: Path) -> tuple[SourceRegistry, list[ValidationIssue]]:
     # listed to document that non-UTF-8 bytes are handled here too. Pydantic's
     # ValidationError is also a ValueError but is raised in the try below, so
     # it is not swallowed by this guard.
-    except (YAMLError, UnicodeDecodeError, ValueError) as exc:
+    # OSError covers what read_text can raise before parsing: an unreadable
+    # mode, a dangling symlink, a directory where a file was expected. One
+    # bad file must be one issue, not a traceback aborting the whole run.
+    except (YAMLError, UnicodeDecodeError, ValueError, OSError) as exc:
         return _empty_registry(), [
             ValidationIssue("YAML001", Severity.ERROR, str(path), f"could not read YAML: {exc}")
         ]

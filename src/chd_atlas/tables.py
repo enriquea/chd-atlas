@@ -436,6 +436,28 @@ def unexpected_mirror_entries(root: Path) -> list[ValidationIssue]:
                         f"{sorted(expected_dirs)}",
                     )
                 )
+                continue
+            # mirror_paths globs *.tsv, so a shard given the wrong extension is
+            # invisible to every table check while the gate still passes.
+            for shard in sorted(entry.iterdir()):
+                if not shard.is_file():
+                    issues.append(
+                        ValidationIssue(
+                            "TBL009",
+                            Severity.ERROR,
+                            str(shard),
+                            f"'{shard.name}' should be a .tsv shard, not a directory",
+                        )
+                    )
+                elif shard.suffix != ".tsv":
+                    issues.append(
+                        ValidationIssue(
+                            "TBL009",
+                            Severity.ERROR,
+                            str(shard),
+                            f"shard files must end .tsv; '{shard.name}' does not",
+                        )
+                    )
         # A shard directory replaced by a regular file is checked before the
         # unexpected-file case: the two name sets are disjoint, so testing
         # membership of `expected_files` first would report `mirrors/variants`

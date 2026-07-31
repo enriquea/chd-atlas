@@ -1,7 +1,7 @@
 # tests/unit/test_corpus.py
 from pathlib import Path
 
-from chd_atlas.corpus import load_curation
+from chd_atlas.corpus import load_curation, unexpected_curation_entries
 
 ASSERTION_YAML = """\
 assertions:
@@ -161,3 +161,56 @@ def test_loads_phenotypes_and_featured(tmp_path: Path) -> None:
     assert issues == []
     assert len(corpus.phenotypes) == 1
     assert len(corpus.featured) == 1
+
+
+def test_a_misnamed_assertion_file_is_reported(tmp_path: Path) -> None:
+    """Renaming TBX5.yaml to TBX5.yml made the assertion invisible to every
+    check while the gate still exited 0."""
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "assertions" / "TBX5.yaml").rename(
+        tmp_path / "curation" / "assertions" / "TBX5.yml"
+    )
+
+    issues = unexpected_curation_entries(tmp_path)
+
+    assert [i.code for i in issues] == ["CUR001"]
+    assert "TBX5.yml" in issues[0].location
+
+
+def test_a_misspelled_record_directory_is_reported(tmp_path: Path) -> None:
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "assertions").rename(tmp_path / "curation" / "assertion")
+
+    issues = unexpected_curation_entries(tmp_path)
+
+    assert [i.code for i in issues] == ["CUR001"]
+
+
+def test_a_directory_where_a_record_belongs_is_reported(tmp_path: Path) -> None:
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "assertions" / "TBX5.yaml").unlink()
+    (tmp_path / "curation" / "assertions" / "TBX5.yaml").mkdir()
+
+    issues = unexpected_curation_entries(tmp_path)
+
+    assert [i.code for i in issues] == ["CUR001"]
+
+
+def test_an_absent_record_directory_is_legitimate(tmp_path: Path) -> None:
+    """There is no functional/ before any functional evidence is curated."""
+    _write_minimal_corpus(tmp_path)
+
+    assert unexpected_curation_entries(tmp_path) == []
+
+
+def test_an_unreadable_file_is_reported_rather_than_raised(tmp_path: Path) -> None:
+    """OSError escaped the guard: an unreadable mode, a dangling symlink, or a
+    directory where a file was expected each aborted the whole run."""
+    _write_minimal_corpus(tmp_path)
+    target = tmp_path / "curation" / "assertions" / "TBX5.yaml"
+    target.chmod(0o000)
+    try:
+        _, issues = load_curation(tmp_path)
+        assert [issue.code for issue in issues] == ["YAML001"]
+    finally:
+        target.chmod(0o644)

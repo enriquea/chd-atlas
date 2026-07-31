@@ -67,7 +67,13 @@ def _read_yaml(path: Path, acc: _Accumulator) -> Any:
     # kept listed to document that non-UTF-8 bytes are handled here too.
     # Pydantic's ValidationError is also a ValueError but is raised in `_parse`,
     # so it is not swallowed by this guard.
-    except (YAMLError, UnicodeDecodeError, ValueError) as exc:
+    #
+    # OSError covers everything `read_text` can raise before parsing begins: an
+    # unreadable mode, a dangling symlink, a directory where a file was
+    # expected. One unreadable file must be reported as one issue rather than
+    # aborting the whole run with a traceback, exactly as `read_table` does for
+    # the TSV side.
+    except (YAMLError, UnicodeDecodeError, ValueError, OSError) as exc:
         acc.error("YAML001", path, f"could not read YAML: {exc}")
         return _UNREADABLE
 
@@ -85,6 +91,72 @@ def _parse[ModelT: BaseModel](model: type[ModelT], path: Path, acc: _Accumulator
         return None
 
 
+def _record_files(directory: Path) -> list[Path]:
+    """Every ``*.yaml`` file in one record directory, in a stable order.
+
+    The `is_file` guard matters because ``glob`` matches on name alone: a
+    *directory* named ``TBX5.yaml`` would otherwise be handed to `read_text`.
+    Skipping it here is safe only because `unexpected_curation_entries` reports
+    it — silently skipping is what this whole family of checks exists to stop.
+    """
+    return sorted(path for path in directory.glob("*.yaml") if path.is_file())
+
+
+def unexpected_curation_entries(root: Path) -> list[ValidationIssue]:
+    """Anything under ``curation/`` that no loader claims.
+
+    The loaders glob for what they expect, so anything misnamed is simply never
+    seen: an assertion saved as ``TBX5.yml``, a directory misspelled
+    ``curation/assertion/``, a directory where a record file belongs. Each makes
+    curator judgement vanish from validation while the gate still passes, which
+    is the worst failure this tool can have. Naming the stray entry catches it.
+
+    An *absent* expected file or directory stays legitimate — there is no
+    ``functional/`` before any functional evidence has been curated.
+    """
+    curation = root / "curation"
+    if not curation.is_dir():
+        return []
+
+    expected_files = {
+        ".id_registry.yaml",
+        "featured.yaml",
+        "phenotypes.yaml",
+        "publications.yaml",
+    }
+    expected_dirs = {"assertions", "datasets", "functional"}
+    issues: list[ValidationIssue] = []
+
+    def error(entry: Path, message: str) -> None:
+        issues.append(ValidationIssue("CUR001", Severity.ERROR, str(entry), message))
+
+    for entry in sorted(curation.iterdir()):
+        if entry.is_dir():
+            if entry.name not in expected_dirs:
+                error(
+                    entry,
+                    f"unexpected directory under curation/; expected one of "
+                    f"{sorted(expected_dirs)}",
+                )
+                continue
+            for record in sorted(entry.iterdir()):
+                if not record.is_file():
+                    error(record, f"'{record.name}' should be a YAML file, not a directory")
+                elif record.suffix != ".yaml":
+                    error(record, f"record files must end .yaml; '{record.name}' does not")
+        # Checked before the unexpected-file case: the name sets are disjoint, so
+        # testing expected_files first would report a file named `assertions` as
+        # merely unnamed rather than as the wrong kind of entry.
+        elif entry.name in expected_dirs:
+            error(entry, f"'{entry.name}' should be a directory of records, not a file")
+        elif entry.name not in expected_files:
+            error(
+                entry,
+                f"unexpected file under curation/; expected one of {sorted(expected_files)}",
+            )
+    return issues
+
+
 def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
     """Load every YAML record under ``root/curation``.
 
@@ -98,19 +170,19 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         return Corpus(root=root), acc.issues
 
     assertions: list[GeneDiseaseAssertion] = []
-    for path in sorted((curation / "assertions").glob("*.yaml")):
+    for path in _record_files(curation / "assertions"):
         parsed = _parse(AssertionFile, path, acc)
         if parsed is not None:
             assertions.extend(parsed.assertions)
 
     functional: list[FunctionalEvidence] = []
-    for path in sorted((curation / "functional").glob("*.yaml")):
+    for path in _record_files(curation / "functional"):
         parsed_functional = _parse(FunctionalFile, path, acc)
         if parsed_functional is not None:
             functional.extend(parsed_functional.functional_evidence)
 
     datasets: list[Dataset] = []
-    for path in sorted((curation / "datasets").glob("*.yaml")):
+    for path in _record_files(curation / "datasets"):
         parsed_dataset = _parse(Dataset, path, acc)
         if parsed_dataset is not None:
             datasets.append(parsed_dataset)

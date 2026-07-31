@@ -52,7 +52,10 @@ def load_id_registry(root: Path) -> tuple[IdRegistry | None, list[ValidationIssu
     # listed to document that non-UTF-8 bytes are handled here too. The shape
     # checks are inside the guard as well so that no reader defect can escape
     # this function as an exception.
-    except (YAMLError, UnicodeDecodeError, ValueError) as exc:
+    # OSError covers what read_text can raise before parsing: an unreadable
+    # mode, a dangling symlink, a directory where a file was expected. One
+    # bad file must be one issue, not a traceback aborting the whole run.
+    except (YAMLError, UnicodeDecodeError, ValueError, OSError) as exc:
         return None, [
             ValidationIssue("YAML001", Severity.ERROR, str(path), f"could not read YAML: {exc}")
         ]

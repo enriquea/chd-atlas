@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from chd_atlas.corpus import load_curation
+from chd_atlas.corpus import load_curation, unexpected_curation_entries
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import (
     TABLE_SCHEMAS,
@@ -134,6 +134,9 @@ def validate_repository(root: Path) -> ValidationReport:
     # Unconditional: the loop above iterates what the schemas expect, so an entry
     # nothing claims — a shard directory lost to a typo — is invisible to it.
     issues.extend(unexpected_mirror_entries(root))
+    # Same reasoning for the interpretive tree, which holds the curator
+    # judgement the atlas exists to record.
+    issues.extend(unexpected_curation_entries(root))
 
     # Referential checks over a corpus that failed to load would compare against a
     # knowingly incomplete set. The file wrappers validate their whole record list
@@ -162,6 +165,30 @@ def validate_repository(root: Path) -> ValidationReport:
                     "cannot be checked",
                 )
             )
+        # Without the phenotype vocabulary, REF007/REF009/REF010 silently no-op:
+        # `lesion_group_of` is empty so every lookup misses. An error, not a
+        # warning, because `ok` ignores warnings and a check stopped running.
+        if corpus.assertions and not corpus.phenotypes:
+            issues.append(
+                ValidationIssue(
+                    "CUR002",
+                    Severity.ERROR,
+                    str(root / "curation" / "phenotypes.yaml"),
+                    "phenotype vocabulary is missing or empty, so lesion-group "
+                    "consistency checks cannot run",
+                )
+            )
+        # Otherwise every citation reports REF002 and nothing names the cause.
+        if (corpus.assertions or corpus.functional) and not corpus.publications:
+            issues.append(
+                ValidationIssue(
+                    "CUR003",
+                    Severity.ERROR,
+                    str(root / "curation" / "publications.yaml"),
+                    "publication registry is missing or empty, so every citation "
+                    "will be reported as dangling",
+                )
+            )
         issues.extend(validate_references(corpus, known_genes=known_genes))
         issues.extend(validate_mirror_references(root, corpus))
 
@@ -183,14 +210,22 @@ def validate_repository(root: Path) -> ValidationReport:
     # The ontology pins live in sources.yaml, so a registry that failed to load
     # pins nothing and every term reports ONT003 "no pinned ontology" — one per
     # term, burying the single SRC001 that caused them. Same cascade as above.
-    if source_issues:
+    # ...and likewise when a pinned release itself failed to load: ONT003 reads
+    # "no pinned ontology for prefix 'HP'", which is false when the prefix IS
+    # pinned and the file is simply unreadable. A curator would go add a pin
+    # that already exists. The ONT004 naming the real cause is already reported.
+    if source_issues or ontologies.load_issues:
+        cause = (
+            "the source registry did not load, so no releases are pinned"
+            if source_issues
+            else "a pinned ontology release failed to load"
+        )
         issues.append(
             ValidationIssue(
                 "ONT000",
                 Severity.WARNING,
                 str(root / "mirrors" / "sources.yaml"),
-                "skipped ontology checks: the source registry did not load, "
-                "so no releases are pinned",
+                f"skipped ontology checks: {cause}",
             )
         )
     else:
