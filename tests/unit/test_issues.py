@@ -23,3 +23,20 @@ def test_issues_are_hashable_so_duplicates_collapse() -> None:
     a = ValidationIssue("SCH001", Severity.WARNING, "x.tsv", "dup")
     b = ValidationIssue("SCH001", Severity.WARNING, "x.tsv", "dup")
     assert len({a, b}) == 1
+
+
+def test_errors_sort_before_warnings() -> None:
+    """Pins intent: adding a severity level whose value breaks this order must fail here."""
+    warning = ValidationIssue("A001", Severity.WARNING, "x.yaml", "m")
+    error = ValidationIssue("A001", Severity.ERROR, "x.yaml", "m")
+    assert sorted([warning, error]) == [error, warning]
+
+
+def test_severity_renders_as_its_value_not_its_repr() -> None:
+    assert str(Severity.ERROR) == "error"
+    assert f"{Severity.WARNING}" == "warning"
+
+
+def test_str_matches_format() -> None:
+    issue = ValidationIssue("A001", Severity.ERROR, "x.yaml", "m")
+    assert str(issue) == issue.format()
