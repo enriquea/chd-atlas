@@ -16,20 +16,27 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install 3.12
-
+      # `uv sync --locked` installs into a project .venv from the committed
+      # uv.lock and fails if the lock has drifted from pyproject.toml, so CI
+      # tests the exact dependency set the repository pins.
+      #
+      # Not `uv pip install --system`: that targets whichever python3 the runner
+      # image exposes, which on ubuntu-latest is externally managed, and it would
+      # ignore uv.lock entirely. Every step below therefore runs through `uv run`,
+      # which resolves console scripts from the project environment.
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Type check
-        run: mypy
+        run: uv run mypy
 
       - name: Unit tests
-        run: pytest -v
+        run: uv run pytest -v
 
+      # The gate this whole plan exists for. Hermetic: every input is a
+      # repo-local path, including the pinned ontology release.
       - name: Validate curation corpus
-        run: chd-atlas validate
+        run: uv run chd-atlas validate
