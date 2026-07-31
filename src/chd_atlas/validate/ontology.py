@@ -44,11 +44,24 @@ class OntologyRegistry:
                     )
                 )
                 continue
-            registry.ontologies[prefix] = pronto.Ontology(str(path))
+            # A truncated, corrupt, empty or non-UTF-8 release must be reported
+            # as one bad file rather than aborting the whole validation run.
+            # pronto raises ValueError when no parser recognises the content,
+            # SyntaxError on a malformed stanza and OSError on undecodable
+            # bytes; SyntaxError is not a ValueError subclass, so all three are
+            # listed explicitly.
+            try:
+                registry.ontologies[prefix] = pronto.Ontology(str(path))
+            except (ValueError, SyntaxError, OSError) as exc:
+                registry.load_issues.append(
+                    ValidationIssue(
+                        "ONT004",
+                        Severity.ERROR,
+                        str(path),
+                        f"could not parse the pinned {prefix} ontology: {exc}",
+                    )
+                )
         return registry
-
-    def has_prefix(self, prefix: str) -> bool:
-        return prefix == _TAXON_PREFIX or prefix in self.ontologies
 
 
 def validate_terms(
@@ -82,7 +95,15 @@ def validate_terms(
             )
             continue
 
-        term = ontology.get_term(curie) if curie in ontology else None
+        # `curie in ontology` is also true for a Typedef, and `get_term` then
+        # raises KeyError. Accept only a real Term so a CURIE naming a
+        # relationship falls through to ONT001 below; the atlas only ever
+        # references terms.
+        try:
+            entity = ontology[curie]
+        except KeyError:
+            entity = None
+        term = entity if isinstance(entity, pronto.Term) else None
         if term is None:
             issues.append(
                 ValidationIssue(
