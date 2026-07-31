@@ -46,13 +46,15 @@ class OntologyRegistry:
                 continue
             # A truncated, corrupt, empty or non-UTF-8 release must be reported
             # as one bad file rather than aborting the whole validation run.
-            # pronto raises ValueError when no parser recognises the content,
-            # SyntaxError on a malformed stanza and OSError on undecodable
-            # bytes; SyntaxError is not a ValueError subclass, so all three are
-            # listed explicitly.
             try:
                 registry.ontologies[prefix] = pronto.Ontology(str(path))
-            except (ValueError, SyntaxError, OSError) as exc:
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException as exc:
+                # Deliberately BaseException, not Exception: fastobo can panic in
+                # Rust, surfacing as pyo3_runtime.PanicException, which derives from
+                # BaseException. Catching Exception would let a panic in one
+                # curator-supplied ontology abort validation of the whole repository.
                 registry.load_issues.append(
                     ValidationIssue(
                         "ONT004",
@@ -100,10 +102,9 @@ def validate_terms(
         # relationship falls through to ONT001 below; the atlas only ever
         # references terms.
         try:
-            entity = ontology[curie]
+            term = ontology.get_term(curie)
         except KeyError:
-            entity = None
-        term = entity if isinstance(entity, pronto.Term) else None
+            term = None
         if term is None:
             issues.append(
                 ValidationIssue(

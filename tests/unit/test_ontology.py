@@ -93,6 +93,25 @@ def test_corrupt_stanza_is_reported_not_raised(tmp_path: Path) -> None:
     assert [i.code for i in registry.load_issues] == ["ONT004"]
 
 
+def test_a_rust_panic_is_reported_not_raised(tmp_path: Path) -> None:
+    """fastobo panics surface as pyo3_runtime.PanicException, which derives from
+    BaseException rather than Exception.
+
+    The bare `!` has to sit between stanzas to trigger this. In the header it is
+    merely an unexpected clause, which fastobo reports as an ordinary SyntaxError.
+    """
+    obo = tmp_path / "ontologies" / "panic.obo"
+    obo.parent.mkdir(parents=True)
+    obo.write_text(
+        "format-version: 1.2\nontology: hp\n\n[Term]\nid: HP:0001631\nname: ASD\n\n"
+        "!\n\n[Term]\nid: HP:0001632\nname: VSD\n"
+    )
+
+    registry = OntologyRegistry.from_files(tmp_path, {"HP": "ontologies/panic.obo"})
+
+    assert [i.code for i in registry.load_issues] == ["ONT004"]
+
+
 def test_a_typedef_curie_is_reported_not_raised(typedef_registry: OntologyRegistry) -> None:
     """`curie in ontology` is true for a Typedef, and `get_term` then raises
     KeyError. The atlas only references terms, so a relationship id must fall
