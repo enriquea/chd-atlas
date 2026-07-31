@@ -1,4 +1,6 @@
-# Every record here is transcribed from the PubMed entry for its PMID.
+# Every record here is transcribed from the PubMed entry for its PMID, except
+# `study_type`: PubMed has no study-design field, so that value is read off the
+# paper itself and the reading is recorded alongside it.
 # `title` is NCBI's ArticleTitle verbatim: the "[corrected]" marker is PubMed's
 # own annotation of the erratum at Nat Genet 1997 Apr;15(4):411, and `journal`
 # is NLM's full journal title (ISO abbreviation "Nat Genet").
@@ -24,6 +26,9 @@ publications:
       - Kucherlapati R
       - Seidman JG
       - Seidman CE
-    study_type: case_control
+    # From the abstract: TBX5 mutations were found in affected members of
+    # separate Holt-Oram families. That is family-based linkage and mutation
+    # screening, not a comparison of unrelated cases against controls.
+    study_type: family_linkage
     doi: 10.1038/ng0197-30
     own_lab: false

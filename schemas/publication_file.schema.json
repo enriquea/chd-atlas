@@ -102,6 +102,7 @@
       "enum": [
         "trio_wes",
         "trio_wgs",
+        "family_linkage",
         "case_control",
         "functional",
         "proteomics",

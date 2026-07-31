@@ -140,6 +140,7 @@ class Redistribution(StrEnum):
 class StudyType(StrEnum):
     TRIO_WES = "trio_wes"
     TRIO_WGS = "trio_wgs"
+    FAMILY_LINKAGE = "family_linkage"
     CASE_CONTROL = "case_control"
     FUNCTIONAL = "functional"
     PROTEOMICS = "proteomics"
