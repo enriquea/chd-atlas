@@ -195,3 +195,28 @@ def test_every_real_schema_accepts_a_header_only_file(name: str, tmp_path: Path)
     path.write_text("\t".join(schema.column_names) + "\n")
 
     assert validate_table(path, schema) == []
+
+
+def test_reports_a_duplicate_sort_key(tmp_path: Path) -> None:
+    path = tmp_path / "demo.tsv"
+    path.write_text(
+        "gene\tpos\ttier\tnote\nHGNC:1\t100\ta\t\nHGNC:1\t100\tb\t\nHGNC:2\t200\ta\t\n"
+    )
+
+    issues = validate_table(path, SCHEMA)
+
+    assert [i.code for i in issues] == ["TBL007"]
+    assert "row 3" in issues[0].location
+
+
+def test_distinct_sort_keys_are_not_reported_as_duplicates(tmp_path: Path) -> None:
+    path = tmp_path / "demo.tsv"
+    path.write_text("gene\tpos\ttier\tnote\nHGNC:1\t100\ta\t\nHGNC:1\t200\ta\t\n")
+
+    assert validate_table(path, SCHEMA) == []
+
+
+def test_missing_file_is_reported_not_raised(tmp_path: Path) -> None:
+    issues = validate_table(tmp_path / "absent.tsv", SCHEMA)
+
+    assert [i.code for i in issues] == ["TBL000"]

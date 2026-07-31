@@ -20,6 +20,7 @@ import polars as pl
 from polars.datatypes import DataTypeClass
 from polars.exceptions import PolarsError
 
+from chd_atlas.duplicates import duplicates
 from chd_atlas.identifiers import (
     HGNC_PATTERN,
     MODIFICATION_PATTERN,
@@ -61,9 +62,10 @@ def read_table(
     """Read a TSV with declared dtypes, treating the empty string as null.
 
     Returns ``(None, issues)`` when the file cannot be read at all — a non-UTF-8
-    byte, or a zero-length file. Polars raises for both, and an uncaught raise
-    here would abort validation of every other shard in the repository rather
-    than reporting one unreadable file.
+    byte, a zero-length file, or a missing path. Polars raises for the first two
+    and a missing path raises ``FileNotFoundError``; an uncaught raise here would
+    abort validation of every other shard in the repository rather than
+    reporting one unreadable file.
     """
     try:
         present = pl.read_csv(path, separator="\t", n_rows=0).columns
@@ -79,7 +81,7 @@ def read_table(
             null_values=[""],
             infer_schema_length=0 if not overrides else None,
         )
-    except PolarsError as exc:
+    except (PolarsError, OSError) as exc:
         issue = ValidationIssue(
             "TBL000", Severity.ERROR, str(path), f"could not read TSV: {exc}"
         )
@@ -193,6 +195,24 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
                     f"column '{column.name}' has values outside [{low}, {high}]",
                 )
             )
+
+    if all(column in present for column in schema.sort_key):
+        keys = frame.select(schema.sort_key).rows()
+        repeated = set(duplicates(keys))
+        offenders_dupe: list[tuple[int, str]] = []
+        seen: set[tuple[object, ...]] = set()
+        for index, key in enumerate(keys):
+            if key not in repeated:
+                continue
+            if key in seen:
+                offenders_dupe.append((index + 2, repr(key)))
+            else:
+                seen.add(key)
+        issues.extend(
+            _row_issues(
+                "TBL007", path, offenders_dupe, f"duplicate {list(schema.sort_key)} key"
+            )
+        )
 
     return issues
 

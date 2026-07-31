@@ -35,7 +35,8 @@ def validate_sort_order(path: Path, schema: TableSchema) -> list[ValidationIssue
                     location=f"{path}:row {index + 2}",
                     message=(
                         f"table is not sorted by {list(schema.sort_key)}: "
-                        f"{keys[index]} follows {keys[index - 1]}"
+                        f"{keys[index]} at row {index + 2} follows "
+                        f"{keys[index - 1]} at row {index + 1}"
                     ),
                 )
             ]
