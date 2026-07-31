@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Coding-agent definitions — local only, never pushed to this public repo
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Build output — published to Pages from a CI artifact, never committed
+dist/
