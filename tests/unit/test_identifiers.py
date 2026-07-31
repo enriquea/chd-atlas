@@ -27,6 +27,7 @@ from chd_atlas.identifiers import (
         (PhenotypeId, "MONDO:0007259"),
         (ModelPhenotypeId, "MP:0010402"),
         (ModelPhenotypeId, "ZP:0000706"),
+        (ModelPhenotypeId, "HP:0001631"),
         (AssertionId, "CHDA:AST:0000001"),
         (FunctionalId, "CHDA:FUN:0000042"),
         (UniprotAccession, "Q99593"),

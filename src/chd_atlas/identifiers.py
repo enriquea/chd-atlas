@@ -33,8 +33,10 @@ SequenceOntologyId = NewType(
 ModificationId = NewType(
     "ModificationId", Annotated[str, StringConstraints(pattern=MODIFICATION_PATTERN)]
 )
+# HP covers organisms with no dedicated phenotype ontology: human iPSC models, and
+# chicken, pig, and Xenopus, for which no MP/ZP equivalent exists.
 ModelPhenotypeId = NewType(
-    "ModelPhenotypeId", Annotated[str, StringConstraints(pattern=r"^(MP|ZP):\d{7}$")]
+    "ModelPhenotypeId", Annotated[str, StringConstraints(pattern=r"^(MP|ZP|HP):\d{7}$")]
 )
 TaxonId = NewType("TaxonId", Annotated[str, StringConstraints(pattern=r"^NCBITaxon:\d+$")])
 

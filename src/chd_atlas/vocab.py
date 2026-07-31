@@ -168,6 +168,13 @@ class PhenocopyAssessment(StrEnum):
     NOT_ASSESSED = "not_assessed"
 
 
+class RescueOutcome(StrEnum):
+    NOT_ATTEMPTED = "not_attempted"
+    NO_RESCUE = "no_rescue"
+    PARTIAL_RESCUE = "partial_rescue"
+    FULL_RESCUE = "full_rescue"
+
+
 class Archive(StrEnum):
     PRIDE = "pride"
     GEO = "geo"
