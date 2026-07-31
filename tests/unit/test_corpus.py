@@ -63,8 +63,7 @@ def test_schema_violation_becomes_an_issue_rather_than_an_exception(tmp_path: Pa
     assert corpus.assertions == ()
     assert len(issues) == 1
     assert issues[0].code == "SCHEMA001"
-    assert "classification" in issues[0].message
-    assert issues[0].location.endswith("TBX5.yaml")
+    assert "classification" in issues[0].location
 
 
 def test_reports_every_schema_violation_not_just_the_first(tmp_path: Path) -> None:
@@ -91,3 +90,63 @@ def test_missing_curation_directory_is_reported(tmp_path: Path) -> None:
     _, issues = load_curation(tmp_path)
 
     assert [issue.code for issue in issues] == ["CORPUS001"]
+
+
+def test_non_utf8_bytes_are_reported_rather_than_raised(tmp_path: Path) -> None:
+    """A curator name saved as Latin-1 must not crash the whole validation run."""
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "assertions" / "TBX5.yaml").write_bytes(
+        ASSERTION_YAML.replace("0000-0002-1825-0097", "François").encode("latin-1")
+    )
+
+    _, issues = load_curation(tmp_path)
+
+    assert [issue.code for issue in issues] == ["YAML001"]
+
+
+def test_empty_yaml_file_is_reported(tmp_path: Path) -> None:
+    """yaml.load("") returns None; that must not read as 'no records, no problem'."""
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "publications.yaml").write_text("")
+
+    corpus, issues = load_curation(tmp_path)
+
+    assert corpus.publications == ()
+    assert [issue.code for issue in issues] == ["SCHEMA001"]
+
+
+def test_assertions_from_multiple_files_are_concatenated(tmp_path: Path) -> None:
+    """A regression to assignment instead of extend would pass every other test."""
+    _write_minimal_corpus(tmp_path)
+    second = ASSERTION_YAML.replace("CHDA:AST:0000001", "CHDA:AST:0000002").replace(
+        "HGNC:11604", "HGNC:4173"
+    )
+    (tmp_path / "curation" / "assertions" / "GATA4.yaml").write_text(second)
+
+    corpus, issues = load_curation(tmp_path)
+
+    assert issues == []
+    assert {a.id for a in corpus.assertions} == {"CHDA:AST:0000001", "CHDA:AST:0000002"}
+
+
+def test_loads_phenotypes_and_featured(tmp_path: Path) -> None:
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "phenotypes.yaml").write_text(
+        "phenotypes:\n"
+        "  - id: HP:0001631\n"
+        "    label: Atrial septal defect\n"
+        "    lesion_group: septal\n"
+    )
+    (tmp_path / "curation" / "featured.yaml").write_text(
+        "featured:\n"
+        "  - publication: PMID:8988165\n"
+        "    order: 1\n"
+        "    blurb: Founding TBX5 paper.\n"
+        "    topic: genomics\n"
+    )
+
+    corpus, issues = load_curation(tmp_path)
+
+    assert issues == []
+    assert len(corpus.phenotypes) == 1
+    assert len(corpus.featured) == 1

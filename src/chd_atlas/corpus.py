@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
@@ -51,25 +51,31 @@ class _Accumulator:
         )
 
 
-def _read_yaml(path: Path, acc: _Accumulator) -> Any | None:
+# Distinguishes "could not read the file" from "the file parsed to null".
+# Returning None for both would let an empty YAML file silently load as no
+# records and no issues.
+_UNREADABLE: Final = object()
+
+
+def _read_yaml(path: Path, acc: _Accumulator) -> Any:
     yaml = YAML(typ="safe")
     try:
-        return yaml.load(path.read_text())
-    except YAMLError as exc:
-        acc.error("YAML001", path, f"could not parse YAML: {exc}")
-        return None
+        return yaml.load(path.read_text(encoding="utf-8"))
+    except (YAMLError, UnicodeDecodeError) as exc:
+        acc.error("YAML001", path, f"could not read YAML: {exc}")
+        return _UNREADABLE
 
 
 def _parse[ModelT: BaseModel](model: type[ModelT], path: Path, acc: _Accumulator) -> ModelT | None:
     raw = _read_yaml(path, acc)
-    if raw is None:
+    if raw is _UNREADABLE:
         return None
     try:
         return model.model_validate(raw)
     except ValidationError as exc:
         for error in exc.errors():
             location = ".".join(str(part) for part in error["loc"])
-            acc.error("SCHEMA001", path, f"{location}: {error['msg']}")
+            acc.error("SCHEMA001", f"{path}:{location}", error["msg"])
         return None
 
 
