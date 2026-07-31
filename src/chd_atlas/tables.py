@@ -18,6 +18,7 @@ import polars as pl
 # deprecated in polars 1.0 and survives only as a runtime shim, so `pl.DataTypeClass`
 # fails `mypy --strict` with "Name is not defined" on every version we support.
 from polars.datatypes import DataTypeClass
+from polars.exceptions import PolarsError
 
 from chd_atlas.identifiers import (
     HGNC_PATTERN,
@@ -36,6 +37,8 @@ class Column:
     nullable: bool = False
     allowed: frozenset[str] | None = None
     pattern: str | None = None
+    minimum: float | None = None
+    maximum: float | None = None
 
 
 @dataclass(frozen=True)
@@ -52,19 +55,63 @@ class TableSchema:
         return {column.name: column.dtype for column in self.columns}
 
 
-def read_table(path: Path, schema: TableSchema) -> pl.DataFrame:
-    """Read a TSV with declared dtypes, treating the empty string as null."""
-    present = pl.read_csv(path, separator="\t", n_rows=0).columns
-    overrides = {
-        name: dtype for name, dtype in schema.polars_overrides().items() if name in present
-    }
-    return pl.read_csv(
-        path,
-        separator="\t",
-        schema_overrides=overrides,
-        null_values=[""],
-        infer_schema_length=0 if not overrides else None,
-    )
+def read_table(
+    path: Path, schema: TableSchema
+) -> tuple[pl.DataFrame | None, list[ValidationIssue]]:
+    """Read a TSV with declared dtypes, treating the empty string as null.
+
+    Returns ``(None, issues)`` when the file cannot be read at all — a non-UTF-8
+    byte, or a zero-length file. Polars raises for both, and an uncaught raise
+    here would abort validation of every other shard in the repository rather
+    than reporting one unreadable file.
+    """
+    try:
+        present = pl.read_csv(path, separator="\t", n_rows=0).columns
+        overrides = {
+            name: dtype
+            for name, dtype in schema.polars_overrides().items()
+            if name in present
+        }
+        frame = pl.read_csv(
+            path,
+            separator="\t",
+            schema_overrides=overrides,
+            null_values=[""],
+            infer_schema_length=0 if not overrides else None,
+        )
+    except PolarsError as exc:
+        issue = ValidationIssue(
+            "TBL000", Severity.ERROR, str(path), f"could not read TSV: {exc}"
+        )
+        return None, [issue]
+    return frame, []
+
+
+# Past this many offending rows in one column, report a count instead. A column
+# renamed upstream makes every row fail, and mirrors are reviewed by digest.
+_MAX_ROW_ISSUES: Final = 20
+
+
+def _row_issues(
+    code: str, path: Path, offenders: list[tuple[int, str]], summary: str
+) -> list[ValidationIssue]:
+    """One issue per offending row, collapsed to a count past the threshold."""
+    if not offenders:
+        return []
+    if len(offenders) > _MAX_ROW_ISSUES:
+        first_row, first_detail = offenders[0]
+        return [
+            ValidationIssue(
+                code,
+                Severity.ERROR,
+                str(path),
+                f"{len(offenders)} rows: {summary} (first at row {first_row}: {first_detail})",
+            )
+        ]
+    return [
+        ValidationIssue(code, Severity.ERROR, f"{path}:row {row}", f"{summary}: {detail}")
+        for row, detail in offenders
+    ]
 
 
 def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
@@ -74,7 +121,9 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
     def error(code: str, location: str, message: str) -> None:
         issues.append(ValidationIssue(code, Severity.ERROR, location, message))
 
-    frame = read_table(path, schema)
+    frame, read_issues = read_table(path, schema)
+    if frame is None:
+        return read_issues
     present = set(frame.columns)
     expected = set(schema.column_names)
 
@@ -89,33 +138,61 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
         series = frame[column.name]
 
         if not column.nullable:
-            for index in _null_row_indices(series):
-                error(
-                    "TBL003",
-                    f"{path}:row {index}",
-                    f"column '{column.name}' must not be empty",
+            offenders_null = [(row, "empty") for row in _null_row_indices(series)]
+            issues.extend(
+                _row_issues(
+                    "TBL003", path, offenders_null, f"column '{column.name}' must not be empty"
                 )
+            )
 
         if column.allowed is not None:
-            for index, value in _string_values(series):
-                if value not in column.allowed:
-                    error(
-                        "TBL004",
-                        f"{path}:row {index}",
-                        f"column '{column.name}' value '{value}' is not one of "
-                        f"{sorted(column.allowed)}",
-                    )
+            allowed_sorted = sorted(column.allowed)
+            offenders_allowed = [
+                (row, repr(value))
+                for row, value in _string_values(series)
+                if value not in column.allowed
+            ]
+            issues.extend(
+                _row_issues(
+                    "TBL004",
+                    path,
+                    offenders_allowed,
+                    f"column '{column.name}' has values outside {allowed_sorted}",
+                )
+            )
 
         if column.pattern is not None:
             compiled = re.compile(column.pattern)
-            for index, value in _string_values(series):
-                if not compiled.fullmatch(value):
-                    error(
-                        "TBL005",
-                        f"{path}:row {index}",
-                        f"column '{column.name}' value '{value}' does not match "
-                        f"{column.pattern}",
-                    )
+            offenders_pattern = [
+                (row, repr(value))
+                for row, value in _string_values(series)
+                if not compiled.fullmatch(value)
+            ]
+            issues.extend(
+                _row_issues(
+                    "TBL005",
+                    path,
+                    offenders_pattern,
+                    f"column '{column.name}' has values not matching {column.pattern}",
+                )
+            )
+
+        if column.minimum is not None or column.maximum is not None:
+            low = column.minimum if column.minimum is not None else float("-inf")
+            high = column.maximum if column.maximum is not None else float("inf")
+            offenders_bounds = [
+                (row, repr(value))
+                for row, value in _numeric_values(series)
+                if value < low or value > high
+            ]
+            issues.extend(
+                _row_issues(
+                    "TBL006",
+                    path,
+                    offenders_bounds,
+                    f"column '{column.name}' has values outside [{low}, {high}]",
+                )
+            )
 
     return issues
 
@@ -128,6 +205,14 @@ def _null_row_indices(series: pl.Series) -> list[int]:
 def _string_values(series: pl.Series) -> list[tuple[int, str]]:
     return [
         (index + 2, str(value))
+        for index, value in enumerate(series.to_list())
+        if value is not None
+    ]
+
+
+def _numeric_values(series: pl.Series) -> list[tuple[int, float]]:
+    return [
+        (index + 2, float(value))
         for index, value in enumerate(series.to_list())
         if value is not None
     ]
@@ -158,7 +243,7 @@ PTM_SITES = TableSchema(
         Column("site_id", pl.String),
         Column("protein", pl.String),
         Column("residue", pl.String, allowed=frozenset({"S", "T", "Y", "K", "R", "C", "N", "Q"})),
-        Column("position", pl.Int64),
+        Column("position", pl.Int64, minimum=1),
         Column("mod_type", pl.String, pattern=MODIFICATION_PATTERN),
         Column("flanking_sequence", pl.String, nullable=True),
         Column("known_kinases", pl.String, nullable=True),
@@ -172,8 +257,12 @@ VARIANTS = TableSchema(
     columns=(
         Column("vrs_id", pl.String),
         Column("assembly", pl.String, allowed=frozenset({"GRCh38"})),
-        Column("chrom", pl.String),
-        Column("pos", pl.Int64),
+        Column(
+            "chrom",
+            pl.String,
+            allowed=frozenset({str(n) for n in range(1, 23)} | {"X", "Y", "MT"}),
+        ),
+        Column("pos", pl.Int64, minimum=1),
         Column("ref", pl.String),
         Column("alt", pl.String),
         Column("hgvs_g", pl.String, nullable=True),
@@ -211,11 +300,11 @@ EXPRESSION = TableSchema(
         Column("contrast", pl.String),
         Column("gene", pl.String, pattern=HGNC_PATTERN),
         Column("log2fc", pl.Float64),
-        Column("pvalue", pl.Float64),
-        Column("fdr", pl.Float64),
+        Column("pvalue", pl.Float64, minimum=0, maximum=1),
+        Column("fdr", pl.Float64, minimum=0, maximum=1),
         Column("direction", pl.String, allowed=_DIRECTIONS),
-        Column("n_case", pl.Int64, nullable=True),
-        Column("n_control", pl.Int64, nullable=True),
+        Column("n_case", pl.Int64, nullable=True, minimum=0),
+        Column("n_control", pl.Int64, nullable=True, minimum=0),
         Column("tissue", pl.String),
         Column("stage", pl.String, nullable=True),
     ),
@@ -233,7 +322,7 @@ PROFILES = TableSchema(
         Column("unit", pl.String, allowed=frozenset({"tpm", "nx", "cpm", "lfq"})),
         Column("q25", pl.Float64, nullable=True),
         Column("q75", pl.Float64, nullable=True),
-        Column("n_samples", pl.Int64),
+        Column("n_samples", pl.Int64, minimum=1),
     ),
     sort_key=("dataset", "gene", "tissue", "stage"),
 )
@@ -246,11 +335,11 @@ PROTEOMICS = TableSchema(
         Column("protein", pl.String),
         Column("gene", pl.String, pattern=HGNC_PATTERN, nullable=True),
         Column("log2fc", pl.Float64),
-        Column("pvalue", pl.Float64),
-        Column("fdr", pl.Float64),
+        Column("pvalue", pl.Float64, minimum=0, maximum=1),
+        Column("fdr", pl.Float64, minimum=0, maximum=1),
         Column("direction", pl.String, allowed=_DIRECTIONS),
-        Column("n_peptides", pl.Int64, nullable=True),
-        Column("sequence_coverage", pl.Float64, nullable=True),
+        Column("n_peptides", pl.Int64, nullable=True, minimum=1),
+        Column("sequence_coverage", pl.Float64, nullable=True, minimum=0, maximum=100),
         Column("quant_method", pl.String),
     ),
     sort_key=("contrast", "protein"),
@@ -264,12 +353,12 @@ PHOSPHO = TableSchema(
         Column("site_id", pl.String),
         Column("protein", pl.String),
         Column("residue", pl.String, allowed=frozenset({"S", "T", "Y"})),
-        Column("position", pl.Int64),
+        Column("position", pl.Int64, minimum=1),
         Column("mod_type", pl.String, pattern=MODIFICATION_PATTERN),
         Column("flanking_sequence", pl.String, nullable=True),
         Column("log2fc", pl.Float64),
-        Column("pvalue", pl.Float64),
-        Column("fdr", pl.Float64),
+        Column("pvalue", pl.Float64, minimum=0, maximum=1),
+        Column("fdr", pl.Float64, minimum=0, maximum=1),
         # Mandatory: whether the change was corrected for protein abundance decides
         # whether the site is genuinely regulated or merely tracking total protein.
         Column("protein_normalized", pl.Boolean),

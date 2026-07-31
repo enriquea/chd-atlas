@@ -2,8 +2,16 @@
 from pathlib import Path
 
 import polars as pl
+import pytest
 
-from chd_atlas.tables import TABLE_SCHEMAS, Column, TableSchema, validate_table
+from chd_atlas.tables import (
+    TABLE_SCHEMAS,
+    Column,
+    TableSchema,
+    mirror_paths,
+    read_table,
+    validate_table,
+)
 
 SCHEMA = TableSchema(
     name="demo",
@@ -80,7 +88,9 @@ def test_integer_columns_stay_integers(tmp_path: Path) -> None:
         tmp_path / "demo.tsv",
         "gene\tpos\ttier\tnote\nHGNC:1\t100\ta\t\nHGNC:2\t200\tb\t\n",
     )
-    frame = pl.read_csv(path, separator="\t", schema_overrides={"pos": pl.Int64})
+    frame, issues = read_table(path, SCHEMA)
+    assert issues == []
+    assert frame is not None
     assert frame["pos"].dtype == pl.Int64
     assert frame["pos"].to_list() == [100, 200]
 
@@ -101,3 +111,87 @@ def test_phospho_protein_normalized_is_mandatory_and_non_nullable() -> None:
     column = next(c for c in TABLE_SCHEMAS["phospho"].columns if c.name == "protein_normalized")
     assert column.nullable is False
     assert column.dtype == pl.Boolean
+
+
+def test_unreadable_file_is_reported_not_raised(tmp_path: Path) -> None:
+    """One bad byte must not abort validation of every other shard."""
+    path = tmp_path / "demo.tsv"
+    path.write_bytes("gene\tpos\ttier\tnote\nHGNC:1\t100\ta\tFran\xe7ois\n".encode("latin-1"))
+
+    issues = validate_table(path, SCHEMA)
+
+    assert [i.code for i in issues] == ["TBL000"]
+
+
+def test_empty_file_is_reported_not_raised(tmp_path: Path) -> None:
+    path = tmp_path / "demo.tsv"
+    path.write_bytes(b"")
+
+    issues = validate_table(path, SCHEMA)
+
+    assert [i.code for i in issues] == ["TBL000"]
+
+
+def test_column_wide_failure_collapses_to_one_issue(tmp_path: Path) -> None:
+    rows = "".join(f"HGNC:{n}\t{n}\tz\t\n" for n in range(1, 51))
+    path = tmp_path / "demo.tsv"
+    path.write_text("gene\tpos\ttier\tnote\n" + rows)
+
+    issues = validate_table(path, SCHEMA)
+
+    assert [i.code for i in issues] == ["TBL004"]
+    assert "50 rows" in issues[0].message
+
+
+def test_few_failures_are_reported_per_row(tmp_path: Path) -> None:
+    path = tmp_path / "demo.tsv"
+    path.write_text("gene\tpos\ttier\tnote\nHGNC:1\t1\tz\t\nHGNC:2\t2\tz\t\n")
+
+    issues = validate_table(path, SCHEMA)
+
+    assert [i.code for i in issues] == ["TBL004", "TBL004"]
+    assert all("row" in i.location for i in issues)
+
+
+def test_reports_a_value_outside_its_numeric_bounds(tmp_path: Path) -> None:
+    schema = TableSchema(
+        name="bounded",
+        columns=(Column("p", pl.Float64, minimum=0, maximum=1),),
+        sort_key=("p",),
+    )
+    path = tmp_path / "bounded.tsv"
+    path.write_text("p\n5.0\n")
+
+    issues = validate_table(path, schema)
+
+    assert [i.code for i in issues] == ["TBL006"]
+
+
+def test_variants_chrom_rejects_a_chr_prefix() -> None:
+    column = next(c for c in TABLE_SCHEMAS["variants"].columns if c.name == "chrom")
+    assert column.allowed is not None
+    assert "1" in column.allowed
+    assert "chr1" not in column.allowed
+
+
+def test_mirror_paths_finds_flat_and_sharded_tables(tmp_path: Path) -> None:
+    (tmp_path / "mirrors" / "variants").mkdir(parents=True)
+    (tmp_path / "mirrors" / "genes.tsv").write_text("hgnc_id\n")
+    (tmp_path / "mirrors" / "variants" / "12.tsv").write_text("vrs_id\n")
+
+    found = mirror_paths(tmp_path)
+
+    assert [(p.name, schema) for p, schema in found] == [
+        ("genes.tsv", "genes"),
+        ("12.tsv", "variants"),
+    ]
+
+
+@pytest.mark.parametrize("name", sorted(TABLE_SCHEMAS))
+def test_every_real_schema_accepts_a_header_only_file(name: str, tmp_path: Path) -> None:
+    """A header-only shard must validate cleanly, and pins each schema's column list."""
+    schema = TABLE_SCHEMAS[name]
+    path = tmp_path / f"{name}.tsv"
+    path.write_text("\t".join(schema.column_names) + "\n")
+
+    assert validate_table(path, schema) == []
