@@ -224,3 +224,7 @@ AGENTS.md
 
 # Build output — published to Pages from a CI artifact, never committed
 dist/
+
+# Design specs and implementation plans — local only. These carry agent-directed
+# workflow instructions, so they stay out of the public repository.
+docs/superpowers/
