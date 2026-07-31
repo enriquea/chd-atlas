@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -23,6 +23,13 @@ from chd_atlas.vocab import (
     Mechanism,
     SourceTier,
     SyndromicStatus,
+)
+
+# Quantitative omics results are always derived from a deposited dataset, so the
+# accession is required. `regulatory` is deliberately excluded: a reporter or MPRA
+# result can rest on a figure in the paper with nothing deposited.
+_DATASET_BACKED_CLASSES: Final[frozenset[EvidenceClass]] = frozenset(
+    {EvidenceClass.EXPRESSION, EvidenceClass.PROTEOMIC, EvidenceClass.PTM}
 )
 
 
@@ -73,6 +80,14 @@ class Evidence(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def omics_evidence_cites_a_dataset(self) -> Evidence:
+        if self.evidence_class in _DATASET_BACKED_CLASSES and self.dataset is None:
+            raise ValueError(
+                f"evidence_class '{self.evidence_class.value}' requires 'dataset'"
+            )
+        return self
+
 
 class GeneDiseaseAssertion(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -98,6 +113,14 @@ class GeneDiseaseAssertion(BaseModel):
         if self.extracardiac_features and self.syndromic is SyndromicStatus.ISOLATED:
             raise ValueError(
                 "'extracardiac_features' cannot be set when syndromic is 'isolated'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def syndromic_lists_extracardiac_features(self) -> GeneDiseaseAssertion:
+        if self.syndromic is SyndromicStatus.SYNDROMIC and not self.extracardiac_features:
+            raise ValueError(
+                "syndromic assertions must list at least one extracardiac feature"
             )
         return self
 

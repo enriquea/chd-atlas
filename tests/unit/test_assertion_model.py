@@ -102,3 +102,44 @@ def test_unknown_fields_are_rejected() -> None:
 def test_assertion_file_wraps_a_non_empty_list() -> None:
     parsed = AssertionFile.model_validate({"assertions": [_assertion()]})
     assert len(parsed.assertions) == 1
+
+
+def test_syndromic_assertion_requires_an_extracardiac_feature() -> None:
+    with pytest.raises(ValidationError, match="at least one extracardiac feature"):
+        GeneDiseaseAssertion.model_validate(_assertion(syndromic="syndromic"))
+
+
+def test_syndromic_assertion_accepts_an_extracardiac_feature() -> None:
+    assertion = GeneDiseaseAssertion.model_validate(
+        _assertion(syndromic="syndromic", extracardiac_features=["HP:0009777"])
+    )
+    assert assertion.extracardiac_features == ["HP:0009777"]
+
+
+def test_both_status_does_not_require_extracardiac_features() -> None:
+    assertion = GeneDiseaseAssertion.model_validate(_assertion(syndromic="both"))
+    assert assertion.extracardiac_features == []
+
+
+def test_expression_evidence_requires_a_dataset() -> None:
+    with pytest.raises(ValidationError, match="requires 'dataset'"):
+        Evidence.model_validate(_evidence(evidence_class="expression"))
+
+
+def test_expression_evidence_accepts_a_dataset() -> None:
+    evidence = Evidence.model_validate(
+        _evidence(evidence_class="expression", dataset="PXD012345")
+    )
+    assert evidence.dataset == "PXD012345"
+
+
+def test_regulatory_evidence_does_not_require_a_dataset() -> None:
+    """A reporter or MPRA result can rest on a figure with nothing deposited."""
+    evidence = Evidence.model_validate(_evidence(evidence_class="regulatory"))
+    assert evidence.dataset is None
+
+
+def test_assertion_file_does_not_reject_duplicate_ids() -> None:
+    """Intentional: repo-wide atlas ID uniqueness is enforced by validate_ids()."""
+    parsed = AssertionFile.model_validate({"assertions": [_assertion(), _assertion()]})
+    assert len(parsed.assertions) == 2
