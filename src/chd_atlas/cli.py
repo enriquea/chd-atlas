@@ -17,6 +17,15 @@ def validate(
     root: Path = typer.Option(Path("."), help="Repository root to validate."),
 ) -> None:
     """Validate the curation corpus and mirror tables."""
+    # Every validator reports its own target as missing, so a --root that does
+    # not exist produces output byte-identical to a real but empty repository:
+    # a confident list of content errors about a repository that was never
+    # read. Exit 2 rather than 1 so CI can distinguish "you pointed me at the
+    # wrong place" from "this repository has errors".
+    if not root.is_dir():
+        typer.echo(f"error: --root {root} is not a directory")
+        raise typer.Exit(code=2)
+
     report = validate_repository(root)
     typer.echo(report.render())
     raise typer.Exit(code=0 if report.ok else 1)
@@ -27,5 +36,14 @@ def schemas_export(
     target: Path = typer.Option(Path("schemas"), help="Directory to write schemas into."),
 ) -> None:
     """Regenerate committed JSON Schema files from the Pydantic models."""
-    written = export_schemas(target)
+    # A target that is an existing file, or a directory that cannot be written,
+    # is a bad argument rather than a defect: report the path and exit 2 rather
+    # than showing the user a traceback. FileExistsError and PermissionError
+    # are both OSError.
+    try:
+        written = export_schemas(target)
+    except OSError as exc:
+        typer.echo(f"error: could not write schemas to {target}: {exc}")
+        raise typer.Exit(code=2) from exc
+
     typer.echo(f"wrote {len(written)} schema(s) to {target}")

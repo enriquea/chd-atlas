@@ -45,6 +45,10 @@ def _write_atomically(path: Path, payload: str) -> None:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(payload)
+        # `mkstemp` creates at 0600, which would leave a committed, world-readable
+        # artifact owner-only on whichever machine generated it. Set the mode
+        # explicitly so it does not depend on how the file happened to be made.
+        os.chmod(temporary, 0o644)
         os.replace(temporary, path)
     except BaseException:
         temporary.unlink(missing_ok=True)

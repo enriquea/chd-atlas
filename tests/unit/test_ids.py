@@ -168,6 +168,18 @@ def test_save_round_trips_and_is_byte_stable(tmp_path: Path) -> None:
     assert (tmp_path / "curation" / ".id_registry.yaml").read_bytes() == first
 
 
+def test_saved_registry_is_world_readable(tmp_path: Path) -> None:
+    """A committed artifact; mkstemp's 0600 would leave it owner-only."""
+    _write_registry(tmp_path)
+    registry, _ = load_id_registry(tmp_path)
+    assert registry is not None
+
+    save_id_registry(tmp_path, registry)
+
+    path = tmp_path / "curation" / ".id_registry.yaml"
+    assert path.stat().st_mode & 0o777 == 0o644
+
+
 def test_save_leaves_the_old_counter_intact_if_the_write_fails(tmp_path: Path) -> None:
     """A truncate-then-fail would leave a zero-byte counter, which is data loss."""
     _write_registry(tmp_path)

@@ -46,10 +46,24 @@ class ValidationReport:
 
     @property
     def ok(self) -> bool:
+        # Warnings are deliberately ignored, so a warnings-only report exits 0.
+        # That is only sound because of an invariant this runner must keep:
+        # every warning it emits (REF000, SRC000, ONT000) means "a check was
+        # skipped", and each is emitted in the same branch as the error that
+        # caused the skip — a failed corpus load, or a failed source registry
+        # load — so a skip can never be the only thing wrong. A validator that
+        # emitted a warning without an accompanying error would break this:
+        # CI would report green on a repository where checks were silently
+        # skipped. Such a warning must either be raised to an error or `ok`
+        # must stop ignoring warnings.
+        # Pinned by test_every_skip_warning_arrives_with_the_error_that_caused_it.
         return self.error_count == 0
 
     def render(self) -> str:
         lines = [issue.format() for issue in self.issues]
+        # Blank line so the summary reads as a summary rather than as one more
+        # issue running straight on from the last.
+        lines.append("")
         lines.append(f"{self.error_count} error(s), {self.warning_count} warning(s)")
         return "\n".join(lines)
 

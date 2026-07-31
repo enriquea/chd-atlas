@@ -157,6 +157,10 @@ def save_id_registry(root: Path, registry: IdRegistry) -> None:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             yaml.dump({"prefixes": dict(sorted(registry.prefixes.items()))}, handle)
+        # `mkstemp` creates at 0600, which would leave this committed artifact
+        # owner-only on whichever machine wrote it. Set the mode explicitly so
+        # it does not depend on how the file happened to be made.
+        os.chmod(temporary, 0o644)
         os.replace(temporary, path)
     except BaseException:
         temporary.unlink(missing_ok=True)

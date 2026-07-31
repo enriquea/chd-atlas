@@ -23,6 +23,12 @@ def test_emitted_schema_is_valid_json_with_a_title(tmp_path: Path) -> None:
     assert payload["title"] == "AssertionFile"
 
 
+def test_written_schemas_are_world_readable(tmp_path: Path) -> None:
+    """These are committed artifacts; mkstemp's 0600 would leave them owner-only."""
+    for path in export_schemas(tmp_path):
+        assert path.stat().st_mode & 0o777 == 0o644, path
+
+
 def test_export_is_byte_identical_across_runs(tmp_path: Path) -> None:
     export_schemas(tmp_path)
     first = (tmp_path / "assertion_file.schema.json").read_bytes()
