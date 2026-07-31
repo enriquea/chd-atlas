@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
+from chd_atlas.duplicates import duplicates
 from chd_atlas.issues import Severity, ValidationIssue
 
 
@@ -46,11 +47,9 @@ class SourceRegistry(BaseModel):
 
     @model_validator(mode="after")
     def ids_are_unique(self) -> SourceRegistry:
-        seen: set[str] = set()
-        for source in self.sources:
-            if source.id in seen:
-                raise ValueError(f"duplicate source '{source.id}'")
-            seen.add(source.id)
+        found = duplicates(source.id for source in self.sources)
+        if found:
+            raise ValueError(f"duplicate source ids: {found}")
         return self
 
     @property
@@ -78,10 +77,10 @@ def load_sources(root: Path) -> tuple[SourceRegistry, list[ValidationIssue]]:
 
     yaml = YAML(typ="safe")
     try:
-        raw = yaml.load(path.read_text())
-    except YAMLError as exc:
+        raw = yaml.load(path.read_text(encoding="utf-8"))
+    except (YAMLError, UnicodeDecodeError) as exc:
         return _EMPTY, [
-            ValidationIssue("YAML001", Severity.ERROR, str(path), f"could not parse YAML: {exc}")
+            ValidationIssue("YAML001", Severity.ERROR, str(path), f"could not read YAML: {exc}")
         ]
 
     try:

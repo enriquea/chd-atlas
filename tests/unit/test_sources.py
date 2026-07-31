@@ -63,6 +63,41 @@ def test_duplicate_source_ids_are_rejected(tmp_path: Path) -> None:
     assert any(i.code == "SRC002" and "duplicate source" in i.message for i in issues)
 
 
+def test_non_utf8_bytes_are_reported_rather_than_raised(tmp_path: Path) -> None:
+    """A Latin-1 byte must not abort the whole validation run."""
+    (tmp_path / "mirrors").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "mirrors" / "sources.yaml").write_bytes(
+        SOURCES_YAML.replace("ClinVar", "Clin\xe9Var").encode("latin-1")
+    )
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["YAML001"]
+
+
+def test_reports_every_duplicate_source_id(tmp_path: Path) -> None:
+    _write_sources(
+        tmp_path,
+        SOURCES_YAML
+        + SOURCES_YAML.split("sources:\n")[1]
+        + SOURCES_YAML.split("sources:\n")[1],
+    )
+
+    _, issues = load_sources(tmp_path)
+
+    message = " ".join(i.message for i in issues)
+    assert "clinvar" in message
+    assert "hpo" in message
+
+
+def test_unparseable_yaml_is_reported(tmp_path: Path) -> None:
+    _write_sources(tmp_path, "sources: [ unclosed\n")
+
+    _, issues = load_sources(tmp_path)
+
+    assert [i.code for i in issues] == ["YAML001"]
+
+
 def test_ontology_prefix_requires_a_pinned_file(tmp_path: Path) -> None:
     _write_sources(
         tmp_path,
