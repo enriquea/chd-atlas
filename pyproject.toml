@@ -39,3 +39,14 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 files = ["src/chd_atlas"]
+
+# pronto ships py.typed, but builds its `__all__` from runtime expressions
+# (`Ontology.__name__`) rather than string literals. mypy cannot evaluate those
+# statically, so under `strict` (which implies `--no-implicit-reexport`) it
+# treats `pronto.Ontology` as unexported. This re-enables re-export for pronto
+# only; its types are still fully checked, and it keeps `validate/ontology.py`
+# on pronto's documented public API rather than the submodules its own
+# docstring declares unstable.
+[[tool.mypy.overrides]]
+module = ["pronto.*"]
+implicit_reexport = true
