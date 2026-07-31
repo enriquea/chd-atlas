@@ -5,11 +5,15 @@ from pydantic import TypeAdapter, ValidationError
 from chd_atlas.identifiers import (
     AccessionId,
     AssertionId,
+    ContrastId,
     FunctionalId,
     HgncId,
     ModelPhenotypeId,
+    ModificationId,
     PhenotypeId,
     Pmid,
+    SequenceOntologyId,
+    TaxonId,
     UniprotAccession,
 )
 
@@ -30,6 +34,13 @@ from chd_atlas.identifiers import (
         (AccessionId, "PXD012345"),
         (AccessionId, "GSE123456"),
         (AccessionId, "E-MTAB-1234"),
+        (TaxonId, "NCBITaxon:9606"),
+        (ContrastId, "tof_vs_control"),
+        (ContrastId, "a1"),
+        (SequenceOntologyId, "SO:0001587"),
+        (ModificationId, "MOD:00046"),
+        (AccessionId, "EGAS00001000123"),
+        (AccessionId, "PXD1234567"),
     ],
 )
 def test_accepts_well_formed_identifiers(type_: type, value: str) -> None:
@@ -48,6 +59,15 @@ def test_accepts_well_formed_identifiers(type_: type, value: str) -> None:
         (AssertionId, "CHDA:FUN:0000001"),
         (UniprotAccession, "NOTANACC"),
         (AccessionId, "PXD12345"),
+        (TaxonId, "9606"),
+        (TaxonId, "NCBITaxon:"),
+        (ContrastId, "TOF_vs_control"),
+        (ContrastId, "_foo"),
+        (ContrastId, "foo_"),
+        (SequenceOntologyId, "SO:12345"),
+        (ModificationId, "MOD:123456"),
+        (FunctionalId, "CHDA:AST:0000001"),
+        (AccessionId, "EGAS0001"),
     ],
 )
 def test_rejects_malformed_identifiers(type_: type, value: str) -> None:
