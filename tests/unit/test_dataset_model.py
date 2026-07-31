@@ -2,7 +2,8 @@
 import pytest
 from pydantic import ValidationError
 
-from chd_atlas.models.dataset import Contrast, Dataset
+from chd_atlas.models.dataset import _ARCHIVE_TECHNOLOGIES, Contrast, Dataset
+from chd_atlas.vocab import Archive, Technology
 
 
 def _contrast(**overrides: object) -> dict[str, object]:
@@ -51,7 +52,7 @@ def test_dataset_requires_at_least_one_contrast() -> None:
 
 
 def test_dataset_rejects_duplicate_contrast_ids() -> None:
-    with pytest.raises(ValidationError, match="duplicate contrast"):
+    with pytest.raises(ValidationError, match="duplicate contrast ids:.*tof_vs_control"):
         Dataset.model_validate(_dataset(contrasts=[_contrast(), _contrast()]))
 
 
@@ -61,5 +62,60 @@ def test_dataset_requires_a_licence() -> None:
 
 
 def test_dataset_rejects_an_accession_that_does_not_match_its_archive() -> None:
-    with pytest.raises(ValidationError, match="accession GSE123456 does not match archive 'pride'"):
+    with pytest.raises(
+        ValidationError, match="accession GSE123456 does not match archive 'pride'"
+    ):
         Dataset.model_validate(_dataset(id="GSE123456"))
+
+
+def test_archive_technology_map_is_total() -> None:
+    """A missing key would raise KeyError instead of a clean ValidationError."""
+    assert set(_ARCHIVE_TECHNOLOGIES) == set(Archive)
+    covered: set[Technology] = set()
+    for technologies in _ARCHIVE_TECHNOLOGIES.values():
+        covered |= technologies
+    assert covered == set(Technology)
+
+
+def test_rejects_mass_spec_technology_in_a_sequencing_archive() -> None:
+    with pytest.raises(ValidationError, match="phosphoproteomics"):
+        Dataset.model_validate(_dataset(id="GSE123456", archive="geo"))
+
+
+def test_rejects_sequencing_technology_in_pride() -> None:
+    with pytest.raises(ValidationError, match="bulk_rnaseq"):
+        Dataset.model_validate(_dataset(technology="bulk_rnaseq"))
+
+
+def test_accepts_sequencing_technology_in_geo() -> None:
+    dataset = Dataset.model_validate(
+        _dataset(id="GSE123456", archive="geo", technology="bulk_rnaseq")
+    )
+    assert dataset.technology == "bulk_rnaseq"
+
+
+def test_dataset_with_contrasts_needs_at_least_two_samples() -> None:
+    with pytest.raises(ValidationError):
+        Dataset.model_validate(_dataset(n_samples=1))
+
+
+def test_rejects_a_self_comparing_contrast() -> None:
+    with pytest.raises(ValidationError, match="case_group"):
+        Contrast.model_validate(_contrast(case_group="RV", control_group="rv "))
+
+
+def test_reports_every_duplicate_contrast_id() -> None:
+    with pytest.raises(ValidationError) as exc:
+        Dataset.model_validate(
+            _dataset(
+                contrasts=[
+                    _contrast(id="a"),
+                    _contrast(id="a"),
+                    _contrast(id="b"),
+                    _contrast(id="b"),
+                ]
+            )
+        )
+    message = str(exc.value)
+    assert "a" in message
+    assert "b" in message

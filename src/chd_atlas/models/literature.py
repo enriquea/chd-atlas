@@ -1,24 +1,11 @@
 # src/chd_atlas/models/literature.py
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Hashable, Iterable
-
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from chd_atlas.duplicates import duplicates
 from chd_atlas.identifiers import Doi, PhenotypeId, Pmcid, Pmid
 from chd_atlas.vocab import FeaturedTopic, LesionGroup, StudyType
-
-
-def _duplicates[T: Hashable](values: Iterable[T]) -> list[T]:
-    """Every value appearing more than once, in first-seen order.
-
-    Returns all of them rather than just the first: the corpus loader
-    accumulates errors so one run reports every problem, and a per-file check
-    that stopped at the first duplicate would make a curator fix them serially.
-    """
-    counts = Counter(values)
-    return [value for value, count in counts.items() if count > 1]
 
 
 class Publication(BaseModel):
@@ -46,9 +33,9 @@ class PublicationFile(BaseModel):
 
     @model_validator(mode="after")
     def ids_are_unique(self) -> PublicationFile:
-        duplicates = _duplicates(p.id for p in self.publications)
-        if duplicates:
-            raise ValueError(f"duplicate publication ids: {duplicates}")
+        found = duplicates(p.id for p in self.publications)
+        if found:
+            raise ValueError(f"duplicate publication ids: {found}")
         return self
 
 
@@ -70,9 +57,9 @@ class FeaturedFile(BaseModel):
 
     @model_validator(mode="after")
     def display_order_is_unique(self) -> FeaturedFile:
-        duplicates = _duplicates(entry.order for entry in self.featured)
-        if duplicates:
-            raise ValueError(f"duplicate display order: {duplicates}")
+        found = duplicates(entry.order for entry in self.featured)
+        if found:
+            raise ValueError(f"duplicate display order: {found}")
         return self
 
 
@@ -94,7 +81,7 @@ class PhenotypeFile(BaseModel):
 
     @model_validator(mode="after")
     def ids_are_unique(self) -> PhenotypeFile:
-        duplicates = _duplicates(term.id for term in self.phenotypes)
-        if duplicates:
-            raise ValueError(f"duplicate phenotype ids: {duplicates}")
+        found = duplicates(term.id for term in self.phenotypes)
+        if found:
+            raise ValueError(f"duplicate phenotype ids: {found}")
         return self

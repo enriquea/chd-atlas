@@ -1,11 +1,11 @@
 # src/chd_atlas/models/dataset.py
 from __future__ import annotations
 
-from collections import Counter
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from chd_atlas.duplicates import duplicates
 from chd_atlas.identifiers import AccessionId, ContrastId, Pmid, TaxonId
 from chd_atlas.vocab import Archive, Technology
 
@@ -14,6 +14,23 @@ _ACCESSION_PREFIX: Final[dict[Archive, tuple[str, ...]]] = {
     Archive.GEO: ("GSE",),
     Archive.ARRAYEXPRESS: ("E-",),
     Archive.EGA: ("EGAS", "EGAD"),
+}
+
+_MASS_SPEC: Final[frozenset[Technology]] = frozenset(
+    {Technology.TMT_MS, Technology.LFQ_MS, Technology.PHOSPHOPROTEOMICS}
+)
+_SEQUENCING: Final[frozenset[Technology]] = frozenset(
+    {Technology.BULK_RNASEQ, Technology.SCRNASEQ, Technology.MICROARRAY}
+)
+
+# PRIDE is the mass-spectrometry repository; GEO, ArrayExpress and EGA hold
+# sequencing and array data. A dataset filed under the wrong one is a curator
+# error, not an unusual deposit.
+_ARCHIVE_TECHNOLOGIES: Final[dict[Archive, frozenset[Technology]]] = {
+    Archive.PRIDE: _MASS_SPEC,
+    Archive.GEO: _SEQUENCING,
+    Archive.ARRAYEXPRESS: _SEQUENCING,
+    Archive.EGA: _SEQUENCING,
 }
 
 
@@ -34,6 +51,14 @@ class Contrast(BaseModel):
     software: str = Field(min_length=1)
     covariates: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def groups_differ(self) -> Contrast:
+        if self.case_group.strip().casefold() == self.control_group.strip().casefold():
+            raise ValueError(
+                f"case_group and control_group must differ, both are '{self.case_group}'"
+            )
+        return self
+
 
 class Dataset(BaseModel):
     """Top level of ``curation/datasets/<ACCESSION>.yaml``."""
@@ -46,7 +71,8 @@ class Dataset(BaseModel):
     tissue: str = Field(min_length=1)
     developmental_stage: str = Field(min_length=1)
     organism: TaxonId
-    n_samples: int = Field(ge=1)
+    # A dataset with contrasts declares at least a case and a control sample.
+    n_samples: int = Field(ge=2)
     licence: str = Field(min_length=1)
     contrasts: list[Contrast] = Field(min_length=1)
     publication: Pmid | None = None
@@ -62,8 +88,16 @@ class Dataset(BaseModel):
 
     @model_validator(mode="after")
     def contrast_ids_are_unique(self) -> Dataset:
-        counts = Counter(contrast.id for contrast in self.contrasts)
-        duplicate = next((cid for cid, n in counts.items() if n > 1), None)
-        if duplicate is not None:
-            raise ValueError(f"duplicate contrast {duplicate}")
+        found = duplicates(contrast.id for contrast in self.contrasts)
+        if found:
+            raise ValueError(f"duplicate contrast ids: {found}")
+        return self
+
+    @model_validator(mode="after")
+    def technology_matches_archive(self) -> Dataset:
+        if self.technology not in _ARCHIVE_TECHNOLOGIES[self.archive]:
+            raise ValueError(
+                f"technology '{self.technology.value}' is not deposited in "
+                f"archive '{self.archive.value}'"
+            )
         return self
