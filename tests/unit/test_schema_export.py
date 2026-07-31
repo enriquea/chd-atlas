@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from chd_atlas.schema_export import EXPORTED_MODELS, export_schemas
 
 
@@ -26,6 +28,30 @@ def test_export_is_byte_identical_across_runs(tmp_path: Path) -> None:
     first = (tmp_path / "assertion_file.schema.json").read_bytes()
     export_schemas(tmp_path)
     assert (tmp_path / "assertion_file.schema.json").read_bytes() == first
+
+
+def test_a_failed_write_leaves_the_previous_schema_intact(tmp_path: Path) -> None:
+    """A truncate-then-fail would leave a schema the drift test reports as stale
+    rather than corrupt.
+
+    The containing directory rather than the file itself is made read-only:
+    `os.replace` renames over a destination regardless of that destination's own
+    mode, so a read-only file would be overwritten and nothing would raise.
+    Removing write permission from the directory is what stops the write.
+    `assertion_file.schema.json` sorts first, so it is the file the failing
+    export would otherwise have written over.
+    """
+    export_schemas(tmp_path)
+    target = tmp_path / "assertion_file.schema.json"
+    before = target.read_bytes()
+
+    tmp_path.chmod(0o555)
+    try:
+        with pytest.raises(OSError):
+            export_schemas(tmp_path)
+        assert target.read_bytes() == before
+    finally:
+        tmp_path.chmod(0o755)
 
 
 def test_committed_schemas_match_the_models() -> None:
