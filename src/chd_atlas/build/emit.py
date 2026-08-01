@@ -106,10 +106,16 @@ class Emitter:
     relative to `root` and separated by forward slashes on every platform,
     because they are URLs to the consumer; nothing here rewrites a path, and
     `_write` rejects the shapes it cannot serve.
+
+    `_casefolded` maps the casefold of each written path back to the path itself,
+    so `_write` can refuse two paths a case-insensitive filesystem would merge.
+    It is maintained in step with `checksums`; code that inserts into `checksums`
+    directly rather than through `_write` defeats both guards.
     """
 
     root: Path
     checksums: dict[str, str] = field(default_factory=dict)
+    _casefolded: dict[str, str] = field(default_factory=dict, repr=False)
 
     def write_json(self, relative: str, payload: Json) -> None:
         self._write(relative, encode_json(payload))
@@ -139,6 +145,25 @@ class Emitter:
         # overwrite is no longer detectable.
         if relative in self.checksums:
             raise ValueError(f"{relative} written twice; the first artifact would be lost")
+        # Two paths differing only in case are two files on the Linux CI that
+        # builds the site and one file on the macOS APFS a curator develops on,
+        # where the second write replaces the first while `checksums` still
+        # advertises both. That publishes a URL serving another record's bytes
+        # under a checksum that cannot verify — worse than a 404, which at least
+        # reads as missing rather than as data. The environments disagreeing is
+        # what makes it costly: it passes every test locally and surfaces as a
+        # checksum mismatch in a deployed site.
+        #
+        # `paths.slug` cannot prevent this. It is injective over strings, and
+        # case is precisely what these filesystems discard: `HGNC:11604` is an
+        # `HgncId` and `hgnc_11604` a `ContrastId`, and they slug to
+        # `HGNC_11604` and `hgnc_11604`. Nothing builds both today; the omics
+        # shards keyed by `ContrastId` are what would.
+        if (clash := self._casefolded.get(relative.casefold())) is not None:
+            raise ValueError(
+                f"{relative} and {clash} differ only in case; a case-insensitive "
+                f"filesystem would keep only one of the two"
+            )
         path = self.root.joinpath(*segments)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_bytes_atomically(path, raw)
@@ -146,3 +171,4 @@ class Emitter:
         # differ, and only the former is what a consumer can verify against what
         # it downloaded. There is no read-back here — `raw` is those exact bytes.
         self.checksums[relative] = checksum(raw)
+        self._casefolded[relative.casefold()] = relative

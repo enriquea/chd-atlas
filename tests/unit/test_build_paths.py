@@ -1,9 +1,10 @@
 # tests/unit/test_build_paths.py
-from typing import Final
+from typing import Final, NewType
 
 import pytest
 from pydantic import TypeAdapter
 
+from chd_atlas import identifiers
 from chd_atlas.build.paths import gene_bundle_path, slug
 from chd_atlas.identifiers import (
     AccessionId,
@@ -75,6 +76,10 @@ SAMPLE: Final = [
         # mutation dropping "-" from the safe set has to fail somewhere.
         ("Q99593-2", "Q99593-2"),
         ("E-MTAB-1234", "E-MTAB-1234"),
+        # No grammar admits a space, but `slug` takes `str` and the "n/a" row
+        # above establishes that vocabulary values reach it. A space surviving
+        # into a published path is one every consumer must percent-encode.
+        ("atrial septal defect", "atrial_septal_defect"),
     ],
 )
 def test_slug_replaces_every_character_unsafe_in_a_path(value: str, expected: str) -> None:
@@ -101,8 +106,11 @@ def test_slug_is_injective_over_the_ascii_values_of_every_grammar_but_doi() -> N
     grammar bearing a colon starts with one — and the hyphen and dot, which the
     parametrised cases above pin, are left alone entirely.
 
-    Two things this does not cover, each with its own test below: `Doi`, and any
-    non-ASCII value of any grammar.
+    Three things this does not cover, each with its own test below: `Doi`, any
+    non-ASCII value of any grammar, and two values a case-insensitive filesystem
+    stores as one file. A fourth is beyond it: a grammar added to
+    `identifiers.py` with no value in `SAMPLE`, which is why
+    `test_the_sample_covers_every_grammar_that_exists` exists.
     """
     values = [value for _, value in SAMPLE]
     assert len({slug(value) for value in values}) == len(values)
@@ -145,5 +153,42 @@ def test_slug_cannot_separate_non_ascii_digits_so_injectivity_is_ascii_only() ->
     assert len({gene_bundle_path(value) for value in colliding}) == 1
 
 
+def test_slug_separates_identifiers_that_a_case_insensitive_filesystem_would_not() -> None:
+    """The third exception, and the only one that leaves the string domain.
+
+    `slug` is injective over strings, so these two get distinct slugs and the
+    injectivity test above is satisfied. APFS and NTFS store them as one file:
+    the second write replaces the first while the manifest advertises both, so a
+    URL serves another record's bytes under a checksum that cannot verify.
+
+    Note what the pair demonstrates about the proof: the only thing separating
+    these two values is case, which is exactly what those filesystems discard.
+    Nothing builds both paths today — `gene_bundle_path` takes an `HgncId` — and
+    `Emitter._write` carries a casefolded guard for when something does.
+    """
+    gene, contrast = "HGNC:11604", "hgnc_11604"
+    assert TypeAdapter(HgncId).validate_python(gene) == gene
+    assert TypeAdapter(ContrastId).validate_python(contrast) == contrast
+
+    assert slug(gene) != slug(contrast)
+    assert slug(gene).casefold() == slug(contrast).casefold()
+
+
+def test_the_sample_covers_every_grammar_that_exists() -> None:
+    """`SAMPLE`'s comment claims full coverage; this is what makes that true.
+
+    The injectivity argument is only as good as the sample it is checked
+    against, and a grammar added to `identifiers.py` would otherwise be waved
+    through silently — the hand-maintained weakness `slug`'s docstring admits to.
+    `Doi` is the deliberate omission and is pinned by its own test.
+    """
+    declared = {
+        name for name, obj in vars(identifiers).items() if isinstance(obj, NewType)
+    }
+    covered = {type_.__name__ for type_, _ in SAMPLE}
+    assert declared, "no NewType grammars found; the introspection above has rotted"
+    assert declared - covered == {"Doi"}
+
+
 def test_gene_bundle_path_is_relative_and_forward_slashed() -> None:
-    assert gene_bundle_path("HGNC:11604") == "genes/HGNC_11604.json"
+    assert gene_bundle_path(HgncId("HGNC:11604")) == "genes/HGNC_11604.json"

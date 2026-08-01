@@ -163,6 +163,65 @@ def test_writing_one_path_twice_is_refused(tmp_path: Path) -> None:
     assert json.loads(written) == {"genes": ["first"]}
 
 
+# Both orderings, because they fail differently. The stored key is casefolded, so
+# a guard that looked up the incoming path *without* casefolding it would still
+# match when the second path is the all-lowercase one — and would silently miss
+# when the second path carries the capitals. Only the second row catches that.
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("genes/HGNC_11604.json", "genes/hgnc_11604.json"),
+        ("genes/hgnc_11604.json", "genes/HGNC_11604.json"),
+    ],
+)
+def test_two_paths_differing_only_in_case_are_refused(
+    tmp_path: Path, first: str, second: str
+) -> None:
+    """A case-insensitive filesystem keeps one file for the two, silently.
+
+    `paths.slug` is injective over strings, but case is what APFS and NTFS
+    discard: `HGNC:11604` is a valid `HgncId` and `hgnc_11604` a valid
+    `ContrastId`, and they slug to these two paths. Left unguarded on macOS the
+    second write replaces the first while `checksums` advertises both, so a
+    published URL serves another record's bytes under a checksum that cannot
+    verify. The Linux CI would build two files from the same input and never
+    reproduce it.
+    """
+    emitter = Emitter(root=tmp_path)
+    emitter.write_json(first, {"record": "first"})
+
+    with pytest.raises(ValueError, match="differ only in case"):
+        emitter.write_json(second, {"record": "second"})
+
+    # As with the exact-duplicate guard, the first artifact is the one that
+    # survives, so the check must precede the write.
+    assert list(emitter.checksums) == [first]
+    assert [p.name for p in (tmp_path / "genes").iterdir()] == [first.split("/")[1]]
+    assert json.loads((tmp_path / first).read_bytes()) == {"record": "first"}
+
+
+def test_the_case_guard_reports_a_different_failure_than_the_exact_one(tmp_path: Path) -> None:
+    """Two distinct bugs: one path built twice, versus two paths one disk merges.
+
+    The first is a curation duplicate and reproduces everywhere; the second only
+    loses data on a case-insensitive filesystem. A single shared message would
+    send a curator looking for the wrong thing.
+    """
+    emitter = Emitter(root=tmp_path)
+    emitter.write_json("genes/A.json", {})
+
+    with pytest.raises(ValueError, match="written twice") as exact:
+        emitter.write_json("genes/A.json", {})
+    with pytest.raises(ValueError, match="differ only in case") as folded:
+        emitter.write_json("genes/a.json", {})
+
+    # The case message must name both paths; the curator cannot find the other
+    # one by grepping for a filename that is not in the error.
+    assert "genes/a.json" in str(folded.value)
+    assert "genes/A.json" in str(folded.value)
+    assert "differ only in case" not in str(exact.value)
+
+
 @pytest.mark.parametrize(
     "relative",
     ["/tmp/absolute.json", "../escape.json", "a/../b.json", "", "a//b.json", "./a.json"],
