@@ -114,6 +114,9 @@ class Emitter:
     exact-duplicate guard but is invisible to the case guard, so the direction it
     weakens is the silent one.
 
+    `_sealed` records that the build has been published and no further write is
+    accepted; see `seal`.
+
     Case is one of two axes on which a filesystem merges names; normalisation is
     the other. macOS will treat NFC and NFD spellings of one name as one file, and
     this does not check that. Unreachable through `paths.slug`, whose output is
@@ -123,6 +126,7 @@ class Emitter:
     root: Path
     checksums: dict[str, str] = field(default_factory=dict)
     _casefolded: dict[str, str] = field(default_factory=dict, repr=False)
+    _sealed: bool = field(default=False, repr=False)
 
     def write_json(self, relative: str, payload: Json) -> None:
         self._write(relative, encode_json(payload))
@@ -130,7 +134,39 @@ class Emitter:
     def write_json_gz(self, relative: str, payload: Json) -> None:
         self._write(relative, compress(encode_json(payload)))
 
+    def seal(self) -> None:
+        """Refuse every write from here on, because the build has been published.
+
+        `checksums` is the manifest's entire `files` mapping, so once the
+        manifest is on disk a later write publishes a URL that appears in no
+        manifest and carries no checksum: invisible to any consumer that
+        verifies what it downloaded, and afterwards indistinguishable from a
+        file that was meant to be there. That the manifest must be written last
+        was documented and unenforced; the violation was reproduced by writing
+        one shard after it, which left the file served with nothing raised.
+
+        A guard on a bypassed gate, on the same footing as the duplicate-path
+        and case-fold checks below and `encode_json`'s `allow_nan=False`:
+        reaching it means the build was assembled in the wrong order, and a
+        wrongly assembled build must fail rather than publish. Nothing in an
+        ordinary build can trip it.
+
+        This module still knows nothing about manifests beyond the wording of
+        one error message. It is `build/manifest.py` that decides a build ends
+        when the manifest is written, and it calls this; the alternative —
+        testing `"manifest.json" in self.checksums` here — would put a
+        filename this module does not own into its logic.
+        """
+        self._sealed = True
+
     def _write(self, relative: str, raw: bytes) -> None:
+        # Before the path is even looked at: a write arriving here at all means
+        # the build was assembled in the wrong order, which is true whatever
+        # path it carries. See `seal`.
+        if self._sealed:
+            raise ValueError(
+                f"{relative} written after the manifest; it would be served with no checksum"
+            )
         segments = relative.split("/")
         # An absolute or dot-bearing path desynchronises the manifest from the
         # disk rather than failing: "/tmp/a.json" splits to a leading "" that
