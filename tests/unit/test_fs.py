@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from chd_atlas.fs import list_dir
+from chd_atlas.fs import list_dir, write_bytes_atomically
 
 
 def test_lists_entries_in_sorted_order(tmp_path: Path) -> None:
@@ -73,3 +73,50 @@ def test_a_dotfile_the_sweeps_expect_is_still_listed(tmp_path: Path) -> None:
     entries, _ = list_dir(tmp_path, "CUR001")
 
     assert [entry.name for entry in entries] == [".id_registry.yaml"]
+
+
+def test_atomic_write_replaces_content_completely(tmp_path: Path) -> None:
+    path = tmp_path / "out.json"
+    path.write_bytes(b"old content that is longer than the new")
+
+    write_bytes_atomically(path, b"new")
+
+    assert path.read_bytes() == b"new"
+
+
+def test_atomic_write_leaves_no_temporary_file_behind(tmp_path: Path) -> None:
+    path = tmp_path / "out.json"
+
+    write_bytes_atomically(path, b"payload")
+
+    assert [entry.name for entry in tmp_path.iterdir()] == ["out.json"]
+
+
+def test_a_failed_write_leaves_the_original_intact_and_no_debris(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Truncate-then-write would leave a half-written file the drift test misreads.
+
+    The schema drift check compares committed bytes against freshly generated
+    ones, so a truncated file reads as merely stale and sends a curator to re-run
+    an export rather than telling them the file on disk is not a schema at all.
+
+    The failure is injected at `os.replace` rather than at the write itself
+    because `io.BufferedWriter` is an immutable C type and cannot be patched --
+    the test would then fail on the patch and never exercise the guard.
+    """
+    path = tmp_path / "out.json"
+    path.write_bytes(b"original")
+
+    def explode(source: object, target: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("chd_atlas.fs.os.replace", explode)
+
+    with pytest.raises(OSError):
+        write_bytes_atomically(path, b"replacement")
+
+    assert path.read_bytes() == b"original"
+    # The temporary must be cleaned up, or a failed build leaves debris that the
+    # stray-entry sweeps would later report as an unexpected file.
+    assert [entry.name for entry in tmp_path.iterdir()] == ["out.json"]

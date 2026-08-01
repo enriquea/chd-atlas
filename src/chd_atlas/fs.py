@@ -1,8 +1,10 @@
 # src/chd_atlas/fs.py
-"""Filesystem reads that report failure instead of raising it."""
+"""Filesystem access: reads that report failure instead of raising it, writes that land whole."""
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Final
 
@@ -50,3 +52,30 @@ def list_dir(directory: Path, code: str) -> tuple[list[Path], list[ValidationIss
             f"could not list directory: {exc}",
         )
         return [], [issue]
+
+
+def write_bytes_atomically(path: Path, payload: bytes) -> None:
+    """Replace ``path`` with ``payload`` in a single step.
+
+    Opening the destination for writing truncates it before the payload lands,
+    so a write that failed part-way left a truncated file while its siblings kept
+    their previous content. Every consumer of these files — the schema drift
+    test, the build manifest — compares bytes, and would report the corrupted
+    file as merely stale rather than as not a file of that kind at all.
+
+    Writing a sibling temporary and renaming it leaves the target as either its
+    old content or the complete new content, never a prefix of the new one.
+    """
+    # A sibling so `os.replace` stays within one filesystem, where it is atomic.
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+        # `mkstemp` creates at 0600, which would leave a published artifact
+        # owner-only on whichever machine generated it.
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise

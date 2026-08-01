@@ -8,15 +8,15 @@ ID permanently: the counter never rewinds.
 
 from __future__ import annotations
 
-import os
-import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
+from chd_atlas.fs import write_bytes_atomically
 from chd_atlas.issues import Severity, ValidationIssue
 
 _ID_WIDTH = 7
@@ -153,21 +153,9 @@ def save_id_registry(root: Path, registry: IdRegistry) -> None:
     yaml = YAML()
     yaml.default_flow_style = False
 
-    # The temporary file is a sibling so that `os.replace` stays within one
-    # filesystem, where it is atomic.
-    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
-    temporary = Path(name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            yaml.dump({"prefixes": dict(sorted(registry.prefixes.items()))}, handle)
-        # `mkstemp` creates at 0600, which would leave this committed artifact
-        # owner-only on whichever machine wrote it. Set the mode explicitly so
-        # it does not depend on how the file happened to be made.
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+    stream = StringIO()
+    yaml.dump({"prefixes": dict(sorted(registry.prefixes.items()))}, stream)
+    write_bytes_atomically(path, stream.getvalue().encode("utf-8"))
 
 
 def validate_ids(ids: list[str], registry: IdRegistry) -> list[ValidationIssue]:
