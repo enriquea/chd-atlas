@@ -5,8 +5,8 @@ A bundle is what replaces a backend: a gene detail page is one fetch of one
 small file, joined here so that no client ever has to assemble a gene's
 assertions, functional records, variants and omics summaries itself.
 
-`genes/index.json` is the other half, and the only payload every visitor
-downloads before they have picked a gene. It carries what the browser ranks and
+`genes/index.json` is the other half: the browse payload, downloaded by every
+visitor before they have picked a gene. It carries what the browser ranks and
 filters on plus the path to fetch the rest, and none of the evidence itself —
 that is what keeps it small as curation grows, and why the bundle is a separate
 file rather than a section of this one.
@@ -22,10 +22,11 @@ the other half of that pair; `_headline` below is the single place either is
 written, so a payload cannot come to carry the confidence without the flag.
 
 Every path the index advertises must be a file that was written. `bundle` is the
-URL a detail page is fetched from and nothing downstream checks it — the
-manifest records what was written, not what was promised, so a dead link would
-pass every existing gate. One `gene_bundle_path` call per gene supplies both the
-index entry and the write, which is what makes the two agree by construction.
+URL a detail page is fetched from, and nothing downstream can catch a wrong one:
+`Emitter.checksums` records what the build wrote, never what a payload promised,
+so a dead link is published with every checksum verifying and every gate green.
+One `gene_bundle_path` call per gene supplies both the index entry and the
+write, which is what makes the two agree by construction rather than by review.
 """
 
 from __future__ import annotations
@@ -102,10 +103,13 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
     and `has_conflicting_evidence` are written together. Dropping the flag from
     one payload alone is not an edit that can be made here by accident.
 
-    `.value` on each enum is redundant at runtime, since a `StrEnum` member *is*
-    a `str` and `json.dumps` writes it as its value either way. It is here so
-    that a vocabulary changed to a plain `Enum` fails type checking rather than
-    silently publishing "Classification.DEFINITIVE".
+    `.value` publishes the vocabulary's string rather than leaning on a `StrEnum`
+    member *being* a `str`. Measured, not assumed: mypy accepts either spelling
+    inside a payload this size, and `json.dumps` writes the same bytes for both
+    today. What differs is a vocabulary that stops being a `StrEnum` — the bare
+    member would then fail type checking here and be refused by `json.dumps`,
+    while `.value` keeps publishing the same JSON. Neither is a trap; `.value` is
+    the one that states at the call site what the file will contain.
     """
     return {
         "gene": gene,

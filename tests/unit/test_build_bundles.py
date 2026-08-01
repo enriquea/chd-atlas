@@ -4,6 +4,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from chd_atlas.build.bundles import build_genes
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.omics import ModalitySummary
@@ -11,10 +13,9 @@ from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import Evidence, GeneDiseaseAssertion, SupplementaryLocator
 from chd_atlas.models.functional import FunctionalEvidence
 
-# Two real HGNC ids whose lexical order is the reverse of their symbols':
-# "HGNC:11604" sorts before "HGNC:4173", while "GATA4" sorts before "TBX5".
-# Several tests below rely on that disagreement to tell one ordering rule from
-# the other.
+# Two HGNC ids whose lexical order is the reverse of their symbols': "HGNC:11604"
+# sorts before "HGNC:4173", while "GATA4" sorts before "TBX5". Several tests
+# below rely on that disagreement to tell one ordering rule from the other.
 TBX5 = "HGNC:11604"
 GATA4 = "HGNC:4173"
 SYMBOLS = {TBX5: "TBX5", GATA4: "GATA4"}
@@ -186,9 +187,9 @@ def test_every_bundle_path_the_index_advertises_was_written(tmp_path: Path) -> N
 
     `bundle` is the URL a detail page is fetched from, so an index entry whose
     path was never written is a dead link that nothing else in the build
-    notices: the manifest lists what was written, not what was promised. The
-    two are produced by one `gene_bundle_path` call per gene, and this is what
-    holds them together if that stops being true.
+    notices: `emitter.checksums` records what was written, never what a payload
+    promised. The two come from one `gene_bundle_path` call per gene, and this
+    is what holds them together if that stops being true.
     """
     corpus = _corpus(
         assertions=(
@@ -657,9 +658,36 @@ def test_a_gene_with_omics_and_variants_but_no_assertion_is_not_published(
     assert set(emitter.checksums) == {"genes/index.json", "genes/HGNC_11604.json"}
 
 
+def test_a_bundle_that_cannot_be_written_leaves_no_index_at_all(tmp_path: Path) -> None:
+    """The index is written last, so it never advertises a file nothing wrote.
+
+    `Emitter` refuses to write one path twice — two genes normalising to one
+    filename is a curation bug, not a build that should quietly publish one page
+    where two were expected — and the refusal is what a pre-filled `checksums`
+    reproduces here without needing that exotic pair of identifiers.
+
+    Emitting the index first would leave `genes/index.json` on disk pointing at
+    a bundle the build then failed to produce. The build fails either way; what
+    this pins is which artifacts exist when it does. `Emitter` writes each file
+    as it reaches it, so everything written before the failure stays where it
+    landed.
+    """
+    emitter = Emitter(root=tmp_path, checksums={"genes/HGNC_11604.json": "sha256:0"})
+
+    with pytest.raises(ValueError, match="written twice"):
+        build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
+
+    assert not (tmp_path / "genes" / "index.json").exists()
+    assert "genes/index.json" not in emitter.checksums
+
+
 def test_the_index_is_emitted_for_an_empty_corpus(tmp_path: Path) -> None:
-    """A consumer telling "no genes yet" from "wrong URL" by reading a 404 gets
-    it wrong, and the browse page fetches this before it knows either."""
+    """Emitted with nothing to list, rather than left absent.
+
+    A consumer that has to tell "no genes curated yet" from "wrong URL" by
+    reading a 404 will get it wrong, and the browse page fetches this before it
+    can know either.
+    """
     emitter = Emitter(root=tmp_path)
 
     build_genes(Corpus(root=Path(".")), emitter, symbols={}, omics={}, variants={})
