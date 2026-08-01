@@ -76,29 +76,30 @@ def test_headline_confidence_is_the_strongest_classification() -> None:
     assert facts["HGNC:11604"].headline_confidence == Classification.DEFINITIVE
 
 
-def test_a_contested_gene_carries_the_conflict_flag() -> None:
+def test_the_conflict_flag_is_set_by_contradiction_and_by_nothing_else() -> None:
     """Spec 5.2: a contested gene must never be displayed as settled.
 
     `strongest` ranks refuted below definitive on one linear scale, so rank alone
-    resolves this gene to `definitive` and buries the refutation. The flag is what
-    stops the browse layer presenting it as settled.
+    resolves the first gene here to `definitive` and buries the refutation. The
+    flag is what stops the browse layer presenting it as settled.
+
+    Both directions in one test, because a flag pinned to a constant is the
+    obvious way this breaks and only one of the two assertions notices each
+    constant: pinned true, the uncontested corpus is the sole witness; pinned
+    false, the contested one is.
     """
-    corpus = _corpus(
+    contested = _corpus(
         assertions=(
             _assertion(id="CHDA:AST:0000001", classification="definitive"),
             _assertion(id="CHDA:AST:0000002", classification="refuted"),
         )
     )
 
-    facts = gene_facts(corpus)
+    facts = gene_facts(contested)
 
     assert facts["HGNC:11604"].headline_confidence == Classification.DEFINITIVE
     assert facts["HGNC:11604"].has_conflicting_evidence is True
-
-
-def test_an_uncontested_gene_does_not_carry_the_flag() -> None:
-    facts = gene_facts(_corpus())
-    assert facts["HGNC:11604"].has_conflicting_evidence is False
+    assert gene_facts(_corpus())["HGNC:11604"].has_conflicting_evidence is False
 
 
 def test_each_gene_is_derived_only_from_its_own_assertions() -> None:
@@ -297,7 +298,17 @@ def test_lesion_groups_are_sorted_rather_than_first_seen() -> None:
     )
 
 
-def test_assertions_are_counted_per_gene() -> None:
+def test_assertions_are_counted_per_gene_and_the_genes_come_back_sorted() -> None:
+    """The returned mapping is ordered by gene id, not by the order they arrived.
+
+    Nothing else in this file looked at `facts`' own key order, so dropping the
+    `sorted(by_gene)` in `gene_facts` passed the whole suite — which is what the
+    second assertion is here for. The assertions below are deliberately curated
+    HGNC:11604 first and HGNC:11599 last, so insertion order and sorted order
+    disagree and the check cannot pass by coincidence. A consumer that iterates
+    `facts.items()` into a JSON array would otherwise have its gene index
+    reordered by an unrelated file rename.
+    """
     corpus = _corpus(
         assertions=(
             _assertion(id="CHDA:AST:0000001"),
@@ -310,6 +321,7 @@ def test_assertions_are_counted_per_gene() -> None:
 
     assert facts["HGNC:11604"].assertion_count == 2
     assert facts["HGNC:11599"].assertion_count == 1
+    assert list(facts) == ["HGNC:11599", "HGNC:11604"]
 
 
 def test_every_functional_record_about_a_gene_is_counted() -> None:
@@ -338,7 +350,7 @@ def test_every_functional_record_about_a_gene_is_counted() -> None:
     # it is not the one chosen. A gene with nothing asserted has no confidence to
     # display, so there is no headline it could be given.
     assert "HGNC:11599" not in facts
-
-
-def test_a_gene_with_no_functional_records_counts_zero() -> None:
+    # And the other end of the count: a gene with no functional record at all
+    # reports zero rather than raising, which is what the `Counter` buys over a
+    # plain dict.
     assert gene_facts(_corpus())["HGNC:11604"].functional_count == 0

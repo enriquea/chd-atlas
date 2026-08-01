@@ -26,9 +26,15 @@ GENES_HEADER = (
 )
 
 
-def _row(gene: str, fdr: str, log2fc: str = "1.0", dataset: str = "PXD012345") -> str:
+def _row(
+    gene: str,
+    fdr: str,
+    log2fc: str = "1.0",
+    dataset: str = "PXD012345",
+    contrast: str = "tof_vs_control",
+) -> str:
     return (
-        f"{dataset}\ttof_vs_control\t{gene}\t{log2fc}\t0.001\t{fdr}\tup\t"
+        f"{dataset}\t{contrast}\t{gene}\t{log2fc}\t0.001\t{fdr}\tup\t"
         f"10\t10\tRV\tinfant\n"
     )
 
@@ -63,26 +69,22 @@ def _table(tmp_path: Path, table: str, filename: str, text: str) -> None:
     (tmp_path / "mirrors" / table / filename).write_text(text)
 
 
-def test_emits_one_shard_per_dataset_table(tmp_path: Path) -> None:
-    root = _repo(tmp_path, _row("HGNC:11604", "0.01"))
-    emitter = Emitter(root=tmp_path / "dist")
-
-    build_omics(root, emitter)
-
-    assert "omics/expression/PXD012345.json" in emitter.checksums
-
-
 def test_a_shard_holds_the_rows_the_summary_only_counts(tmp_path: Path) -> None:
     """The shard is the half of the design that carries the evidence.
 
-    Every other assertion in this file reads `emitter.checksums`, which records
-    paths and digests — so all of them together verify that shard files exist at
-    the right URLs and none of them that the files contain anything. Publishing
+    Most assertions in this file read `emitter.checksums`, which records paths
+    and digests — so all of them together verify that shard files exist at the
+    right URLs and none of them that the files contain anything. Publishing
     every shard as `{"table": ..., "rows": []}` passes the rest of this suite:
     the bundle still advertises counts and shard links, every checksum still
     verifies, and every gene's omics tab renders blank. That is this module's own
     stated failure — evidence absent while the build reports success — with the
     empty half moved from the summary to the file it links to.
+
+    Reading the file back is also what pins the shard's URL, so the separate test
+    that only asserted `"omics/expression/PXD012345.json" in emitter.checksums`
+    is gone: every mutation of the path it caught moves this file too, and this
+    one additionally notices an empty or misnamed payload at that URL.
 
     `n_case` is asserted to still be an `int` because JSON has one number type
     and the atlas has coordinates and sample counts in it: a count republished as
@@ -213,40 +215,6 @@ def test_tables_that_are_not_dataset_linked_get_no_shard(tmp_path: Path) -> None
     assert summaries == {}
 
 
-def test_phospho_rows_reach_a_gene_through_the_uniprot_column(tmp_path: Path) -> None:
-    """Phospho rows are keyed on protein; only genes.tsv can map them to a gene.
-
-    Without the join a gene's phospho evidence would silently be absent from its
-    bundle while sitting in a shard nothing links to.
-    """
-    _registry(tmp_path, _gene_row("HGNC:11604", "TBX5", "Q99593"))
-    _table(tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("Q99593", 12))
-    emitter = Emitter(root=tmp_path / "dist")
-
-    summaries = build_omics(tmp_path, emitter)
-
-    assert summaries["HGNC:11604"]["phospho"]["count"] == 1
-
-
-def test_a_phospho_row_naming_an_isoform_still_reaches_its_gene(tmp_path: Path) -> None:
-    """`UNIPROT_PATTERN` admits "Q99593-2", and phospho data routinely uses it.
-
-    A quantified site is reported against the isoform it was mapped to, while the
-    registry records the gene's canonical accession. Matching the two literally
-    drops every such row: measured against the unstripped join, this fixture
-    summarised no gene at all while the shard was still written and published.
-    """
-    _registry(tmp_path, _gene_row("HGNC:11604", "TBX5", "Q99593"))
-    _table(
-        tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("Q99593-2", 12)
-    )
-    emitter = Emitter(root=tmp_path / "dist")
-
-    summaries = build_omics(tmp_path, emitter)
-
-    assert summaries["HGNC:11604"]["phospho"]["count"] == 1
-
-
 def test_an_isoform_specific_registry_entry_wins_over_the_canonical_one(
     tmp_path: Path,
 ) -> None:
@@ -271,24 +239,38 @@ def test_an_isoform_specific_registry_entry_wins_over_the_canonical_one(
     assert sorted(summaries) == ["HGNC:99999"]
 
 
+# One row per direction the isoform suffix can disagree in, and one mutant each
+# that only that row catches: strip the suffix from the row only and the second
+# row reaches no gene; strip it from the registry only and the first does not.
+# A third row naming two *different* isoforms ("Q99593-3" against "Q99593-2")
+# used to sit here and caught neither of those on its own, so it is gone.
 @pytest.mark.parametrize(
     ("registry", "reported"),
-    [("Q99593-2", "Q99593"), ("Q99593-3", "Q99593-2")],
+    [("Q99593", "Q99593-2"), ("Q99593-2", "Q99593")],
 )
-def test_an_isoform_in_the_registry_matches_a_row_naming_another_form(
+def test_a_phospho_row_reaches_its_gene_whichever_side_names_the_isoform(
     tmp_path: Path, registry: str, reported: str
 ) -> None:
-    """The suffix can differ on either side, so normalising one side is not enough.
+    """Phospho rows are keyed on protein; only genes.tsv can map them to a gene.
+
+    Without the join a gene's phospho evidence would silently be absent from its
+    bundle while sitting in a shard nothing links to. The plain case — both sides
+    naming the same canonical accession — is exercised by
+    `test_the_tie_break_orders_a_position_as_a_number`, so it is not repeated
+    here; what needs its own fixture is the suffix disagreeing.
 
     `UNIPROT_PATTERN` admits the isoform form in `genes.uniprot` exactly as it
-    does in `phospho.protein`, so a curator recording "Q99593-2" for the gene
-    makes every canonical-accession row invisible to it, and two rows naming
-    different isoforms of one protein never meet at all. Measured against a join
-    that stripped the suffix from the row only, both rows below reached no gene
-    while their shard was still written and published.
+    does in `phospho.protein`, and both directions occur: a quantified site is
+    reported against the isoform it was mapped to while the registry usually
+    records the canonical accession, and a curator recording "Q99593-2" for the
+    gene makes every canonical-accession row invisible to it. Matching the two
+    literally drops every such row — measured against the unstripped join, both
+    fixtures below summarised no gene at all while their shard was still written
+    and published.
 
-    The reverse direction — registry canonical, row isoform — is covered above,
-    and the exact-match precedence that must survive this is covered below.
+    Normalising one side only is the half-fix that looks right and is not: it
+    answers whichever direction it was written for and silently drops the other.
+    The exact-match precedence that must survive all this is covered above.
     """
     _registry(tmp_path, _gene_row("HGNC:11604", "TBX5", registry))
     _table(
@@ -302,29 +284,6 @@ def test_an_isoform_in_the_registry_matches_a_row_naming_another_form(
     summaries = build_omics(tmp_path, emitter)
 
     assert summaries["HGNC:11604"]["phospho"]["count"] == 1
-
-
-def test_an_accession_shared_by_several_genes_reaches_all_of_them(
-    tmp_path: Path,
-) -> None:
-    """One UniProt entry covers every gene encoding an identical protein.
-
-    The histone clusters are the standard case: H4C1 through H4C16 all resolve to
-    P62805. Nothing in the schema makes `uniprot` unique — it is not part of the
-    sort key — so a map of accession to *one* gene keeps whichever row was read
-    last and drops the rest of the cluster's phospho evidence in silence.
-    """
-    _registry(
-        tmp_path,
-        _gene_row("HGNC:4781", "H4C1", "P62805") + _gene_row("HGNC:4787", "H4C2", "P62805"),
-    )
-    _table(tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("P62805", 2))
-    emitter = Emitter(root=tmp_path / "dist")
-
-    summaries = build_omics(tmp_path, emitter)
-
-    assert summaries["HGNC:4781"]["phospho"]["count"] == 1
-    assert summaries["HGNC:4787"]["phospho"]["count"] == 1
 
 
 def test_a_proteomics_row_with_no_gene_falls_back_to_the_protein_join(
@@ -462,14 +421,23 @@ def test_a_gene_named_by_a_row_outranks_the_accession_registry(tmp_path: Path) -
     assert sorted(summaries) == ["HGNC:11604"]
 
 
-def test_the_tie_break_sorts_a_null_before_a_value(tmp_path: Path) -> None:
-    """`profiles.stage` is the only nullable column in any omics sort key.
+def test_a_table_with_no_fdr_is_ranked_by_its_own_sort_key_nulls_first(
+    tmp_path: Path,
+) -> None:
+    """`profiles` is an abundance table: it reports no significance at all.
 
-    It is also the case that matters most: `profiles` reports no FDR, so the
-    tie-break is not a tie-break there but the whole ranking. Nulls first is what
-    `validate/sort_order.py::_precedes` treats as canonical, and the two rows
-    below differ in nothing else — written value-first, so leaving nulls last or
-    not sorting at all both produce the reverse.
+    Ranking on a column that is not there has to fall through to something
+    defined rather than to whichever row polars happened to yield first, so the
+    tie-break is not a tie-break here but the whole ranking — which is why this
+    is the fixture that pins it. `profiles.stage` is also the only nullable
+    column in any omics sort key, and nulls first is what
+    `validate/sort_order.py::_precedes` treats as canonical.
+
+    Both halves in one fixture of three rows, written in the reverse of the
+    table's sort key so that leaving nulls last, ordering the key the other way
+    and not sorting at all each produce a different answer from the one below.
+    `tissue` precedes `stage` in `profiles.sort_key`, so LV sorts ahead of both
+    RV rows regardless of their stage, and the null stage leads within RV.
     """
     _table(
         tmp_path,
@@ -477,14 +445,19 @@ def test_the_tie_break_sorts_a_null_before_a_value(tmp_path: Path) -> None:
         "GSE000001.tsv",
         PROFILES_HEADER
         + "GSE000001\tHGNC:11604\tRV\tinfant\t5.0\ttpm\t\t\t3\n"
-        + "GSE000001\tHGNC:11604\tRV\t\t9.0\ttpm\t\t\t3\n",
+        + "GSE000001\tHGNC:11604\tRV\t\t9.0\ttpm\t\t\t3\n"
+        + "GSE000001\tHGNC:11604\tLV\tinfant\t7.0\ttpm\t\t\t3\n",
     )
     emitter = Emitter(root=tmp_path / "dist")
 
     summaries = build_omics(tmp_path, emitter)
 
     top = summaries["HGNC:11604"]["profiles"]["top"]
-    assert [row["stage"] for row in top] == [None, "infant"]
+    assert [(row["tissue"], row["stage"]) for row in top] == [
+        ("LV", "infant"),
+        ("RV", None),
+        ("RV", "infant"),
+    ]
 
 
 def test_the_tie_break_orders_a_position_as_a_number(tmp_path: Path) -> None:
@@ -524,10 +497,19 @@ def test_a_row_reporting_no_fdr_ranks_below_every_row_that_does(
     slice; ranking it as zero does the same thing. Both are killed by spelling
     the whole order out, and nothing else in this file mixes rows with and
     without an FDR inside one modality.
+
+    The three rows also carry three different contrasts, ordered so that the
+    table's own sort key disagrees with the FDR order. That is what pins
+    significance as the *first* component of `_rank` rather than merely a
+    component of it: with the canonical key promoted above significance the rows
+    come back a_vs, b_vs, c_vs — which is FDR order 0.02, None, 0.01 — and every
+    row sharing one contrast, as they did before, cannot tell the two apart.
     """
     root = _repo(
         tmp_path,
-        _row("HGNC:11604", "0.02") + _row("HGNC:11604", "") + _row("HGNC:11604", "0.01"),
+        _row("HGNC:11604", "0.02", contrast="a_vs_control")
+        + _row("HGNC:11604", "", contrast="b_vs_control")
+        + _row("HGNC:11604", "0.01", contrast="c_vs_control"),
     )
     emitter = Emitter(root=tmp_path / "dist")
 
@@ -535,31 +517,6 @@ def test_a_row_reporting_no_fdr_ranks_below_every_row_that_does(
 
     top = summaries["HGNC:11604"]["expression"]["top"]
     assert [row["fdr"] for row in top] == [0.01, 0.02, None]
-
-
-def test_a_table_with_no_fdr_column_is_ranked_by_its_own_sort_key(
-    tmp_path: Path,
-) -> None:
-    """`profiles` is an abundance table: it reports no significance at all.
-
-    Ranking on a column that is not there has to fall through to something
-    defined rather than to whichever row polars happened to yield first, so the
-    rows below are written in the reverse of the table's sort key.
-    """
-    _table(
-        tmp_path,
-        "profiles",
-        "GSE000001.tsv",
-        PROFILES_HEADER
-        + "GSE000001\tHGNC:11604\tRV\tinfant\t5.0\ttpm\t\t\t3\n"
-        + "GSE000001\tHGNC:11604\tLV\tinfant\t9.0\ttpm\t\t\t3\n",
-    )
-    emitter = Emitter(root=tmp_path / "dist")
-
-    summaries = build_omics(tmp_path, emitter)
-
-    top = summaries["HGNC:11604"]["profiles"]["top"]
-    assert [row["tissue"] for row in top] == ["LV", "RV"]
 
 
 def test_shard_paths_go_through_the_identifier_path_rule(tmp_path: Path) -> None:
@@ -609,7 +566,19 @@ def test_the_shards_of_one_modality_are_listed_in_a_content_determined_order(
 def test_genes_sharing_an_accession_are_summarised_in_a_stable_order(
     tmp_path: Path,
 ) -> None:
-    """That order decides which gene `summaries` gains first, and so its order.
+    """One UniProt entry covers every gene encoding an identical protein.
+
+    The histone clusters are the standard case, and the six genes below are one:
+    H4C1 through H4C16 all resolve to P62805. Nothing in the schema makes
+    `uniprot` unique — it is not part of the sort key — so a map of accession to
+    *one* gene keeps whichever row was read last and drops the rest of the
+    cluster's phospho evidence in silence. Asserting the whole key list rather
+    than a membership check is what catches that here, which is why the separate
+    two-gene test that only checked both genes were present is gone.
+
+    That the accession maps to several genes is half of it; the order it maps to
+    them in is the other half, because that order decides which gene `summaries`
+    gains first, and so its order.
 
     The registry is written in reverse HGNC order, which is what gives this
     assertion teeth: dropping the `sorted()` leaves the file's own row order, and

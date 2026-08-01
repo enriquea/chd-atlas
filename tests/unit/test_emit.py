@@ -10,34 +10,34 @@ import pytest
 from chd_atlas.build.emit import Emitter, checksum, compress, encode_json
 
 
-def test_encoding_is_stable_regardless_of_key_insertion_order() -> None:
-    """Two dicts with the same content must encode to the same bytes.
-
-    Python preserves insertion order, so a payload assembled by a different code
-    path would otherwise checksum differently while meaning exactly the same.
-    """
-    first = encode_json({"b": 1, "a": 2})
-    second = encode_json({"a": 2, "b": 1})
-
-    assert first == second
-
-
 def test_encoding_keeps_non_ascii_readable() -> None:
+    """The one encoding property the known-answer test below cannot pin.
+
+    An escaped payload is still valid JSON of the same value, so `ensure_ascii`
+    needs a fixture that actually carries a non-ASCII character; the ASCII golden
+    bytes are identical either way.
+    """
     raw = encode_json({"name": "Folie à deux"})
     assert "Folie à deux" in raw.decode("utf-8")
-
-
-def test_encoding_ends_with_a_newline() -> None:
-    assert encode_json({"a": 1}).endswith(b"\n")
 
 
 def test_encoded_bytes_are_exactly_the_published_form() -> None:
     """A known answer, because the published bytes are a contract.
 
-    Every other assertion here compares `encode_json` against itself and so
-    survives a change to `indent`, which would re-checksum every artifact in the
-    atlas and invalidate every consumer's cache while the suite stayed green.
-    Spelling the bytes out is what makes that change visible.
+    Any assertion that compares `encode_json` against itself survives a change to
+    `indent`, which would re-checksum every artifact in the atlas and invalidate
+    every consumer's cache while the suite stayed green. Spelling the bytes out is
+    what makes that change visible.
+
+    Three properties are pinned by this one literal, which is why each no longer
+    has a test of its own:
+
+    * `indent`, above;
+    * `sort_keys` — the payload is written with its keys in the opposite order to
+      the one asserted, and Python preserves insertion order, so a payload
+      assembled by a different code path would otherwise checksum differently
+      while meaning exactly the same;
+    * the trailing newline, which is the last byte below.
     """
     assert encode_json({"b": [1, 2], "a": "x"}) == (
         b'{\n  "a": "x",\n  "b": [\n    1,\n    2\n  ]\n}\n'
@@ -94,17 +94,14 @@ def test_compression_level_is_pinned() -> None:
     assert compress(b"payload")[8] == 2
 
 
-def test_checksum_is_prefixed_and_hex() -> None:
-    value = checksum(b"payload")
-    assert value.startswith("sha256:")
-    assert len(value) == len("sha256:") + 64
-
-
 def test_checksum_is_a_known_sha256() -> None:
-    """The shape assertion above is also satisfied by `sha512(...)[:64]`.
+    """Which algorithm is used is published in the manifest and verified against.
 
-    Which algorithm is used is published in the manifest and verified against by
-    consumers, so it is pinned to a known answer rather than to a length.
+    Pinned to a known answer rather than to a shape, because a shape assertion —
+    the `sha256:` prefix, then 64 hex characters — is equally satisfied by
+    `sha512(...)[:64]` and by an `md5` padded out to the same length. The prefix
+    and the length are both implied by the literal below, so the separate shape
+    test this replaces added no detection at all.
     """
     assert checksum(b"payload") == (
         "sha256:239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5"
@@ -112,13 +109,22 @@ def test_checksum_is_a_known_sha256() -> None:
 
 
 def test_emitter_writes_json_and_records_its_checksum(tmp_path: Path) -> None:
+    """The happy path, together with the directories it has to create on the way.
+
+    `a/b/c/deep.json` is nested more than one level under `root`, which is what
+    separates a recursive `mkdir` from a single-level one: `genes/index.json`
+    alone is still written successfully against `parents=False`.
+    """
     emitter = Emitter(root=tmp_path)
 
     emitter.write_json("genes/index.json", {"genes": []})
+    emitter.write_json("a/b/c/deep.json", {})
 
     written = (tmp_path / "genes" / "index.json").read_bytes()
     assert json.loads(written) == {"genes": []}
-    assert emitter.checksums == {"genes/index.json": checksum(written)}
+    assert (tmp_path / "a" / "b" / "c" / "deep.json").is_file()
+    assert list(emitter.checksums) == ["genes/index.json", "a/b/c/deep.json"]
+    assert emitter.checksums["genes/index.json"] == checksum(written)
 
 
 def test_emitter_checksums_the_bytes_actually_served(tmp_path: Path) -> None:
@@ -134,14 +140,6 @@ def test_emitter_checksums_the_bytes_actually_served(tmp_path: Path) -> None:
     written = (tmp_path / "variants" / "1.json.gz").read_bytes()
     assert gzip.decompress(written) == encode_json({"variants": []})
     assert emitter.checksums == {"variants/1.json.gz": checksum(written)}
-
-
-def test_emitter_creates_missing_parent_directories(tmp_path: Path) -> None:
-    emitter = Emitter(root=tmp_path)
-
-    emitter.write_json("a/b/c/deep.json", {})
-
-    assert (tmp_path / "a" / "b" / "c" / "deep.json").is_file()
 
 
 def test_writing_one_path_twice_is_refused(tmp_path: Path) -> None:
@@ -222,10 +220,19 @@ def test_the_case_guard_reports_a_different_failure_than_the_exact_one(tmp_path:
     assert "differ only in case" not in str(exact.value)
 
 
-@pytest.mark.parametrize(
-    "relative",
-    ["/tmp/absolute.json", "../escape.json", "a/../b.json", "", "a//b.json", "./a.json"],
-)
+# Four rows, each of which is the sole survivor of some way of weakening the
+# guard, so none can be dropped without a mutant going unnoticed:
+#
+#   "/tmp/absolute.json"  the leading empty segment
+#   ""                    the whole path empty — reaches `mkstemp` as a directory
+#   "a/../b.json"         a dot-dot *inside* the path, which a `startswith("..")`
+#                         guard waves through where a leading "../" is caught
+#   "./a.json"            a single dot, the only segment kind the other three miss
+#
+# Two earlier rows are gone because they were strictly weaker: "../escape.json"
+# is caught by every mutation "a/../b.json" catches and one fewer, and
+# "a//b.json" adds nothing to "/tmp/absolute.json" and "" together.
+@pytest.mark.parametrize("relative", ["/tmp/absolute.json", "", "a/../b.json", "./a.json"])
 def test_paths_that_would_desynchronise_the_manifest_are_refused(
     tmp_path: Path, relative: str
 ) -> None:
