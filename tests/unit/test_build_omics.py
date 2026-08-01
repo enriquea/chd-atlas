@@ -1,6 +1,8 @@
 # tests/unit/test_build_omics.py
 from pathlib import Path
 
+import pytest
+
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.omics import TOP_N, build_omics
 
@@ -233,6 +235,39 @@ def test_an_isoform_specific_registry_entry_wins_over_the_canonical_one(
     assert sorted(summaries) == ["HGNC:99999"]
 
 
+@pytest.mark.parametrize(
+    ("registry", "reported"),
+    [("Q99593-2", "Q99593"), ("Q99593-3", "Q99593-2")],
+)
+def test_an_isoform_in_the_registry_matches_a_row_naming_another_form(
+    tmp_path: Path, registry: str, reported: str
+) -> None:
+    """The suffix can differ on either side, so normalising one side is not enough.
+
+    `UNIPROT_PATTERN` admits the isoform form in `genes.uniprot` exactly as it
+    does in `phospho.protein`, so a curator recording "Q99593-2" for the gene
+    makes every canonical-accession row invisible to it, and two rows naming
+    different isoforms of one protein never meet at all. Measured against a join
+    that stripped the suffix from the row only, both rows below reached no gene
+    while their shard was still written and published.
+
+    The reverse direction — registry canonical, row isoform — is covered above,
+    and the exact-match precedence that must survive this is covered below.
+    """
+    _registry(tmp_path, _gene_row("HGNC:11604", "TBX5", registry))
+    _table(
+        tmp_path,
+        "phospho",
+        "PXD012345.tsv",
+        PHOSPHO_HEADER + _phospho_row(reported, 12),
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(tmp_path, emitter)
+
+    assert summaries["HGNC:11604"]["phospho"]["count"] == 1
+
+
 def test_an_accession_shared_by_several_genes_reaches_all_of_them(
     tmp_path: Path,
 ) -> None:
@@ -321,6 +356,26 @@ def test_a_repository_with_no_gene_registry_summarises_no_phospho(
     assert "omics/phospho/PXD012345.json" in emitter.checksums
 
 
+def test_an_unreadable_gene_registry_does_not_abort_the_build(tmp_path: Path) -> None:
+    """A zero-length `genes.tsv` reads as `None`, not as a table with no rows.
+
+    Distinct from the registry being absent, which is checked above: this path
+    reaches `read_table` and comes back empty-handed. Reaching for `.columns` on
+    that result raises `AttributeError` out of the build entirely — every shard
+    in the atlas lost to one unreadable file that `validate_table` already
+    reports against by name.
+    """
+    (tmp_path / "mirrors").mkdir()
+    (tmp_path / "mirrors" / "genes.tsv").write_text("")
+    _table(tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("Q99593", 12))
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(tmp_path, emitter)
+
+    assert summaries == {}
+    assert "omics/phospho/PXD012345.json" in emitter.checksums
+
+
 def test_the_tie_break_orders_a_position_as_a_number(tmp_path: Path) -> None:
     """Rows tie on FDR constantly, so the tie-break decides which ones survive.
 
@@ -345,6 +400,30 @@ def test_the_tie_break_orders_a_position_as_a_number(tmp_path: Path) -> None:
 
     top = summaries["HGNC:11604"]["phospho"]["top"]
     assert [row["position"] for row in top] == [9, 11, 100]
+
+
+def test_a_row_reporting_no_fdr_ranks_below_every_row_that_does(
+    tmp_path: Path,
+) -> None:
+    """An empty `fdr` cell is a row with no claim to significance, not the best one.
+
+    `expression.fdr` is non-nullable, but the build reads the mirror directly and
+    never re-runs `validate_table`, so an empty cell reaches the ranking. Ranking
+    it first would put the one row carrying no statistic at the head of the
+    slice; ranking it as zero does the same thing. Both are killed by spelling
+    the whole order out, and nothing else in this file mixes rows with and
+    without an FDR inside one modality.
+    """
+    root = _repo(
+        tmp_path,
+        _row("HGNC:11604", "0.02") + _row("HGNC:11604", "") + _row("HGNC:11604", "0.01"),
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(root, emitter)
+
+    top = summaries["HGNC:11604"]["expression"]["top"]
+    assert [row["fdr"] for row in top] == [0.01, 0.02, None]
 
 
 def test_a_table_with_no_fdr_column_is_ranked_by_its_own_sort_key(

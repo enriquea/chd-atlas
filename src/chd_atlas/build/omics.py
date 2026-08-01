@@ -18,6 +18,7 @@ nothing links to.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any, Final
@@ -45,42 +46,97 @@ _GENE_COLUMN: Final[dict[str, str | None]] = {
 _RANK_BY: Final = "fdr"
 
 
-def _genes_by_accession(root: Path) -> dict[str, tuple[str, ...]]:
-    """Map each UniProt accession in the gene registry to the genes declaring it.
+def _canonical(accession: str) -> str:
+    """An accession with any isoform suffix removed. "Q99593-2" is "Q99593"."""
+    return accession.split("-", 1)[0]
 
-    Several genes rather than one, because neither the registry nor biology
-    constrains it to one: `uniprot` is not part of the table's sort key, so
-    nothing checks it for duplicates, and a single UniProt entry covers every
-    gene encoding an identical protein — the histone clusters (H4C1..H4C16, all
-    P62805) are the standard case. Keeping only one of them would drop the
-    others' phospho evidence with nothing reporting it.
 
-    Sorted, because this tuple decides the order genes are summarised in and the
-    registry's row order should not. Deduplicated through a list rather than a
-    `set` for the same reason: a cluster holds at most a handful of genes, and a
+@dataclass(frozen=True)
+class _AccessionIndex:
+    """The registry's UniProt accessions, in two tiers.
+
+    `literal` holds each accession as the registry wrote it. `canonical` holds
+    the same genes under the accession with its isoform suffix removed, merged
+    across every registry entry sharing a canonical form.
+
+    Two tiers because the suffix can differ on either side, and `UNIPROT_PATTERN`
+    admits it in `genes.uniprot` as readily as in `phospho.protein`. Normalising
+    only the row's accession answers one of the three disagreements and drops the
+    evidence in the other two: a curator recording "Q99593-2" makes every
+    canonical-accession row for that gene invisible, and two rows naming
+    different isoforms of one protein never meet at all.
+
+    Each tuple maps to several genes rather than one, because neither the
+    registry nor biology constrains it to one: `uniprot` is not part of the
+    table's sort key, so nothing checks it for duplicates, and a single UniProt
+    entry covers every gene encoding an identical protein — the histone clusters
+    (H4C1..H4C16, all P62805) are the standard case.
+    """
+
+    literal: Mapping[str, tuple[str, ...]]
+    canonical: Mapping[str, tuple[str, ...]]
+
+    def genes_for(self, accession: str) -> tuple[str, ...]:
+        """Which genes claim this accession, preferring the literal reading.
+
+        Exact first, so a registry entry naming an isoform explicitly answers for
+        that isoform rather than being merged into everything its canonical form
+        covers. The normalised tier is the fallback, never the rule.
+        """
+        exact = self.literal.get(accession)
+        if exact is not None:
+            return exact
+        return self.canonical.get(_canonical(accession), ())
+
+
+_EMPTY_INDEX: Final = _AccessionIndex(literal={}, canonical={})
+
+
+def _record(tier: dict[str, list[str]], accession: str, gene: str) -> None:
+    """File one gene under one accession, keeping the list duplicate-free.
+
+    A list rather than a `set`: a cluster holds at most a handful of genes, and a
     set would make the pre-sort order depend on `PYTHONHASHSEED` — leaving a
     guard that a regression passes on some fraction of runs instead of one that
-    fails on every run. No other order in this module comes out of a hash
-    container.
+    fails on every run. No order in this module comes out of a hash container.
     """
+    genes = tier.setdefault(accession, [])
+    if gene not in genes:
+        genes.append(gene)
+
+
+def _ordered(tier: dict[str, list[str]]) -> dict[str, tuple[str, ...]]:
+    """Freeze one tier, sorted: this decides the order genes are summarised in.
+
+    The registry's row order should not decide it, so the sort is not merely a
+    tidy-up — it is what keeps two builds of one commit identical.
+    """
+    return {accession: tuple(sorted(genes)) for accession, genes in tier.items()}
+
+
+def _accession_index(root: Path) -> _AccessionIndex:
+    """Read `mirrors/genes.tsv` into the only map from an accession to a gene."""
     path = root / "mirrors" / "genes.tsv"
     if not path.is_file():
-        return {}
+        return _EMPTY_INDEX
     frame, _ = read_table(path, TABLE_SCHEMAS["genes"])
+    # A zero-length or non-UTF-8 registry reads as `None` rather than raising,
+    # and reaching for `.columns` on it would abort the whole build over one
+    # unreadable file that `validate_table` reports against by name.
     if frame is None or not {"uniprot", "hgnc_id"} <= set(frame.columns):
-        return {}
-    index: dict[str, list[str]] = {}
+        return _EMPTY_INDEX
+    literal: dict[str, list[str]] = {}
+    canonical: dict[str, list[str]] = {}
     for accession, gene in frame.select(["uniprot", "hgnc_id"]).rows():
         if accession is None or gene is None:
             continue
-        genes = index.setdefault(str(accession), [])
-        if str(gene) not in genes:
-            genes.append(str(gene))
-    return {accession: tuple(sorted(genes)) for accession, genes in index.items()}
+        _record(literal, str(accession), str(gene))
+        _record(canonical, _canonical(str(accession)), str(gene))
+    return _AccessionIndex(literal=_ordered(literal), canonical=_ordered(canonical))
 
 
 def _genes_for_row(
-    row: Mapping[str, Any], column: str | None, by_accession: Mapping[str, tuple[str, ...]]
+    row: Mapping[str, Any], column: str | None, index: _AccessionIndex
 ) -> tuple[str, ...]:
     """Which genes one omics row is evidence about.
 
@@ -103,15 +159,7 @@ def _genes_for_row(
     accession = row.get("protein")
     if not isinstance(accession, str):
         return ()
-    exact = by_accession.get(accession)
-    if exact is not None:
-        return exact
-    # A quantified site belongs to an isoform ("Q99593-2") more often than to the
-    # canonical accession, while the registry records the gene's canonical one.
-    # `UNIPROT_PATTERN` admits both forms, so without this the whole of a gene's
-    # phospho evidence can be dropped for a suffix. Tried second so that a
-    # registry entry that *is* isoform-specific still wins where it exists.
-    return by_accession.get(accession.split("-", 1)[0], ())
+    return index.genes_for(accession)
 
 
 def _comparable(value: object) -> tuple[int, float, str]:
@@ -153,7 +201,7 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, Any]]:
     `count` is every row about the gene, `shards` the files holding them, and
     `top` at most `TOP_N` of the rows themselves.
     """
-    by_accession = _genes_by_accession(root)
+    index = _accession_index(root)
     summaries: dict[str, dict[str, Any]] = {}
 
     for path, schema_name in mirror_paths(root):
@@ -183,7 +231,7 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, Any]]:
         emitter.write_json(relative, {"table": schema_name, "rows": rows})
 
         for row in rows:
-            for gene in _genes_for_row(row, _GENE_COLUMN[schema_name], by_accession):
+            for gene in _genes_for_row(row, _GENE_COLUMN[schema_name], index):
                 modality = summaries.setdefault(gene, {}).setdefault(
                     schema_name, {"count": 0, "shards": [], "top": []}
                 )
