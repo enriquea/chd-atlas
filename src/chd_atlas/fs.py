@@ -59,7 +59,8 @@ def write_bytes_atomically(path: Path, payload: bytes) -> None:
 
     Opening the destination for writing truncates it before the payload lands, so
     a write that failed part-way left a file that is neither its old content nor
-    its new one. Both callers are harmed by that, one of them permanently:
+    its new one. What that costs depends on the caller, and for one of them it is
+    permanent:
 
     - `curation/.id_registry.yaml` is a counter. A truncated write rewinds every
       prefix to zero, and the next `allocate` then reissues identifiers already
@@ -75,8 +76,6 @@ def write_bytes_atomically(path: Path, payload: bytes) -> None:
     ``path.parent`` must exist. `mkstemp` would otherwise raise
     `FileNotFoundError` naming the temporary it was about to create — a path the
     caller never chose and cannot correlate with anything they typed.
-    `export_schemas` creates its target first; `save_id_registry` relies on
-    `curation/` already being present, which it is in any real repository.
 
     Raising, rather than returning `ValidationIssue`s the way `list_dir` above
     does, is deliberate. `list_dir` swallows its `OSError` because an unreadable
@@ -109,9 +108,9 @@ def write_bytes_atomically(path: Path, payload: bytes) -> None:
         # bytes just written. Reversing the two still passes every test here.
         os.chmod(temporary, 0o644)
         # No fsync: this guards against a failed or interrupted write, not
-        # against power loss. Both files are regenerated from committed sources
+        # against power loss. These files are regenerated from committed sources
         # by a single command, so an unclean shutdown costs a re-run rather than
-        # data — not worth an fsync on every schema export.
+        # data — not worth an fsync on every write.
         os.replace(temporary, path)
     # BaseException, not Exception: a Ctrl-C between mkstemp and replace would
     # otherwise strand a `.tmp` in `curation/`, where the CUR001 stray-entry
