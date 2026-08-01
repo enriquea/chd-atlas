@@ -52,9 +52,11 @@ def _records_by_gene[RecordT: (GeneDiseaseAssertion, FunctionalEvidence)](
     Ordered by id rather than left in corpus order, because these are published
     as JSON arrays and `encode_json`'s `sort_keys` orders dict keys and nothing
     else: whatever order they reach the emitter in is the order a consumer
-    downloads. Corpus order is the order `load_curation` globbed the files in,
-    so without this a record moved from `TBX5.yaml` into a second file would
-    reorder a bundle that is otherwise unchanged.
+    downloads. Corpus order is `load_curation`'s: record files sorted by
+    filename — `_record_files` sorts the glob — and then each file's own order
+    within it, which makes it an artefact of how the curation is filed rather
+    than of the records. Without this, moving a record from `TBX5.yaml` into a
+    second file would reorder a bundle that is otherwise unchanged.
 
     `mode="json"` so every value is a JSON primitive by construction.
     `GeneDiseaseAssertion` carries two `date` fields, which `json.dumps` refuses
@@ -141,6 +143,16 @@ def build_genes(
     the atlas browses curated claims, and a gene with nothing asserted has no
     confidence to display. Their rows are still published in the shards those two
     modules wrote — the gene index simply does not link to them.
+
+    That last sentence covers `omics` and `variants` and nothing else. A
+    `FunctionalEvidence` record about a gene with no assertion is worse off: no
+    other build module reads `corpus.functional` — `derive.py` reads it only to
+    count records per gene, and this is its only writer — so it reaches no
+    published file at all rather than an unlinked one. That is evidence loss,
+    not a missing link. It still does not raise here, because such a record is
+    legal under every validator in the project and `gene_facts` is what decides
+    which genes exist; the cost is pinned instead, by
+    `test_a_gene_with_evidence_but_no_assertion_is_not_published`.
     """
     facts = gene_facts(corpus)
     assertions = _records_by_gene(corpus.assertions)
@@ -148,9 +160,11 @@ def build_genes(
 
     index: list[Json] = []
     # Sorted here as well as in `gene_facts`, which returns its genes in this
-    # same order. Redundant today, and kept because this array's order is what
-    # consumers download while that one is an internal detail of another module
-    # that no test pins.
+    # same order — pinned by `test_derive.py`'s
+    # `test_assertions_are_counted_per_gene_and_the_genes_come_back_sorted`.
+    # Redundant today, and kept anyway: this array is what consumers download,
+    # so its order is the published contract and should not rest on a guarantee
+    # another module is free to withdraw.
     for gene in sorted(facts):
         fact = facts[gene]
         # `HgncId` rather than `str` at this boundary: `gene_facts` keys on a

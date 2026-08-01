@@ -14,8 +14,10 @@ from chd_atlas.models.assertion import Evidence, GeneDiseaseAssertion, Supplemen
 from chd_atlas.models.functional import FunctionalEvidence
 
 # Two HGNC ids whose lexical order is the reverse of their symbols': "HGNC:11604"
-# sorts before "HGNC:4173", while "GATA4" sorts before "TBX5". Several tests
-# below rely on that disagreement to tell one ordering rule from the other.
+# sorts before "HGNC:4173", while "GATA4" sorts before "TBX5". Exactly one test
+# below relies on that disagreement to tell one ordering rule from the other —
+# `test_the_index_is_ordered_by_hgnc_id_rather_than_by_symbol`. Every other use
+# of GATA4 here is just a second gene.
 TBX5 = "HGNC:11604"
 GATA4 = "HGNC:4173"
 SYMBOLS = {TBX5: "TBX5", GATA4: "GATA4"}
@@ -106,50 +108,45 @@ def _by_gene(root: Path) -> dict[str, dict[str, Any]]:
     return {str(entry["gene"]): entry for entry in _entries(root)}
 
 
-def test_the_index_carries_what_the_browser_filters_on(tmp_path: Path) -> None:
-    emitter = Emitter(root=tmp_path)
-
-    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
-
-    entry = _entries(tmp_path)[0]
-    assert entry["gene"] == TBX5
-    assert entry["symbol"] == "TBX5"
-    assert entry["headline_confidence"] == "definitive"
-    assert entry["has_conflicting_evidence"] is False
-    assert entry["lesion_groups"] == ["septal"]
-    assert entry["confidence_by_lesion_group"] == {"septal": "definitive"}
-    assert entry["evidence_counts"] == {"genetic_case": 1}
-    assert entry["assertion_count"] == 1
-    assert entry["functional_count"] == 0
-    assert entry["variant_count"] == 0
-    assert entry["bundle"] == "genes/HGNC_11604.json"
-
-
-def test_the_index_carries_nothing_the_browser_does_not_filter_on(tmp_path: Path) -> None:
+def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> None:
     """The index is downloaded by every visitor before they pick a gene.
 
-    Its size is the cost of the browse page, so what belongs here is what ranks
-    or filters a row and the path to fetch the rest. An assertion, its evidence,
-    a variant list or a publication list added here would be downloaded by
-    everyone to be read by nobody — the bundle already carries all four.
+    Its size is the cost of the browse page, so what belongs in a row is what
+    ranks or filters it plus the path to fetch the rest. An assertion, its
+    evidence, a variant list or a publication list added here would be
+    downloaded by everyone to be read by nobody — the bundle already carries all
+    four.
+
+    Asserted as one whole-row equality rather than as a key set and a list of
+    field values: equality fails on a key added, a key removed and any wrong
+    value alike, so it is the two checks in one and cannot drift apart from
+    them. `bundle` is pinned as a literal string for the reason the key exists —
+    the client must never build a bundle path itself, so this exact value is the
+    contract, not just its shape.
     """
     emitter = Emitter(root=tmp_path)
 
     build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
 
-    assert set(_entries(tmp_path)[0]) == {
-        "gene",
-        "symbol",
-        "headline_confidence",
-        "has_conflicting_evidence",
-        "lesion_groups",
-        "confidence_by_lesion_group",
-        "evidence_counts",
-        "assertion_count",
-        "functional_count",
-        "variant_count",
-        "bundle",
-    }
+    assert _entries(tmp_path) == [
+        {
+            "gene": TBX5,
+            "symbol": "TBX5",
+            "headline_confidence": "definitive",
+            "has_conflicting_evidence": False,
+            "lesion_groups": ["septal"],
+            "confidence_by_lesion_group": {"septal": "definitive"},
+            "evidence_counts": {"genetic_case": 1},
+            "assertion_count": 1,
+            "functional_count": 0,
+            "variant_count": 0,
+            "bundle": "genes/HGNC_11604.json",
+        }
+    ]
+    # `is False`, not the `== False` the equality above settles for: `0 == False`
+    # in Python, so a flag written as an int would publish `0` and slip through
+    # that comparison while a consumer testing `=== false` reads it as unset.
+    assert _entries(tmp_path)[0]["has_conflicting_evidence"] is False
 
 
 def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -> None:
@@ -170,16 +167,6 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         "variants",
         "omics",
     }
-
-
-def test_the_index_links_each_gene_to_its_bundle(tmp_path: Path) -> None:
-    """The client must never build a bundle path itself."""
-    emitter = Emitter(root=tmp_path)
-
-    build_genes(_corpus(), emitter, symbols={}, omics={}, variants={})
-
-    assert _entries(tmp_path)[0]["bundle"] == "genes/HGNC_11604.json"
-    assert (tmp_path / "genes" / "HGNC_11604.json").is_file()
 
 
 def test_every_bundle_path_the_index_advertises_was_written(tmp_path: Path) -> None:
@@ -436,9 +423,14 @@ def test_a_bundle_carries_every_functional_record_about_the_gene(tmp_path: Path)
 def test_a_bundle_carries_the_omics_summaries_verbatim(tmp_path: Path) -> None:
     """The whole `ModalitySummary`, not a re-listing of the fields known today.
 
-    A field added to `ModalitySummary` should reach the bundle without this
-    module being edited; whole-value equality is what fails if the summary is
-    rebuilt key by key instead of passed through.
+    The summary here carries a fourth key that `ModalitySummary` does not
+    declare, standing in for the field someone adds to it next. With only the
+    three declared fields, rebuilding the summary key by key produces byte-identical
+    output and this assertion cannot tell the two implementations apart; the
+    undeclared key is what makes whole-value equality a real guard rather than a
+    stated intention. `_summaries` passes the value through, so it survives; a
+    rebuild drops it silently, and the symptom would be a gene page missing data
+    the shard it links to still holds.
     """
     emitter = Emitter(root=tmp_path)
 
@@ -446,7 +438,7 @@ def test_a_bundle_carries_the_omics_summaries_verbatim(tmp_path: Path) -> None:
         _corpus(),
         emitter,
         symbols=SYMBOLS,
-        omics={TBX5: {"expression": _summary()}},
+        omics={TBX5: {"expression": _summary(median_log2fc=1.5)}},
         variants={},
     )
 
@@ -455,6 +447,7 @@ def test_a_bundle_carries_the_omics_summaries_verbatim(tmp_path: Path) -> None:
             "count": 3,
             "shards": ["omics/expression/GSE1000.json"],
             "top": [{"gene": TBX5, "fdr": 0.01}],
+            "median_log2fc": 1.5,
         }
     }
 
@@ -561,9 +554,10 @@ def test_the_index_is_ordered_by_hgnc_id_rather_than_by_symbol(tmp_path: Path) -
 def test_bundle_assertions_and_functional_records_are_ordered_by_id(tmp_path: Path) -> None:
     """Both are JSON arrays whose order survives `encode_json` untouched.
 
-    Given in reverse id order and grouped by encounter, so a build that kept
-    corpus order fails on every run rather than on the fraction of runs a
-    hash-ordered container would.
+    Given as ids 3, 1, 2 — deliberately neither id order nor its reverse. A
+    build that kept corpus order fails on every run rather than on the fraction
+    a hash-ordered container would, and so does one that reversed corpus order
+    instead of sorting, which a 3, 2, 1 fixture would hand the right answer to.
     """
     corpus = _corpus(
         assertions=(
@@ -631,23 +625,34 @@ def test_a_bundle_lists_the_publications_its_evidence_cites(tmp_path: Path) -> N
     ]
 
 
-def test_a_gene_with_omics_and_variants_but_no_assertion_is_not_published(
-    tmp_path: Path,
-) -> None:
+def test_a_gene_with_evidence_but_no_assertion_is_not_published(tmp_path: Path) -> None:
     """It has no confidence to display, so it gets no bundle and no index row.
 
     `gene_facts` omits such a gene deliberately — the atlas browses curated
-    claims — and this module publishes what that returns. The evidence itself is
-    still served, in `variants/<chrom>.json.gz` and in the omics shards, but
-    nothing in the gene index links to it: reaching it means already knowing the
-    HGNC id. That is the accepted cost of the rule, not an oversight, and this
-    test is where it is pinned so that changing it is a decision rather than a
-    side effect.
+    claims — and this module publishes what that returns. Nothing here raises
+    over it: the corpus below is legal under every validator in the project, and
+    which genes exist is `gene_facts`' decision, not this module's.
+
+    What the rule costs differs by evidence kind, and the asymmetry is the
+    reason this test carries all three. GATA4's omics rows and variants are
+    still published, in the omics shards and in `variants/<chrom>.json.gz`; they
+    are merely unreachable from the gene index, so getting to them means already
+    knowing the HGNC id. Its functional record is not published anywhere at all
+    — no other build module reads `corpus.functional`, `derive.py` reads it only
+    to count, and `build_genes` writes it only inside the loop over asserted
+    genes. So the second half of this test is not about a missing link but about
+    curated evidence that reaches no file: the record's id appears in none of
+    the bytes the build wrote.
+
+    Pinned here so that either half changing is a decision rather than a side
+    effect. The obvious one-line fix — keying the loop on the union of asserted
+    and functionally-evidenced genes — is what the index assertion below refuses;
+    before this test existed, that mutation passed the whole suite.
     """
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        _corpus(),
+        _corpus(functional=(_functional(id="CHDA:FUN:0000009", gene=GATA4),)),
         emitter,
         symbols=SYMBOLS,
         omics={GATA4: {"expression": _summary()}},
@@ -656,6 +661,9 @@ def test_a_gene_with_omics_and_variants_but_no_assertion_is_not_published(
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5]
     assert set(emitter.checksums) == {"genes/index.json", "genes/HGNC_11604.json"}
+    published = "".join((tmp_path / relative).read_text() for relative in emitter.checksums)
+    assert "CHDA:FUN:0000009" not in published
+    assert GATA4 not in published
 
 
 def test_a_bundle_that_cannot_be_written_leaves_no_index_at_all(tmp_path: Path) -> None:
