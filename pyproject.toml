@@ -7,7 +7,9 @@ dependencies = [
     "pydantic>=2.9",
     "ruamel.yaml>=0.18",
     "polars>=1.0",
-    "pronto>=2.5",
+    # 2.7 is the floor for `Ontology(encoding=...)`, which ontology.py passes to
+    # stop pronto guessing the encoding of a pinned release with chardet.
+    "pronto>=2.7",
     "typer>=0.12",
 ]
 

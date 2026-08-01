@@ -228,3 +228,8 @@ dist/
 # Design specs and implementation plans — local only. These carry agent-directed
 # workflow instructions, so they stay out of the public repository.
 docs/superpowers/
+
+# File-manager droppings. Never curated content; the stray-entry sweeps ignore
+# them too, see OS_METADATA in src/chd_atlas/fs.py.
+.DS_Store
+Thumbs.db

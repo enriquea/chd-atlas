@@ -47,7 +47,15 @@ class OntologyRegistry:
             # A truncated, corrupt, empty or non-UTF-8 release must be reported
             # as one bad file rather than aborting the whole validation run.
             try:
-                registry.ontologies[prefix] = pronto.Ontology(str(path))
+                # `encoding` is passed explicitly because pronto otherwise hands
+                # the first buffer to chardet and guesses. On the pinned HPO
+                # release that guess is ISO-8859-1 at 73% confidence, which emits
+                # a UnicodeWarning on every single run. OBO 1.2 is UTF-8 by
+                # specification, so there is nothing to detect: saying so removes
+                # the warning and, more to the point, removes the dependency on a
+                # heuristic that a differently-distributed future release could
+                # resolve to a genuinely lossy encoding.
+                registry.ontologies[prefix] = pronto.Ontology(str(path), encoding="utf-8")
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as exc:
@@ -123,4 +131,47 @@ def validate_terms(
                     f"{curie} is obsolete in the pinned {prefix} release",
                 )
             )
+    return issues
+
+
+def validate_labels(
+    labelled: Iterable[tuple[str, str]], registry: OntologyRegistry, location: str
+) -> list[ValidationIssue]:
+    """Check each curated label against the name the pinned release carries.
+
+    ``curation/phenotypes.yaml`` states that its labels are transcribed from the
+    pinned HPO release, and those labels are what the atlas displays. Nothing
+    checked the claim, so a typo, a copy-paste from the wrong row, or a term the
+    HPO renamed in a later release would all read as though the ontology said it.
+    Pinning the release makes this checkable: there is exactly one right answer.
+
+    Comparison folds case and strips surrounding space, because capitalisation is
+    house style rather than a transcription error, and reporting it would train
+    curators to skim past this code.
+
+    A CURIE that does not resolve is skipped: `validate_terms` reports that once
+    already, and there is no name to compare against.
+    """
+    issues: list[ValidationIssue] = []
+    for curie, label in labelled:
+        prefix, _, _ = curie.partition(":")
+        ontology = registry.ontologies.get(prefix)
+        if ontology is None:
+            continue
+        try:
+            term = ontology.get_term(curie)
+        except KeyError:
+            continue
+        official = term.name
+        if official is None or official.strip().casefold() == label.strip().casefold():
+            continue
+        issues.append(
+            ValidationIssue(
+                "ONT005",
+                Severity.ERROR,
+                location,
+                f"label for {curie} is '{label}', but the pinned {prefix} release "
+                f"calls it '{official}'",
+            )
+        )
     return issues

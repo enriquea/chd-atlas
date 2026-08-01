@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -16,7 +17,11 @@ from chd_atlas.tables import (
     validate_table,
 )
 from chd_atlas.validate.ids import load_id_registry, validate_ids
-from chd_atlas.validate.ontology import OntologyRegistry, validate_terms
+from chd_atlas.validate.ontology import (
+    OntologyRegistry,
+    validate_labels,
+    validate_terms,
+)
 from chd_atlas.validate.referential import validate_mirror_references, validate_references
 from chd_atlas.validate.sort_order import validate_sort_order
 from chd_atlas.validate.sources import load_sources, validate_source_references
@@ -107,8 +112,13 @@ def _relative_to_root(issues: list[ValidationIssue], root: Path) -> list[Validat
     Locations are embedded verbatim in the rendered report, so absolute paths
     would make output differ between a curator's machine and CI, and would sort
     a hardcoded relative literal away from the same file's other issues.
+
+    The separator comes from `os.sep` rather than a literal `/` because every
+    location is built as `str(path)`, which renders `C:\\repo\\mirrors\\genes.tsv`
+    on Windows. A hardcoded `/` would match no prefix there, leave every location
+    absolute, and silently void the guarantee this function exists to provide.
     """
-    prefix = f"{root}/"
+    prefix = f"{root}{os.sep}"
     return [
         replace(issue, location=issue.location.removeprefix(prefix))
         for issue in issues
@@ -245,10 +255,19 @@ def validate_repository(root: Path) -> ValidationReport:
                     f"functional evidence {record.id}",
                 )
             )
+        phenotypes_file = str(root / "curation" / "phenotypes.yaml")
         for term in corpus.phenotypes:
-            issues.extend(
-                validate_terms([term.id], ontologies, str(root / "curation" / "phenotypes.yaml"))
+            issues.extend(validate_terms([term.id], ontologies, phenotypes_file))
+        # The file declares its labels transcribed from the pinned release, and
+        # those labels are what the atlas displays. Pinning makes the claim
+        # checkable, so check it.
+        issues.extend(
+            validate_labels(
+                [(term.id, term.label) for term in corpus.phenotypes],
+                ontologies,
+                phenotypes_file,
             )
+        )
 
     id_registry, id_issues = load_id_registry(root)
     issues.extend(id_issues)

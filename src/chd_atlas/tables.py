@@ -7,6 +7,7 @@ which would silently turn a genomic coordinate of 12345 into 12345.0.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,10 +22,12 @@ from polars.datatypes import DataTypeClass
 from polars.exceptions import PolarsError
 
 from chd_atlas.duplicates import duplicates
+from chd_atlas.fs import list_dir
 from chd_atlas.identifiers import (
     HGNC_PATTERN,
     MODIFICATION_PATTERN,
     SEQUENCE_ONTOLOGY_PATTERN,
+    UNIPROT_PATTERN,
 )
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.vocab import SourceTier
@@ -147,6 +150,29 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
                 )
             )
 
+        # Keyed on the dtype rather than on the bounds, because a column with no
+        # natural range (a log2 fold change) needs this exactly as much as a
+        # bounded one. Null and NaN are distinct states in polars: the non-null
+        # check above tests `value is None` and so never sees a NaN, while every
+        # comparison against NaN is False by IEEE-754 and so the bounds check
+        # below cannot fire for one either. Without this, a p-value written as
+        # `NaN` — what R's `write.table` and numpy's `savetxt` emit for a missing
+        # statistic — validates clean and ships as a real measurement.
+        if column.dtype is pl.Float64:
+            offenders_finite = [
+                (row, repr(value))
+                for row, value in _numeric_values(series)
+                if not math.isfinite(value)
+            ]
+            issues.extend(
+                _row_issues(
+                    "TBL010",
+                    path,
+                    offenders_finite,
+                    f"column '{column.name}' has non-finite values",
+                )
+            )
+
         if column.allowed is not None:
             allowed_sorted = sorted(column.allowed)
             offenders_allowed = [
@@ -182,10 +208,14 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
         if column.minimum is not None or column.maximum is not None:
             low = column.minimum if column.minimum is not None else float("-inf")
             high = column.maximum if column.maximum is not None else float("inf")
+            # Non-finite values are excluded so exactly one code fires per
+            # problem: an infinity is out of every finite range, and reporting it
+            # as both TBL010 and TBL006 would say the same thing twice while
+            # TBL010 names the cause more precisely.
             offenders_bounds = [
                 (row, repr(value))
                 for row, value in _numeric_values(series)
-                if value < low or value > high
+                if math.isfinite(value) and (value < low or value > high)
             ]
             issues.extend(
                 _row_issues(
@@ -251,7 +281,7 @@ GENES = TableSchema(
         Column("ensembl_gene", pl.String, nullable=True),
         Column("ncbi_gene", pl.Int64, nullable=True),
         Column("locus", pl.String, nullable=True),
-        Column("uniprot", pl.String, nullable=True),
+        Column("uniprot", pl.String, nullable=True, pattern=UNIPROT_PATTERN),
         Column("mane_select", pl.String, nullable=True),
     ),
     sort_key=("hgnc_id",),
@@ -261,7 +291,7 @@ PTM_SITES = TableSchema(
     name="ptm_sites",
     columns=(
         Column("site_id", pl.String),
-        Column("protein", pl.String),
+        Column("protein", pl.String, pattern=UNIPROT_PATTERN),
         Column("residue", pl.String, allowed=frozenset({"S", "T", "Y", "K", "R", "C", "N", "Q"})),
         Column("position", pl.Int64, minimum=1),
         Column("mod_type", pl.String, pattern=MODIFICATION_PATTERN),
@@ -352,7 +382,7 @@ PROTEOMICS = TableSchema(
     columns=(
         Column("dataset", pl.String),
         Column("contrast", pl.String),
-        Column("protein", pl.String),
+        Column("protein", pl.String, pattern=UNIPROT_PATTERN),
         Column("gene", pl.String, pattern=HGNC_PATTERN, nullable=True),
         Column("log2fc", pl.Float64),
         Column("pvalue", pl.Float64, minimum=0, maximum=1),
@@ -371,7 +401,7 @@ PHOSPHO = TableSchema(
         Column("dataset", pl.String),
         Column("contrast", pl.String),
         Column("site_id", pl.String),
-        Column("protein", pl.String),
+        Column("protein", pl.String, pattern=UNIPROT_PATTERN),
         Column("residue", pl.String, allowed=frozenset({"S", "T", "Y"})),
         Column("position", pl.Int64, minimum=1),
         Column("mod_type", pl.String, pattern=MODIFICATION_PATTERN),
@@ -424,7 +454,10 @@ def unexpected_mirror_entries(root: Path) -> list[ValidationIssue]:
     expected_files = set(FLAT_TABLES.values()) | {"sources.yaml"}
     issues: list[ValidationIssue] = []
 
-    for entry in sorted(mirrors.iterdir()):
+    entries, listing_issues = list_dir(mirrors, "TBL009")
+    issues.extend(listing_issues)
+
+    for entry in entries:
         if entry.is_dir():
             if entry.name not in expected_dirs:
                 issues.append(
@@ -439,7 +472,9 @@ def unexpected_mirror_entries(root: Path) -> list[ValidationIssue]:
                 continue
             # mirror_paths globs *.tsv, so a shard given the wrong extension is
             # invisible to every table check while the gate still passes.
-            for shard in sorted(entry.iterdir()):
+            shards, shard_listing_issues = list_dir(entry, "TBL009")
+            issues.extend(shard_listing_issues)
+            for shard in shards:
                 if not shard.is_file():
                     issues.append(
                         ValidationIssue(

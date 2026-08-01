@@ -119,3 +119,14 @@ def test_reports_every_duplicate_contrast_id() -> None:
     message = str(exc.value)
     assert "a" in message
     assert "b" in message
+
+
+def test_rejects_a_whitespace_only_licence() -> None:
+    """`min_length=1` accepts "   ", which records no provenance at all.
+
+    `Source.licence` already rejects it. A dataset redistributes third-party
+    measurements exactly as a source does, so the two must agree on what counts
+    as a recorded licence.
+    """
+    with pytest.raises(ValidationError, match="licence must not be blank"):
+        Dataset.model_validate(_dataset(licence="   "))

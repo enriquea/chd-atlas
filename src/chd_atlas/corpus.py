@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
+from chd_atlas.fs import list_dir
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.models.assertion import AssertionFile, GeneDiseaseAssertion
 from chd_atlas.models.dataset import Dataset
@@ -130,7 +131,10 @@ def unexpected_curation_entries(root: Path) -> list[ValidationIssue]:
     def error(entry: Path, message: str) -> None:
         issues.append(ValidationIssue("CUR001", Severity.ERROR, str(entry), message))
 
-    for entry in sorted(curation.iterdir()):
+    entries, listing_issues = list_dir(curation, "CUR001")
+    issues.extend(listing_issues)
+
+    for entry in entries:
         if entry.is_dir():
             if entry.name not in expected_dirs:
                 error(
@@ -139,7 +143,9 @@ def unexpected_curation_entries(root: Path) -> list[ValidationIssue]:
                     f"{sorted(expected_dirs)}",
                 )
                 continue
-            for record in sorted(entry.iterdir()):
+            records, record_listing_issues = list_dir(entry, "CUR001")
+            issues.extend(record_listing_issues)
+            for record in records:
                 if not record.is_file():
                     error(record, f"'{record.name}' should be a YAML file, not a directory")
                 elif record.suffix != ".yaml":

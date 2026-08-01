@@ -8,6 +8,7 @@ from chd_atlas.models.assertion import (
     GeneDiseaseAssertion,
     SupplementaryLocator,
 )
+from chd_atlas.models.dataset import Dataset
 from chd_atlas.models.functional import FunctionalEvidence
 from chd_atlas.models.literature import FeaturedManuscript, PhenotypeTerm, Publication
 from chd_atlas.validate.referential import (
@@ -229,8 +230,14 @@ def test_reports_an_unjustified_lesion_group() -> None:
     assert "conotruncal" in issues[0].message
 
 
-def test_unmapped_phenotype_exempts_the_unjustified_group_check() -> None:
-    """An unmapped phenotype could legitimately justify the extra group."""
+def test_unmapped_phenotype_exempts_the_unjustified_group_check_but_says_so() -> None:
+    """The exemption stands; what changes is that it stops being silent.
+
+    An unmapped phenotype could legitimately justify the extra group, so REF009
+    must not fire. Left at that, one term missing from the register disables all
+    lesion-group checking for the assertion with nothing in the report to say a
+    check stopped running. REF012 names the term that caused it.
+    """
     corpus = _corpus(
         assertions=(
             _assertion(
@@ -239,6 +246,24 @@ def test_unmapped_phenotype_exempts_the_unjustified_group_check() -> None:
             ),
         ),
         phenotypes=(_septal_term(),),
+    )
+
+    issues = validate_references(corpus, known_genes={"HGNC:11604"})
+
+    assert [i.code for i in issues] == ["REF012"]
+    assert "HP:0001629" in issues[0].message
+
+
+def test_an_empty_phenotype_register_reports_nothing_per_record() -> None:
+    """CUR002 names an absent register once; REF012 would repeat it per phenotype.
+
+    This is the cascade guard the rest of this module is built around: a check
+    that cannot run must be reported once, at its cause, not once per record that
+    could not be checked.
+    """
+    corpus = _corpus(
+        assertions=(_assertion(phenotypes=["HP:0001631", "HP:0001629"]),),
+        phenotypes=(),
     )
 
     assert validate_references(corpus, known_genes={"HGNC:11604"}) == []
@@ -255,6 +280,62 @@ def test_reports_a_cardiac_lesion_listed_as_an_extracardiac_feature() -> None:
     issues = validate_references(corpus, known_genes={"HGNC:11604"})
 
     assert [i.code for i in issues] == ["REF010"]
+
+
+def _dataset(accession: str = "PXD012345", **overrides: object) -> Dataset:
+    payload: dict[str, object] = {
+        "id": accession,
+        "archive": "pride",
+        "technology": "phosphoproteomics",
+        "tissue": "right ventricle",
+        "developmental_stage": "infant",
+        "organism": "NCBITaxon:9606",
+        "n_samples": 24,
+        "licence": "CC-BY-4.0",
+        "contrasts": [
+            {
+                "id": "tof_vs_control",
+                "description": "TOF right ventricle versus control",
+                "case_group": "TOF RV",
+                "control_group": "Control RV",
+                "statistical_method": "limma-voom",
+                "software": "limma 3.58.1",
+            }
+        ],
+    }
+    payload.update(overrides)
+    return Dataset.model_validate(payload)
+
+
+def test_reports_the_same_accession_declared_by_two_dataset_files() -> None:
+    """Each dataset is its own file, so nothing else can see the collision.
+
+    `validate_ids` checks uniqueness only for atlas-minted IDs; an accession is
+    a third-party identifier and never reaches it. Two files declaring PXD012345
+    with different sample counts both load, and every mirror row citing that
+    accession then resolves to whichever the filesystem happened to yield first.
+    """
+    corpus = Corpus(
+        root=Path("/repo"),
+        datasets=(
+            _dataset(n_samples=24),
+            _dataset(n_samples=48, tissue="left ventricle"),
+        ),
+    )
+
+    issues = validate_references(corpus, known_genes=None)
+
+    assert [i.code for i in issues] == ["REF011"]
+    assert issues[0].location == "dataset PXD012345"
+
+
+def test_accepts_distinct_dataset_accessions() -> None:
+    corpus = Corpus(
+        root=Path("/repo"),
+        datasets=(_dataset("PXD012345"), _dataset("PXD999999")),
+    )
+
+    assert validate_references(corpus, known_genes=None) == []
 
 
 DATASET_YAML = """\

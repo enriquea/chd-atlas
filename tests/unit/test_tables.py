@@ -1,4 +1,5 @@
 # tests/unit/test_tables.py
+import re
 from pathlib import Path
 
 import polars as pl
@@ -168,6 +169,68 @@ def test_reports_a_value_outside_its_numeric_bounds(tmp_path: Path) -> None:
     assert [i.code for i in issues] == ["TBL006"]
 
 
+@pytest.mark.parametrize("literal", ["NaN", "nan", "inf", "-inf", "Infinity"])
+def test_reports_a_non_finite_value_in_a_bounded_column(tmp_path: Path, literal: str) -> None:
+    """A missing statistic written as NaN must not validate as a present one.
+
+    R's `write.table` emits `NaN` and numpy's `savetxt` emits `nan`; both parse
+    into a Float64 column without a read error. Every comparison against NaN is
+    False, so the bounds check cannot fire for it, and polars models NaN and null
+    as distinct states, so the non-null check does not see it either.
+    """
+    schema = TableSchema(
+        name="bounded",
+        columns=(Column("p", pl.Float64, minimum=0, maximum=1),),
+        sort_key=("p",),
+    )
+    path = tmp_path / "bounded.tsv"
+    path.write_text(f"p\n{literal}\n")
+
+    issues = validate_table(path, schema)
+
+    assert [i.code for i in issues] == ["TBL010"]
+    assert "row 2" in issues[0].location
+
+
+def test_reports_a_non_finite_value_in_an_unbounded_column(tmp_path: Path) -> None:
+    """The check belongs to the dtype, not to the bounds.
+
+    A log2 fold change has no natural range, so it declares no minimum or
+    maximum. It is still a statistic that must be present to be reported.
+    """
+    schema = TableSchema(
+        name="unbounded",
+        columns=(Column("log2fc", pl.Float64),),
+        sort_key=("log2fc",),
+    )
+    path = tmp_path / "unbounded.tsv"
+    path.write_text("log2fc\nNaN\n")
+
+    issues = validate_table(path, schema)
+
+    assert [i.code for i in issues] == ["TBL010"]
+
+
+def test_a_nullable_float_column_still_rejects_nan(tmp_path: Path) -> None:
+    """Nullable means "may be absent", which the empty string already says.
+
+    NaN is a third state that reads as present, so it stays an error even where
+    a null is allowed.
+    """
+    schema = TableSchema(
+        name="optional",
+        columns=(Column("score", pl.Float64, nullable=True),),
+        sort_key=("score",),
+    )
+    path = tmp_path / "optional.tsv"
+    path.write_text("score\n\nNaN\n")
+
+    issues = validate_table(path, schema)
+
+    assert [i.code for i in issues] == ["TBL010"]
+    assert "row 3" in issues[0].location
+
+
 def test_variants_chrom_rejects_a_chr_prefix() -> None:
     column = next(c for c in TABLE_SCHEMAS["variants"].columns if c.name == "chrom")
     assert column.allowed is not None
@@ -286,3 +349,32 @@ def test_a_correctly_named_shard_is_not_reported(tmp_path: Path) -> None:
     (tmp_path / "mirrors" / "variants" / "12.tsv").write_text("vrs_id\n")
 
     assert unexpected_mirror_entries(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "schema_name,column_name",
+    [
+        ("genes", "uniprot"),
+        ("ptm_sites", "protein"),
+        ("proteomics", "protein"),
+        ("phospho", "protein"),
+    ],
+)
+def test_every_protein_column_constrains_the_accession(
+    schema_name: str, column_name: str
+) -> None:
+    """A protein identifier column must not accept free text.
+
+    `UniprotAccession` constrains the curated YAML side, but the mirror tables
+    are where the bulk protein data lives, and a column with no pattern took
+    anything at all — a gene symbol, a RefSeq accession, an empty placeholder.
+    """
+    column = next(
+        c for c in TABLE_SCHEMAS[schema_name].columns if c.name == column_name
+    )
+    assert column.pattern is not None
+    compiled = re.compile(column.pattern)
+    assert compiled.fullmatch("Q99593")
+    assert compiled.fullmatch("P12345-2")
+    assert not compiled.fullmatch("TBX5")
+    assert not compiled.fullmatch("NP_852259.1")

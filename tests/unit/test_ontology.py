@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from chd_atlas.validate.ontology import OntologyRegistry, validate_terms
+from chd_atlas.validate.ontology import (
+    OntologyRegistry,
+    validate_labels,
+    validate_terms,
+)
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 FIXTURE = FIXTURES / "mini-hp.obo"
@@ -127,3 +131,45 @@ def test_a_real_term_in_the_typedef_fixture_still_resolves(
 ) -> None:
     """Guards the Typedef fix against passing because nothing resolves at all."""
     assert validate_terms(["SO:0000704"], typedef_registry, "curation/x.yaml") == []
+
+
+def test_a_label_matching_the_pinned_release_passes(registry: OntologyRegistry) -> None:
+    labelled = [("HP:0001631", "Atrial septal defect")]
+    assert validate_labels(labelled, registry, "curation/phenotypes.yaml") == []
+
+
+def test_reports_a_label_that_the_pinned_release_does_not_carry(
+    registry: OntologyRegistry,
+) -> None:
+    """phenotypes.yaml says its labels are transcribed from the pinned release.
+
+    Nothing checked that claim, so a typo, a copy-paste from the wrong row, or a
+    label the HPO renamed in a later release would all display in the atlas as if
+    the ontology said it.
+    """
+    labelled = [("HP:0001631", "Ventricular septal defect")]
+
+    issues = validate_labels(labelled, registry, "curation/phenotypes.yaml")
+
+    assert [i.code for i in issues] == ["ONT005"]
+    assert "Atrial septal defect" in issues[0].message
+
+
+def test_label_comparison_ignores_case_and_surrounding_space(
+    registry: OntologyRegistry,
+) -> None:
+    """Capitalisation is house style, not a transcription error."""
+    labelled = [("HP:0001631", "  atrial septal defect ")]
+    assert validate_labels(labelled, registry, "curation/phenotypes.yaml") == []
+
+
+def test_label_checking_stays_quiet_about_terms_that_do_not_resolve(
+    registry: OntologyRegistry,
+) -> None:
+    """`validate_terms` already reports the unresolvable term once.
+
+    Adding "its label does not match" would name a second problem for the same
+    cause, and there is no label to compare against anyway.
+    """
+    labelled = [("HP:9999999", "Whatever"), ("XX:0000001", "Whatever")]
+    assert validate_labels(labelled, registry, "curation/phenotypes.yaml") == []

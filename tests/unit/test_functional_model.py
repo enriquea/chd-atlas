@@ -61,6 +61,20 @@ def test_morpholino_accepted_for_zebrafish() -> None:
     assert record.perturbation == "morpholino"
 
 
+def test_morpholino_accepted_for_chick() -> None:
+    """In-ovo morpholino electroporation is standard in avian cardiac development.
+
+    The chick embryo is externally developing and optically accessible, which is
+    the rule the allowlist states, and Gallus gallus is already an allowed model
+    organism. Excluding it rejects a legitimate record — the failure mode that
+    costs most here, because it blocks curation rather than admitting bad data.
+    """
+    record = FunctionalEvidence.model_validate(
+        _functional(perturbation="morpholino", organism="NCBITaxon:9031", zygosity="n/a")
+    )
+    assert record.perturbation == "morpholino"
+
+
 def test_germline_perturbation_must_state_zygosity() -> None:
     with pytest.raises(ValidationError, match="zygosity"):
         FunctionalEvidence.model_validate(_functional(perturbation="knockout", zygosity="n/a"))

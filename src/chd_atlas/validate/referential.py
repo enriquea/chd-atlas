@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Final
 
 from chd_atlas.corpus import Corpus
+from chd_atlas.duplicates import duplicates
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import TABLE_SCHEMAS, mirror_paths, read_table
 
@@ -58,6 +59,25 @@ def validate_references(
                     f"phenotype {phenotype} belongs to lesion group "
                     f"'{expected.value}', which is not among {declared}",
                 )
+
+        # REF009 below exempts an assertion with any unmapped phenotype, which is
+        # sound but silent: one term missing from the register disables all
+        # lesion-group checking for that record with nothing saying so. Naming the
+        # term restores the report.
+        #
+        # Guarded on a non-empty register for the same reason `known_genes is
+        # None` guards REF001: when phenotypes.yaml is absent or empty every term
+        # is unmapped, and one issue per phenotype per assertion would bury the
+        # single CUR002 that names the cause.
+        if lesion_group_of:
+            for phenotype in assertion.phenotypes:
+                if phenotype not in lesion_group_of:
+                    error(
+                        "REF012",
+                        location,
+                        f"phenotype {phenotype} is not in curation/phenotypes.yaml, "
+                        f"so its lesion group cannot be checked",
+                    )
 
         # The converse of REF007: a declared lesion group that no phenotype accounts for.
         # It files the assertion under a browse facet nothing in the record supports.
@@ -139,6 +159,19 @@ def validate_references(
                 f"featured entry {entry.order}",
                 f"publication {entry.publication} is not in curation/publications.yaml",
             )
+
+    # Each dataset is its own file under curation/datasets/, so no single model
+    # can see a collision between two of them. `validate_ids` does not cover it
+    # either: it checks only atlas-minted CHDA identifiers, and an accession is a
+    # third-party one. Two files declaring PXD012345 with different sample counts
+    # both load, and every mirror row citing that accession then resolves to
+    # whichever the filesystem happened to yield first.
+    for repeated in sorted(duplicates(dataset.id for dataset in corpus.datasets)):
+        error(
+            "REF011",
+            f"dataset {repeated}",
+            "accession is declared by more than one file under curation/datasets/",
+        )
 
     for dataset in corpus.datasets:
         if dataset.publication is not None and dataset.publication not in known_publications:

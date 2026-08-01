@@ -22,8 +22,16 @@ from chd_atlas.vocab import (
 
 # Morpholino knockdown needs externally-developing, optically accessible embryos.
 # It is not a mammalian technique.
+#
+# Zebrafish, both Xenopus species, and chick. The chick is here because the rule
+# above admits it — the embryo develops in ovo and is reachable through a window
+# in the shell — and because in-ovo morpholino electroporation is a standard
+# technique in avian cardiac development, particularly for cardiac neural crest
+# and outflow-tract studies. Gallus gallus is already an allowed model organism,
+# so omitting it here rejected a legitimate record: the costlier failure of the
+# two, because it blocks curation rather than admitting bad data.
 _MORPHOLINO_ORGANISMS: Final[frozenset[str]] = frozenset(
-    {"NCBITaxon:7955", "NCBITaxon:8355", "NCBITaxon:8364"}
+    {"NCBITaxon:7955", "NCBITaxon:8355", "NCBITaxon:8364", "NCBITaxon:9031"}
 )
 
 # These perturbations create a stable, heritable genotype, so zygosity is always

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from chd_atlas.duplicates import duplicates
 from chd_atlas.identifiers import AccessionId, ContrastId, Pmid, TaxonId
@@ -76,6 +76,19 @@ class Dataset(BaseModel):
     licence: str = Field(min_length=1)
     contrasts: list[Contrast] = Field(min_length=1)
     publication: Pmid | None = None
+
+    @field_validator("licence")
+    @classmethod
+    def licence_is_not_blank(cls, value: str) -> str:
+        """Same rule, same reason, as `Source.licence`.
+
+        `min_length=1` accepts "   ", which records no provenance at all. A
+        dataset redistributes third-party measurements exactly as a source does,
+        so the two must not disagree about what counts as a recorded licence.
+        """
+        if not value.strip():
+            raise ValueError("licence must not be blank")
+        return value
 
     @model_validator(mode="after")
     def accession_matches_archive(self) -> Dataset:
