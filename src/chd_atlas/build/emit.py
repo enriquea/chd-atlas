@@ -164,8 +164,15 @@ class Emitter:
         # `paths.slug` cannot prevent this. It is injective over strings, and
         # case is precisely what these filesystems discard: `HGNC:11604` is an
         # `HgncId` and `hgnc_11604` a `ContrastId`, and they slug to
-        # `HGNC_11604` and `hgnc_11604`. Nothing builds both today; the omics
-        # shards keyed by `ContrastId` are what would.
+        # `HGNC_11604` and `hgnc_11604`. Nothing builds that pair today.
+        #
+        # What does reach this guard is `build/omics.py`. Its shard paths are
+        # keyed on a mirror filename stem — a dataset accession rather than the
+        # `ContrastId` an earlier draft of this comment predicted — and `slug`
+        # leaves case alone, so two shards in one table directory whose names
+        # differ only in case are two files on the CI checkout and one on a
+        # curator's. A filename is not reviewed the way an identifier in a
+        # curated record is, which is what makes the pair reachable.
         if (clash := self._casefolded.get(relative.casefold())) is not None:
             raise ValueError(
                 f"{relative} and {clash} differ only in case; a case-insensitive "
