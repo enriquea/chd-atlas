@@ -1,4 +1,5 @@
 # tests/unit/test_build_omics.py
+import json
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,36 @@ def test_emits_one_shard_per_dataset_table(tmp_path: Path) -> None:
     assert "omics/expression/PXD012345.json" in emitter.checksums
 
 
+def test_a_shard_holds_the_rows_the_summary_only_counts(tmp_path: Path) -> None:
+    """The shard is the half of the design that carries the evidence.
+
+    Every other assertion in this file reads `emitter.checksums`, which records
+    paths and digests — so all of them together verify that shard files exist at
+    the right URLs and none of them that the files contain anything. Publishing
+    every shard as `{"table": ..., "rows": []}` passes the rest of this suite:
+    the bundle still advertises counts and shard links, every checksum still
+    verifies, and every gene's omics tab renders blank. That is this module's own
+    stated failure — evidence absent while the build reports success — with the
+    empty half moved from the summary to the file it links to.
+
+    `n_case` is asserted to still be an `int` because JSON has one number type
+    and the atlas has coordinates and sample counts in it: a count republished as
+    10.0 is not the value that was curated.
+    """
+    root = _repo(tmp_path, _row("HGNC:11604", "0.01") + _row("HGNC:11604", "0.02"))
+    emitter = Emitter(root=tmp_path / "dist")
+
+    build_omics(root, emitter)
+
+    shard = tmp_path / "dist" / "omics" / "expression" / "PXD012345.json"
+    payload = json.loads(shard.read_bytes())
+    assert payload["table"] == "expression"
+    assert [row["gene"] for row in payload["rows"]] == ["HGNC:11604", "HGNC:11604"]
+    assert [row["fdr"] for row in payload["rows"]] == [0.01, 0.02]
+    assert payload["rows"][0]["n_case"] == 10
+    assert isinstance(payload["rows"][0]["n_case"], int)
+
+
 def test_summarises_each_gene_by_modality(tmp_path: Path) -> None:
     root = _repo(tmp_path, _row("HGNC:11604", "0.01") + _row("HGNC:11604", "0.02"))
     emitter = Emitter(root=tmp_path / "dist")
@@ -111,6 +142,11 @@ def test_the_summary_keeps_only_the_most_significant_rows(tmp_path: Path) -> Non
         float(f"0.{index:03d}") for index in range(1, TOP_N + 1)
     ]
     assert summaries["HGNC:11604"]["expression"]["count"] == TOP_N + 9
+    # The other half of the bargain: the bundle is bounded because the shard is
+    # not. Truncating the published rows too would make the count a promise the
+    # site cannot keep.
+    shard = tmp_path / "dist" / "omics" / "expression" / "PXD012345.json"
+    assert len(json.loads(shard.read_bytes())["rows"]) == TOP_N + 9
 
 
 def test_the_slice_is_the_best_rows_across_every_dataset(tmp_path: Path) -> None:
@@ -374,6 +410,81 @@ def test_an_unreadable_gene_registry_does_not_abort_the_build(tmp_path: Path) ->
 
     assert summaries == {}
     assert "omics/phospho/PXD012345.json" in emitter.checksums
+
+
+def test_a_registry_missing_its_uniprot_column_does_not_abort_the_build(
+    tmp_path: Path,
+) -> None:
+    """A column renamed upstream is the failure this guard exists for.
+
+    `read_table` returns the frame whatever its columns are, so selecting a
+    column that is not there raises `ColumnNotFoundError` out of `build_omics`
+    and takes the whole atlas with it — over a registry that `validate_table`
+    reports on precisely, by name, as TBL001. The unreadable-file half of the
+    same guard is checked above; this is the half that survives a live upstream
+    rename.
+    """
+    (tmp_path / "mirrors").mkdir()
+    (tmp_path / "mirrors" / "genes.tsv").write_text(
+        GENES_HEADER.replace("uniprot", "swissprot")
+        + _gene_row("HGNC:11604", "TBX5", "Q99593")
+    )
+    _table(tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("Q99593", 12))
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(tmp_path, emitter)
+
+    assert summaries == {}
+    assert "omics/phospho/PXD012345.json" in emitter.checksums
+
+
+def test_a_gene_named_by_a_row_outranks_the_accession_registry(tmp_path: Path) -> None:
+    """`proteomics` carries both a gene and a protein, and they can disagree.
+
+    The column is the curated answer for that row; the registry is an inference
+    from an accession that several genes may claim. Routing every proteomics row
+    through the join regardless would silently reattribute the row below to a
+    gene its own dataset does not name — and the only proteomics test above uses
+    a null gene, so nothing else exercises the filled cell at all.
+    """
+    _registry(tmp_path, _gene_row("HGNC:99999", "OTHER", "Q99593"))
+    _table(
+        tmp_path,
+        "proteomics",
+        "PXD012345.tsv",
+        PROTEOMICS_HEADER
+        + "PXD012345\ttof_vs_control\tQ99593\tHGNC:11604\t1.0\t0.001\t0.01\tup\t3\t20.0\tdia\n",
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(tmp_path, emitter)
+
+    assert sorted(summaries) == ["HGNC:11604"]
+
+
+def test_the_tie_break_sorts_a_null_before_a_value(tmp_path: Path) -> None:
+    """`profiles.stage` is the only nullable column in any omics sort key.
+
+    It is also the case that matters most: `profiles` reports no FDR, so the
+    tie-break is not a tie-break there but the whole ranking. Nulls first is what
+    `validate/sort_order.py::_precedes` treats as canonical, and the two rows
+    below differ in nothing else — written value-first, so leaving nulls last or
+    not sorting at all both produce the reverse.
+    """
+    _table(
+        tmp_path,
+        "profiles",
+        "GSE000001.tsv",
+        PROFILES_HEADER
+        + "GSE000001\tHGNC:11604\tRV\tinfant\t5.0\ttpm\t\t\t3\n"
+        + "GSE000001\tHGNC:11604\tRV\t\t9.0\ttpm\t\t\t3\n",
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(tmp_path, emitter)
+
+    top = summaries["HGNC:11604"]["profiles"]["top"]
+    assert [row["stage"] for row in top] == [None, "infant"]
 
 
 def test_the_tie_break_orders_a_position_as_a_number(tmp_path: Path) -> None:

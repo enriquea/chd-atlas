@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, TypedDict
 
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import slug
@@ -44,6 +44,24 @@ _GENE_COLUMN: Final[dict[str, str | None]] = {
 # leads. `profiles` reports no FDR — it is an abundance table, not a contrast —
 # so its slice is the head of the table's own sort order instead.
 _RANK_BY: Final = "fdr"
+
+
+class ModalitySummary(TypedDict):
+    """What a gene bundle carries about one modality: a count, links, a preview.
+
+    `count` is every row about the gene, `shards` the files holding them, and
+    `top` at most `TOP_N` of the rows themselves.
+
+    Named rather than left as `dict[str, Any]` because the bundle writer that
+    consumes it does not exist yet. Declaring the shape now costs these four
+    lines; declaring it once a consumer is written against the untyped form costs
+    a change to two modules and a consumer to re-verify. `derive.py` sets the
+    precedent with `GeneFacts`.
+    """
+
+    count: int
+    shards: list[str]
+    top: list[dict[str, Any]]
 
 
 def _canonical(accession: str) -> str:
@@ -108,8 +126,13 @@ def _record(tier: dict[str, list[str]], accession: str, gene: str) -> None:
 def _ordered(tier: dict[str, list[str]]) -> dict[str, tuple[str, ...]]:
     """Freeze one tier, sorted: this decides the order genes are summarised in.
 
-    The registry's row order should not decide it, so the sort is not merely a
-    tidy-up — it is what keeps two builds of one commit identical.
+    Two builds read one `genes.tsv` in one row order, so this is not what keeps
+    the build byte-identical today — and on a registry that passes `SORT001` it
+    changes nothing at all, since `genes.sort_key` is `("hgnc_id",)` and a
+    cluster therefore arrives sorted already. What it does is stop the summary
+    order from following the file's row order on a mirror the build reads before
+    validation has judged it: unsorted, an out-of-order registry would be
+    reproduced rather than corrected.
     """
     return {accession: tuple(sorted(genes)) for accession, genes in tier.items()}
 
@@ -174,6 +197,12 @@ def _comparable(value: object) -> tuple[int, float, str]:
 
     Columns are single-typed, so the three tiers never interleave in practice;
     they are what makes the key total rather than a case anything relies on.
+
+    Deliberately not shared with `_precedes`, though the two must agree and a
+    reader changing either should read the other. `_precedes` raises `TypeError`
+    on a column holding mixed types; giving it this total order instead would
+    turn a validation failure into a defined answer, which is a change to what
+    `chd-atlas validate` accepts rather than to what the build publishes.
     """
     if value is None:
         return (0, 0.0, "")
@@ -194,15 +223,14 @@ def _rank(row: Mapping[str, Any], sort_key: tuple[str, ...]) -> tuple[Any, ...]:
     return (significance, *(_comparable(row.get(field)) for field in sort_key))
 
 
-def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, Any]]:
+def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, ModalitySummary]]:
     """Emit one shard per omics table and return a per-gene, per-modality summary.
 
-    The returned mapping is `{hgnc_id: {modality: {count, shards, top}}}`.
-    `count` is every row about the gene, `shards` the files holding them, and
-    `top` at most `TOP_N` of the rows themselves.
+    Keyed `{hgnc_id: {table name: ModalitySummary}}`. A gene appears only if some
+    row is about it; a modality only if that gene has a row in it.
     """
     index = _accession_index(root)
-    summaries: dict[str, dict[str, Any]] = {}
+    summaries: dict[str, dict[str, ModalitySummary]] = {}
 
     for path, schema_name in mirror_paths(root):
         if schema_name not in _GENE_COLUMN:
@@ -233,7 +261,7 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, Any]]:
         for row in rows:
             for gene in _genes_for_row(row, _GENE_COLUMN[schema_name], index):
                 modality = summaries.setdefault(gene, {}).setdefault(
-                    schema_name, {"count": 0, "shards": [], "top": []}
+                    schema_name, ModalitySummary(count=0, shards=[], top=[])
                 )
                 modality["count"] += 1
                 if relative not in modality["shards"]:
@@ -243,6 +271,17 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, Any]]:
     # Rank and truncate once, after every shard has contributed, so the slice is
     # the best rows across all datasets rather than the best of whichever file
     # happened to be read last.
+    #
+    # The cost is that every row about a gene is held until this runs, measured
+    # at roughly 0.8-1 KB of end-of-build peak per corpus row. Truncating after
+    # each file instead would bound that and — measured — returns the same slice,
+    # but the equivalence is worth stating before anyone leans on it: a row
+    # outside its own file's top `TOP_N` is beaten by `TOP_N` rows in that file,
+    # every one of which also outranks it globally, and `list.sort` is stable, so
+    # rows tied on the whole key keep their identity rather than trading places
+    # between runs. Deferred rather than rejected: there is no omics data in
+    # `mirrors/` yet, and the simpler pass is the one to leave behind until there
+    # is.
     for modalities in summaries.values():
         for schema_name, modality in modalities.items():
             modality["top"].sort(key=partial(_rank, sort_key=TABLE_SCHEMAS[schema_name].sort_key))
