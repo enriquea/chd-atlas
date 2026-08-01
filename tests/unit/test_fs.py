@@ -75,7 +75,13 @@ def test_a_dotfile_the_sweeps_expect_is_still_listed(tmp_path: Path) -> None:
     assert [entry.name for entry in entries] == [".id_registry.yaml"]
 
 
-def test_atomic_write_replaces_content_completely(tmp_path: Path) -> None:
+def test_a_shorter_payload_leaves_no_tail_of_the_old_one(tmp_path: Path) -> None:
+    """Named for what it pins: a full replace, not atomicity.
+
+    A plain `write_bytes` satisfies this too. It is here to catch a writer that
+    overwrote in place without truncating, which would leave the tail of the
+    longer previous content appended to the new bytes.
+    """
     path = tmp_path / "out.json"
     path.write_bytes(b"old content that is longer than the new")
 
@@ -84,12 +90,37 @@ def test_atomic_write_replaces_content_completely(tmp_path: Path) -> None:
     assert path.read_bytes() == b"new"
 
 
-def test_atomic_write_leaves_no_temporary_file_behind(tmp_path: Path) -> None:
+def test_the_temporary_does_not_survive_a_successful_write(tmp_path: Path) -> None:
+    """Also not atomicity: it catches a temporary that is copied rather than renamed.
+
+    `NamedTemporaryFile(delete=False)` plus a copy into place would pass the
+    content assertions above and leave the temporary sitting next to the target,
+    where the stray-entry sweeps would report it.
+    """
     path = tmp_path / "out.json"
 
     write_bytes_atomically(path, b"payload")
 
     assert [entry.name for entry in tmp_path.iterdir()] == ["out.json"]
+
+
+def test_the_written_file_is_world_readable_even_under_a_restrictive_umask(
+    tmp_path: Path,
+) -> None:
+    """`mkstemp` creates at 0600; these files are committed and published.
+
+    The umask is forced to 077 because that is the case the explicit chmod
+    exists for — under a permissive umask the mode could come out right by
+    accident and the assertion would pass against a writer that never chmods.
+    """
+    path = tmp_path / "out.json"
+    previous = os.umask(0o077)
+    try:
+        write_bytes_atomically(path, b"payload")
+    finally:
+        os.umask(previous)
+
+    assert path.stat().st_mode & 0o777 == 0o644
 
 
 def test_a_failed_write_leaves_the_original_intact_and_no_debris(

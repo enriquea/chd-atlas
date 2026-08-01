@@ -180,8 +180,15 @@ def test_saved_registry_is_world_readable(tmp_path: Path) -> None:
     assert path.stat().st_mode & 0o777 == 0o644
 
 
-def test_save_leaves_the_old_counter_intact_if_the_write_fails(tmp_path: Path) -> None:
-    """A truncate-then-fail would leave a zero-byte counter, which is data loss."""
+def test_a_serialisation_failure_never_reaches_the_filesystem(tmp_path: Path) -> None:
+    """An unrepresentable value must fail before any file is opened.
+
+    `save_id_registry` dumps into an in-memory stream and only then writes, so a
+    value ruamel cannot represent raises with the filesystem untouched: the
+    counter still holds its old bytes and no temporary was ever created. This
+    pins the ordering, not the atomic write — dumping straight at the
+    destination would truncate the counter before hitting the same error.
+    """
     _write_registry(tmp_path)
     path = tmp_path / "curation" / ".id_registry.yaml"
     before = path.read_bytes()
@@ -199,3 +206,35 @@ def test_save_leaves_the_old_counter_intact_if_the_write_fails(tmp_path: Path) -
         save_id_registry(tmp_path, registry)
 
     assert path.read_bytes() == before
+    # Nothing was created at all, not merely nothing left behind.
+    assert [entry.name for entry in (tmp_path / "curation").iterdir()] == [".id_registry.yaml"]
+
+
+def test_save_leaves_the_old_counter_intact_if_the_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A truncate-then-fail would leave a zero-byte counter, which is data loss.
+
+    Injected at `os.replace` because a serialisation failure no longer reaches
+    the writer at all — the dump completes in memory first — so this is the only
+    remaining way to exercise the atomic write from this call site. Without it,
+    `save_id_registry` passes its whole suite against a plain `path.write_bytes`.
+    """
+    _write_registry(tmp_path)
+    path = tmp_path / "curation" / ".id_registry.yaml"
+    before = path.read_bytes()
+
+    registry, _ = load_id_registry(tmp_path)
+    assert registry is not None
+    registry.prefixes["AST"] = 99
+
+    def explode(source: object, target: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("chd_atlas.fs.os.replace", explode)
+
+    with pytest.raises(OSError):
+        save_id_registry(tmp_path, registry)
+
+    assert path.read_bytes() == before
+    assert [entry.name for entry in (tmp_path / "curation").iterdir()] == [".id_registry.yaml"]

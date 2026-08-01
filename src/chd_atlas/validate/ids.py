@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from io import StringIO
+from io import BytesIO
 from pathlib import Path
 
 from ruamel.yaml import YAML
@@ -143,19 +143,27 @@ def allocate(registry: IdRegistry, prefix: str) -> str:
 def save_id_registry(root: Path, registry: IdRegistry) -> None:
     """Write the counter file atomically.
 
-    Opening the destination for writing truncates it before the dump runs, so
-    a dump that failed part-way left a zero-byte counter file — a silent
-    rewind of every prefix to zero. Writing a sibling temporary file and
-    renaming it into place leaves the counter as either its old content or its
-    new content, never empty.
+    A counter file that loses its contents is a silent rewind of every prefix to
+    zero, after which `allocate` reissues identifiers that are already in use.
+    `write_bytes_atomically` is what prevents a partial write from doing that;
+    the mechanism lives there rather than being restated here.
+
+    The dump goes through an in-memory stream rather than straight at the
+    destination on purpose. Serialising first means a value ruamel cannot
+    represent raises before any file exists — no temporary to clean up, and the
+    committed counter never opened. Handing the destination to `yaml.dump`
+    directly would be shorter and would reintroduce exactly the truncation this
+    guards against.
     """
     path = root / "curation" / ".id_registry.yaml"
     yaml = YAML()
     yaml.default_flow_style = False
 
-    stream = StringIO()
+    # BytesIO rather than StringIO so the encoding stays ruamel's decision: the
+    # YAML instance already carries `encoding = "utf-8"` and applies it here.
+    stream = BytesIO()
     yaml.dump({"prefixes": dict(sorted(registry.prefixes.items()))}, stream)
-    write_bytes_atomically(path, stream.getvalue().encode("utf-8"))
+    write_bytes_atomically(path, stream.getvalue())
 
 
 def validate_ids(ids: list[str], registry: IdRegistry) -> list[ValidationIssue]:

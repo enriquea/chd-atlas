@@ -57,25 +57,66 @@ def list_dir(directory: Path, code: str) -> tuple[list[Path], list[ValidationIss
 def write_bytes_atomically(path: Path, payload: bytes) -> None:
     """Replace ``path`` with ``payload`` in a single step.
 
-    Opening the destination for writing truncates it before the payload lands,
-    so a write that failed part-way left a truncated file while its siblings kept
-    their previous content. Every consumer of these files — the schema drift
-    test, the build manifest — compares bytes, and would report the corrupted
-    file as merely stale rather than as not a file of that kind at all.
+    Opening the destination for writing truncates it before the payload lands, so
+    a write that failed part-way left a file that is neither its old content nor
+    its new one. Both callers are harmed by that, one of them permanently:
+
+    - `curation/.id_registry.yaml` is a counter. A truncated write rewinds every
+      prefix to zero, and the next `allocate` then reissues identifiers already
+      in use — the one thing this package's ID module promises never happens, and
+      the one failure here that committed history cannot undo.
+    - The committed `schemas/*.schema.json` are compared byte-for-byte by the
+      drift test. A truncated one reads as merely stale, sending a curator to
+      re-run the export rather than telling them the file is not a schema at all.
 
     Writing a sibling temporary and renaming it leaves the target as either its
     old content or the complete new content, never a prefix of the new one.
+
+    ``path.parent`` must exist. `mkstemp` would otherwise raise
+    `FileNotFoundError` naming the temporary it was about to create — a path the
+    caller never chose and cannot correlate with anything they typed.
+    `export_schemas` creates its target first; `save_id_registry` relies on
+    `curation/` already being present, which it is in any real repository.
+
+    Raising, rather than returning `ValidationIssue`s the way `list_dir` above
+    does, is deliberate. `list_dir` swallows its `OSError` because an unreadable
+    directory is a finding *about the curated data*, and one finding must cost
+    one issue rather than the whole run. A failed write is not a finding about
+    the data — there is no report for it to appear in, and the caller is not
+    validating anything. `cli.py` catches `OSError` from `export_schemas` and
+    exits 2, reporting "you pointed me somewhere I cannot write". Folding a
+    failed write into a validation report instead would turn a lost file into a
+    clean exit code, which is the silent loss this function exists to prevent.
     """
     # A sibling so `os.replace` stays within one filesystem, where it is atomic.
     descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
     temporary = Path(name)
     try:
+        # Binary, and the payload is bytes, so the caller's newlines reach the
+        # disk untouched. `open(..., "w", encoding="utf-8")` defaults to
+        # `newline=None`, which rewrites every "\n" to `os.linesep`. On Windows
+        # that emits CRLF, and since the drift test compares bytes it would then
+        # report every committed schema as stale on every run.
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(payload)
-        # `mkstemp` creates at 0600, which would leave a published artifact
-        # owner-only on whichever machine generated it.
+        # `mkstemp` creates at 0600, which would leave a committed, world-readable
+        # artifact owner-only on whichever machine generated it. Set the mode
+        # explicitly so it does not depend on how the file happened to be made.
+        #
+        # Before the replace, not after: afterwards there is a window in which
+        # the file is visible at its published name with the wrong mode, and the
+        # chmod would apply to whatever now sits at `path` rather than to the
+        # bytes just written. Reversing the two still passes every test here.
         os.chmod(temporary, 0o644)
+        # No fsync: this guards against a failed or interrupted write, not
+        # against power loss. Both files are regenerated from committed sources
+        # by a single command, so an unclean shutdown costs a re-run rather than
+        # data — not worth an fsync on every schema export.
         os.replace(temporary, path)
+    # BaseException, not Exception: a Ctrl-C between mkstemp and replace would
+    # otherwise strand a `.tmp` in `curation/`, where the CUR001 stray-entry
+    # sweep reports it as an unexpected file. `.gitignore` has no `*.tmp` rule
+    # and `list_dir` filters only `OS_METADATA`, so nothing else would catch it.
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
