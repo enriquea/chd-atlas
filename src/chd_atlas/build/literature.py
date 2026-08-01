@@ -7,9 +7,11 @@ release: publications, featured entries and the phenotype vocabulary are one
 line-reviewed YAML file apiece, and a dataset record is one file per accession
 carrying nothing but its own contrast definitions. The measurements those
 records interpret are not here — they live in the mirror tables `omics.py` and
-`variants.py` shard. `datasets.json` is the only one of the four whose records
-nest another entity, since a dataset carries every contrast it declares, so it
-is the first that would stop being small if curation scaled.
+`variants.py` shard. Of the four *curated* record types only a dataset nests
+another entity, carrying every contrast it declares, so `datasets.json` is the
+first that would stop being small if curation scaled. What `_featured` nests is
+a second copy of a record `publications.json` already carries in full, bounded
+by how many manuscripts a landing page shows.
 
 All four are emitted even when empty: a consumer that has to tell "not curated
 yet" from "wrong URL" by reading a 404 will get it wrong, and phenotypes.json is
