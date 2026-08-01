@@ -18,6 +18,14 @@ checks the `chrom` column and `unexpected_mirror_entries` checks only that a
 shard is a `.tsv` — so making the filename and the column agree is this module's
 job, and it refuses to publish rather than publish a shard filed under the wrong
 name.
+
+Reporting the same rule from `validate/` is queued, and these guards stay when it
+lands. They sit on the footing `encode_json`'s `allow_nan=False` already
+occupies: reaching one means the gate was bypassed, and a bypassed gate must
+still fail rather than publish. Deleting them would rest on the gate having run,
+which nothing in code requires — `build_variants` is callable directly and
+`chd-atlas validate` is a separate command. `assert` would be worse still, since
+`-O` strips it and silent evidence loss is this project's characteristic failure.
 """
 
 from __future__ import annotations

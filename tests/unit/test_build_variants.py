@@ -224,6 +224,10 @@ def test_a_shard_holding_another_chromosomes_rows_is_refused(tmp_path: Path) -> 
         build_variants(tmp_path, emitter)
 
     assert "'7'" in str(raised.value)
+    # The filename is the one actionable token: this raises as a traceback in CI
+    # rather than as a rendered report, so a message without it names no file to
+    # go and fix.
+    assert "12.tsv" in str(raised.value)
     assert not (tmp_path / "dist" / "variants" / "12.json.gz").exists()
 
 
@@ -282,9 +286,10 @@ def test_a_filename_that_is_not_a_chromosome_is_refused(tmp_path: Path) -> None:
     _shard(tmp_path, "1.tsv", _row(chrom="1"))
     emitter = Emitter(root=tmp_path / "dist")
 
-    with pytest.raises(ValueError, match="'chr12' is not one of"):
+    with pytest.raises(ValueError, match="'chr12' is not one of") as raised:
         build_variants(tmp_path, emitter)
 
+    assert "chr12.tsv" in str(raised.value)
     # Refused before anything is written, rather than part-way through dist/.
     assert not (tmp_path / "dist").exists()
 
