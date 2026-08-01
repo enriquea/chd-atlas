@@ -72,13 +72,23 @@ def _refuse_foreign_rows(path: Path, chrom: str, rows: list[dict[str, Any]]) -> 
     `<chr>.tsv` layout has no way to publish: one of the two would have to go
     out under the other's name.
 
+    A row with no chromosome at all — a null cell, or the whole column missing —
+    is reported as that rather than as a chromosome. `str()` on the null would
+    make the message name a chromosome "None" that no genome has and no schema
+    admits, sending a curator looking for a value that is not in the file; it is
+    also the same coercion the loop below refuses to make on `gene`.
+
     The offenders are collected through a set and sorted before they are named,
     so the message does not vary between runs on data that does not vary.
     """
-    foreign = sorted({str(row.get("chrom")) for row in rows} - {chrom})
-    if foreign:
+    seen = {row.get("chrom") for row in rows}
+    foreign = sorted(str(value) for value in seen if value is not None and str(value) != chrom)
+    faults = [f"rows for {foreign}"] if foreign else []
+    if None in seen:
+        faults.append("rows with no chromosome")
+    if faults:
         raise ValueError(
-            f"{path}: filed under chromosome {chrom!r} but holds rows for {foreign}; "
+            f"{path}: filed under chromosome {chrom!r} but holds {' and '.join(faults)}; "
             f"a consumer resolving a chromosome to its shard would never reach them"
         )
 

@@ -209,14 +209,59 @@ def test_a_shard_holding_another_chromosomes_rows_is_refused(tmp_path: Path) -> 
     Left alone, a chr7 variant filed in 12.tsv is published inside
     variants/12.json.gz under a `chrom` of "12": a client that maps a
     chromosome to its shard can never reach it, and nothing reports it missing.
+
+    Checked before the shard is written rather than after: a refusal that leaves
+    that artifact on disk has still published the thing this rule exists to
+    prevent, and a later build reading `dist/` cannot tell it apart.
     """
     _shard(tmp_path, "12.tsv", _row(chrom="12") + _row(chrom="7", pos="1000"))
     emitter = Emitter(root=tmp_path / "dist")
 
-    with pytest.raises(ValueError, match="12.tsv") as raised:
+    # On the rule's own words: the filename rule's message quotes the whole
+    # chromosome vocabulary, so matching on "'7'" alone would be satisfied by
+    # either rule firing.
+    with pytest.raises(ValueError, match="holds rows for") as raised:
         build_variants(tmp_path, emitter)
 
     assert "'7'" in str(raised.value)
+    assert not (tmp_path / "dist" / "variants" / "12.json.gz").exists()
+
+
+def test_the_refusal_names_every_foreign_chromosome_in_a_fixed_order(tmp_path: Path) -> None:
+    """The offending values go through a set, whose iteration order follows the
+    interpreter's hash seed and so differs between two runs on identical data.
+    Sorting them is what makes the message reproducible; five values are enough
+    that an unsorted list matching this one by chance is a 1-in-120 event."""
+    _shard(
+        tmp_path,
+        "12.tsv",
+        "".join(
+            _row(chrom=chrom, pos=str(1000 + index))
+            for index, chrom in enumerate(["7", "X", "MT", "2", "21"])
+        ),
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    with pytest.raises(ValueError) as raised:
+        build_variants(tmp_path, emitter)
+
+    assert "holds rows for ['2', '21', '7', 'MT', 'X']" in str(raised.value)
+
+
+def test_a_row_with_no_chromosome_is_reported_as_that(tmp_path: Path) -> None:
+    """`chrom` is not nullable, so a null cell is a curation error `validate_table`
+    reports as TBL003. Reaching here regardless, the message must not call the
+    missing value a chromosome: `str(None)` names "None", which is no chromosome
+    in any genome and sends a curator looking through the file for a value that
+    is not in it. It is also the coercion this module refuses to make on `gene`
+    twenty lines further down."""
+    _shard(tmp_path, "12.tsv", _row(chrom=""))
+    emitter = Emitter(root=tmp_path / "dist")
+
+    with pytest.raises(ValueError, match="holds rows with no chromosome") as raised:
+        build_variants(tmp_path, emitter)
+
+    assert "None" not in str(raised.value)
 
 
 def test_a_filename_that_is_not_a_chromosome_is_refused(tmp_path: Path) -> None:
@@ -227,15 +272,38 @@ def test_a_filename_that_is_not_a_chromosome_is_refused(tmp_path: Path) -> None:
     shard would be refused for holding rows the filename does not name, and the
     test would pass just as well with the filename never checked at all — which
     is how it was first written and what mutating the check away exposed.
+
+    A second, valid shard is what makes the last assertion mean anything: with
+    one shard in the repository `dist/` is empty whether the name is resolved up
+    front or in the middle of the loop, and resolving it in the loop publishes
+    variants/1.json.gz before refusing the build.
     """
     _shard(tmp_path, "chr12.tsv", "")
+    _shard(tmp_path, "1.tsv", _row(chrom="1"))
     emitter = Emitter(root=tmp_path / "dist")
 
     with pytest.raises(ValueError, match="'chr12' is not one of"):
         build_variants(tmp_path, emitter)
 
-    # Refused before anything is written, rather than after half of dist/ is.
+    # Refused before anything is written, rather than part-way through dist/.
     assert not (tmp_path / "dist").exists()
+
+
+def test_a_chromosome_in_the_wrong_case_is_refused(tmp_path: Path) -> None:
+    """`x` is not `X`, and case is the axis this codebase is most exposed on.
+
+    `emit.py` carries a whole guard for it because macOS keeps one file where
+    Linux keeps two, so `x.tsv` is a file a curator plausibly creates and CI
+    plausibly treats as a second chromosome. Matching on the rule's own words
+    because accepting the stem case-insensitively does not merely publish
+    `variants/x.json.gz` — it degrades this clear refusal into a bare
+    `KeyError: 'x'` thrown out of a sort key with nothing to say about mirrors.
+    """
+    _shard(tmp_path, "x.tsv", _row(chrom="X"))
+    emitter = Emitter(root=tmp_path / "dist")
+
+    with pytest.raises(ValueError, match="'x' is not one of"):
+        build_variants(tmp_path, emitter)
 
 
 def test_a_shard_with_a_header_and_no_rows_is_still_published(tmp_path: Path) -> None:
@@ -247,6 +315,32 @@ def test_a_shard_with_a_header_and_no_rows_is_still_published(tmp_path: Path) ->
     assert _shards(tmp_path) == ["variants/21.json.gz"]
     written = (tmp_path / "dist" / "variants" / "21.json.gz").read_bytes()
     assert json.loads(gzip.decompress(written)) == {"chrom": "21", "rows": []}
+
+
+def test_only_the_variant_mirrors_are_read(tmp_path: Path) -> None:
+    """`mirror_paths` yields every table in the repository, and none of the others
+    is named for a chromosome. Without the filter, `mirrors/genes.tsv` — which
+    every real repository has, and which is yielded before any shard — is handed
+    to the filename rule and refuses the build on a repository that is entirely
+    correct. Both layouts are represented here: the flat tables and the
+    per-accession shards are separate branches of `mirror_paths`.
+    """
+    _shard(tmp_path, "12.tsv", ROW)
+    (tmp_path / "mirrors" / "genes.tsv").write_text(
+        "hgnc_id\tsymbol\tname\taliases\tensembl_gene\tncbi_gene\tlocus\tuniprot\tmane_select\n"
+        "HGNC:11604\tTBX5\tT-box transcription factor 5\t\t\t\t\t\t\n"
+    )
+    (tmp_path / "mirrors" / "expression").mkdir()
+    (tmp_path / "mirrors" / "expression" / "PXD012345.tsv").write_text(
+        "dataset\tcontrast\tgene\tlog2fc\tpvalue\tfdr\tdirection\tn_case\tn_control\t"
+        "tissue\tstage\n"
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    by_gene = build_variants(tmp_path, emitter)
+
+    assert _shards(tmp_path) == ["variants/12.json.gz"]
+    assert list(by_gene) == ["HGNC:11604"]
 
 
 def test_an_unreadable_shard_leaves_the_rest_of_the_build_standing(tmp_path: Path) -> None:
