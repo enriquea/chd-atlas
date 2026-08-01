@@ -291,11 +291,16 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
     gene, not the assertion, so without the set a curator splitting one gene's
     evidence across two records would double it in every search.
 
-    And, because neither gene here carries a `name`, this is the only test that
-    fails if the null one is published rather than dropped — a `name` is required
-    by TBL003 and so arrives null only through a bypassed gate, and `null` in
-    `terms` is a term no query can match but every consumer has to survive
-    reading.
+    And this is the only test that fails if an absent `name` is published rather
+    than dropped. A `name` is required by TBL003, so it arrives falsy only
+    through a bypassed gate — but the two ways it can are not equally harmless,
+    which is why both genes here are needed. GATA4 carries no `GeneLabels` at
+    all, so its `name` is `None`: a term no query matches, but one every consumer
+    has to survive reading. TBX5 carries `name=""`, and an empty string is worse
+    than useless — every "contains" query matches it, so one blank cell in
+    `mirrors/genes.tsv` would make that gene a hit for anything a visitor types.
+    A truthiness check drops both; `is not None` drops only the first and passes
+    every other test in this file.
     """
     corpus = _corpus(
         assertions=(
@@ -308,7 +313,9 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
     )
     emitter = Emitter(root=tmp_path)
 
-    build_search(corpus, emitter, genes={TBX5: GeneLabels(symbol="TBX5", aliases=("TBX5",))})
+    build_search(
+        corpus, emitter, genes={TBX5: GeneLabels(symbol="TBX5", name="", aliases=("TBX5",))}
+    )
 
     records = _records(tmp_path)
     assert [record["id"] for record in records] == [TBX5, GATA4]
