@@ -108,9 +108,16 @@ class Emitter:
     `_write` rejects the shapes it cannot serve.
 
     `_casefolded` maps the casefold of each written path back to the path itself,
-    so `_write` can refuse two paths a case-insensitive filesystem would merge.
-    It is maintained in step with `checksums`; code that inserts into `checksums`
-    directly rather than through `_write` defeats both guards.
+    so `_write` can refuse two paths that differ only in case. It is maintained in
+    step with `checksums`, and only by `_write`: an entry placed into `checksums`
+    directly — including by passing one to the constructor — is still seen by the
+    exact-duplicate guard but is invisible to the case guard, so the direction it
+    weakens is the silent one.
+
+    Case is one of two axes on which a filesystem merges names; normalisation is
+    the other. macOS will treat NFC and NFD spellings of one name as one file, and
+    this does not check that. Unreachable through `paths.slug`, whose output is
+    pure ASCII, but `_write` accepts an arbitrary string.
     """
 
     root: Path
