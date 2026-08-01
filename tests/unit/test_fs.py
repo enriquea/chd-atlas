@@ -132,9 +132,10 @@ def test_a_failed_write_leaves_the_original_intact_and_no_debris(
     ones, so a truncated file reads as merely stale and sends a curator to re-run
     an export rather than telling them the file on disk is not a schema at all.
 
-    The failure is injected at `os.replace` rather than at the write itself
-    because `io.BufferedWriter` is an immutable C type and cannot be patched --
-    the test would then fail on the patch and never exercise the guard.
+    The failure is injected at `os.replace` rather than at the write: patching
+    `io.BufferedWriter.write` is impossible because it is an immutable C type,
+    and wrapping `os.fdopen` so the write fails instead reaches the same `except`
+    clause with more indirection for no extra coverage.
     """
     path = tmp_path / "out.json"
     path.write_bytes(b"original")
