@@ -5,8 +5,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.search import build_search
+from chd_atlas.build.search import GeneLabels, build_search
 from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import GeneDiseaseAssertion
 from chd_atlas.models.functional import FunctionalEvidence
@@ -127,6 +129,14 @@ def test_each_kind_is_published_as_one_record_of_what_a_visitor_types(tmp_path: 
     is the slugged form, since `genes/HGNC:11604.json` is a URL carrying a
     character no consumer would leave unescaped.
 
+    Every record's terms lead with its label and then its own identifier, and all
+    three identifiers are here because each is what a reader arrives holding: a
+    PMID is what every assertion's `evidence.publication` cites and what
+    `publications.yaml` is keyed on, and an HPO id is what a lesion facet or a
+    clinical note hands over. The gene's approved name is a term and not the
+    label — the other half of one decision, since the label is the result row and
+    `bundles.py` shows the symbol there and in the page heading.
+
     Term order is part of the file. The gene's aliases arrive unsorted and are
     published sorted, because an alias cell is an upstream dump whose order means
     nothing; the authors and the synonyms arrive unsorted and stay that way,
@@ -145,8 +155,13 @@ def test_each_kind_is_published_as_one_record_of_what_a_visitor_types(tmp_path: 
     build_search(
         _corpus(),
         emitter,
-        symbols={TBX5: "TBX5"},
-        aliases={TBX5: ["T-box 5", "Holt-Oram syndrome 1"]},
+        genes={
+            TBX5: GeneLabels(
+                symbol="TBX5",
+                name="T-box transcription factor 5",
+                aliases=("T-box 5", "Holt-Oram syndrome 1"),
+            )
+        },
     )
 
     assert _records(tmp_path) == [
@@ -154,7 +169,13 @@ def test_each_kind_is_published_as_one_record_of_what_a_visitor_types(tmp_path: 
             "kind": "gene",
             "id": TBX5,
             "label": "TBX5",
-            "terms": ["TBX5", TBX5, "Holt-Oram syndrome 1", "T-box 5"],
+            "terms": [
+                "TBX5",
+                TBX5,
+                "T-box transcription factor 5",
+                "Holt-Oram syndrome 1",
+                "T-box 5",
+            ],
             "path": "genes/HGNC_11604.json",
         },
         {
@@ -163,6 +184,7 @@ def test_each_kind_is_published_as_one_record_of_what_a_visitor_types(tmp_path: 
             "label": "Mutations in human TBX5 cause Holt-Oram syndrome",
             "terms": [
                 "Mutations in human TBX5 cause Holt-Oram syndrome",
+                "PMID:8988165",
                 "Nature Genetics",
                 "Li QY",
                 "Basson CT",
@@ -175,6 +197,7 @@ def test_each_kind_is_published_as_one_record_of_what_a_visitor_types(tmp_path: 
             "label": "Ventricular septal defect",
             "terms": [
                 "Ventricular septal defect",
+                "HP:0001629",
                 "VSD",
                 "Interventricular septal defect",
             ],
@@ -225,7 +248,7 @@ def test_each_kind_is_ordered_by_identifier(tmp_path: Path) -> None:
     )
     emitter = Emitter(root=tmp_path)
 
-    build_search(corpus, emitter, symbols={}, aliases={})
+    build_search(corpus, emitter, genes={})
 
     assert [record["id"] for record in _records(tmp_path)] == [
         # Genes, by HGNC id. The corpus lists these in the reverse of this order.
@@ -267,6 +290,12 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
     Also pinned here: two assertions about one gene are one result. `id` is the
     gene, not the assertion, so without the set a curator splitting one gene's
     evidence across two records would double it in every search.
+
+    And, because neither gene here carries a `name`, this is the only test that
+    fails if the null one is published rather than dropped — a `name` is required
+    by TBL003 and so arrives null only through a bypassed gate, and `null` in
+    `terms` is a term no query can match but every consumer has to survive
+    reading.
     """
     corpus = _corpus(
         assertions=(
@@ -279,7 +308,7 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
     )
     emitter = Emitter(root=tmp_path)
 
-    build_search(corpus, emitter, symbols={TBX5: "TBX5"}, aliases={TBX5: ["TBX5"]})
+    build_search(corpus, emitter, genes={TBX5: GeneLabels(symbol="TBX5", aliases=("TBX5",))})
 
     records = _records(tmp_path)
     assert [record["id"] for record in records] == [TBX5, GATA4]
@@ -316,8 +345,11 @@ def test_only_a_gene_carrying_an_assertion_is_searchable(tmp_path: Path) -> None
     build_search(
         corpus,
         emitter,
-        symbols={TBX5: "TBX5", GATA4: "GATA4", NKX2_5: "NKX2-5"},
-        aliases={NKX2_5: ["CSX"]},
+        genes={
+            TBX5: GeneLabels(symbol="TBX5"),
+            GATA4: GeneLabels(symbol="GATA4"),
+            NKX2_5: GeneLabels(symbol="NKX2-5", aliases=("CSX",)),
+        },
     )
 
     assert [record["id"] for record in _records(tmp_path)] == [TBX5]
@@ -338,8 +370,29 @@ def test_an_empty_corpus_still_publishes_one_gzipped_index_at_a_fixed_path(
     """
     emitter = Emitter(root=tmp_path)
 
-    build_search(Corpus(root=Path(".")), emitter, symbols={}, aliases={})
+    build_search(Corpus(root=Path(".")), emitter, genes={})
 
     assert set(emitter.checksums) == {"search/index.json.gz"}
     written = (tmp_path / "search" / "index.json.gz").read_bytes()
     assert json.loads(gzip.decompress(written)) == {"records": []}
+
+
+def test_an_unsplit_alias_cell_is_refused_rather_than_indexed_as_characters() -> None:
+    """The one wrong value no annotation can refuse, and why it raises here.
+
+    `aliases` is `tuple[str, ...]` precisely so that a raw `mirrors/genes.tsv`
+    cell cannot be passed. Measured under `mypy --strict`: `Sequence[str]`,
+    `Collection[str]` and `Iterable[str]` all accept a bare `str`, which then
+    explodes into single characters — `{"HGNC:11604": "T-box 5|TBX5B"}` published
+    12 terms, among them `"|"`, `" "` and `"-"` — in a build whose every checksum
+    verifies. `tuple`, `list` and `frozenset` all reject it.
+
+    The type closes that for a typed caller and not for the one caller there will
+    be: the registry reader takes its rows from polars' `frame.to_dicts()`, which
+    is `dict[str, Any]`, and an `Any` satisfies `tuple[str, ...]` silently —
+    `reveal_type` still reports `tuple[str, ...]` while the value is a string.
+    The `type: ignore` below is the point rather than an inconvenience: it defeats
+    the annotation deliberately, which is what an `Any` does by accident.
+    """
+    with pytest.raises(ValueError, match="single-character search terms"):
+        GeneLabels(symbol="TBX5", aliases="T-box 5|TBX5B")  # type: ignore[arg-type]
