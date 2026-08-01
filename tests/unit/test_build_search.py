@@ -215,18 +215,26 @@ def test_each_kind_is_ordered_by_identifier(tmp_path: Path) -> None:
 
     Publications and phenotypes come from tuples, so a build with the sort
     removed publishes the corpus order. That is deterministic — the corpus order
-    here is deliberately neither lexical nor numeric, so the mutant fails on
-    every run under every `PYTHONHASHSEED`, and three records of each is already
-    conclusive. The PMIDs also pin *lexical* rather than numeric order, the
-    decision A25 recorded: PMID:10 and PMID:100 lead PMID:9, and `derive.py`
-    orders the same PMIDs the same way.
+    here is deliberately not the published order, the publications listed in
+    numeric order that the lexical sort has to override and the phenotypes in
+    the reverse of theirs — so the mutant fails on every run under every
+    `PYTHONHASHSEED`, and three records of each is already conclusive. The PMIDs
+    also pin *lexical* rather than numeric order, the decision A25 recorded:
+    PMID:10 and PMID:100 lead PMID:9, and `derive.py` orders them the same way.
 
     Genes come from a set, so the mutant publishes hash order and the guard is
     only as strong as the fixture is wide. Measured on these exact ids in this
-    exact corpus order, counting the seeds on which set order already equals
-    sorted order and the mutant would therefore survive: 2 genes 96/200, 3 genes
-    45/200, 4 genes 1/200, 5 genes 0/200, 6 genes 0/1000. Six is the size A10
-    measured to 0/200 on the equivalent guard in `derive.py`, and it holds here.
+    exact corpus order, one process per seed over `PYTHONHASHSEED` 1-200,
+    counting the seeds on which set order already equals sorted order and the
+    mutant would therefore survive: 2 genes 97/200, 3 genes 49/200, 4 genes
+    27/200, 5 genes 0/200, 6 genes 0/200 (and 0/1000 over a wider sweep).
+
+    Do not read the ladder as permission to shrink this fixture. Four genes is
+    not a near-miss — it is a test that passes against a broken build on one run
+    in seven — and an earlier draft of this docstring claimed 1/200 there, a
+    figure carried over from A10's five-PMID measurement on a different id set.
+    Five is the first size that holds, and six is what A10 measured on the
+    equivalent guard in `derive.py`; the margin is the point.
 
     What A33 could not have fixed by widening the fixture is the shape of the
     test it describes. Comparing two builds inside one process can never fail:
@@ -390,9 +398,10 @@ def test_an_unsplit_alias_cell_is_refused_rather_than_indexed_as_characters() ->
     `aliases` is `tuple[str, ...]` precisely so that a raw `mirrors/genes.tsv`
     cell cannot be passed. Measured under `mypy --strict`: `Sequence[str]`,
     `Collection[str]` and `Iterable[str]` all accept a bare `str`, which then
-    explodes into single characters — `{"HGNC:11604": "T-box 5|TBX5B"}` published
-    12 terms, among them `"|"`, `" "` and `"-"` — in a build whose every checksum
-    verifies. `tuple`, `list` and `frozenset` all reject it.
+    explodes into single characters — `GeneLabels(symbol="TBX5",
+    aliases="T-box 5|TBX5B")` published 12 terms, among them `"|"`, `" "` and
+    `"-"` — in a build whose every checksum verifies. `tuple`, `list` and
+    `frozenset` all reject it.
 
     The type closes that for a typed caller and not for the one caller there will
     be: the registry reader takes its rows from polars' `frame.to_dicts()`, which

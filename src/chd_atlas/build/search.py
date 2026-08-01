@@ -14,9 +14,11 @@ file every visitor downloads before they have typed anything.
 Datasets are excluded for a different reason, which that sentence used to be read
 as covering. Size is not the argument: a dataset is bounded by hand curation like
 everything `literature.py` writes. What a dataset lacks is a name — the model
-carries an accession, an archive, a technology, a tissue, a stage, a licence and
-its contrasts, and no title or description at all — so the only string that would
-name one record rather than the class is the accession. An accession already
+carries an accession, an archive, a technology, a tissue, a stage, an organism, a
+sample count, a licence and its contrasts, and no title or description of its
+own; the only free text describing it belongs to a contrast, whose `description`
+names a comparison rather than the dataset — so the only string that would name
+one record rather than the class is the accession. An accession already
 resolves where a reader meets it: every omics row a gene bundle embeds names its
 dataset in the `dataset` column, and `datasets.json` is what that resolves
 against, exactly as `publications.json` resolves an assertion's PMID. A dataset
@@ -56,8 +58,8 @@ class GeneLabels:
     nothing would report, and every caller would carry three lookups and three
     fallbacks where one will do. `build_genes` is deliberately untouched — it
     needs the symbol alone and keeps taking `Mapping[str, str]`, which the build
-    runner derives from these in one comprehension rather than reading the mirror
-    a second time.
+    runner, once it is written, can derive from these in one comprehension rather
+    than reading the mirror a second time. Nothing calls either function yet.
 
     `aliases` is `tuple[str, ...]` because `str` satisfies `Sequence[str]`,
     `Collection[str]` and `Iterable[str]`. Measured under `mypy --strict` rather
@@ -149,16 +151,18 @@ def build_search(
     `Mapping` because nothing here mutates it — the concrete type is invariant,
     so spelling it `dict` would reject legitimate arguments for no benefit.
     `build_genes` takes `symbols: Mapping[str, str]` the same way for the same
-    reason, and keeps taking exactly that: it needs the symbol alone, so the
-    runner passes `{gene: labels.symbol for gene, labels in genes.items()}` there
-    and this whole record here.
+    reason, and keeps taking exactly that: it needs the symbol alone, so a runner
+    passes `{gene: labels.symbol for gene, labels in genes.items()}` there and
+    this whole record here. Neither has a caller yet; the Task 11 runner is the
+    caller both are shaped for, and its specification predates this signature.
 
     A gene absent from `genes` labels itself with its HGNC id, so a result row
-    reads "HGNC:4173" rather than blank. Behind `build_site` that fallback is
-    unreachable: REF001 makes an asserted gene missing from the registry an
-    error, TBL008 makes a missing registry one, and the build refuses on any
-    error — so reaching it means the gate was bypassed, and an ugly row a reader
-    can still search for beats an unlabelled one.
+    reads "HGNC:4173" rather than blank. Behind the validation gate `build_site`
+    will be, that fallback is unreachable: REF001 makes an asserted gene missing
+    from the registry an error, TBL008 makes a missing registry one, and it
+    refuses to build on any error — so reaching it means the gate was bypassed or
+    not yet in place, and an ugly row a reader can still search for beats an
+    unlabelled one.
 
     Aliases are sorted; authors and synonyms are not. An alias cell is a
     pipe-separated dump whose order is whatever the upstream release emitted, so
@@ -199,10 +203,13 @@ def build_search(
             }
         )
 
-    # These two arrays are sorted for determinism only. They are already ordered
-    # by identifier in `publications.json` and `phenotypes.json`, and a search
-    # result is ranked by whatever the client matched on rather than by the order
-    # it read them in.
+    # These two follow their corpus order, which is one YAML file's line order
+    # and so is already stable between two builds of one commit — unlike the gene
+    # set above, this is not what keeps the build byte-identical. Sorted anyway,
+    # for two other reasons: it keeps the published order independent of where a
+    # curator inserts a record, and it matches the order `publications.json` and
+    # `phenotypes.json` already use. It ranks nothing; a search result is ranked
+    # by whatever the client matched on rather than by the order it read them in.
     for publication in sorted(corpus.publications, key=lambda item: item.id):
         records.append(
             {
