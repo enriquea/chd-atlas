@@ -101,24 +101,94 @@ def test_an_uncontested_gene_does_not_carry_the_flag() -> None:
     assert facts["HGNC:11604"].has_conflicting_evidence is False
 
 
-def test_confidence_is_broken_down_per_lesion_group() -> None:
+def test_each_gene_is_derived_only_from_its_own_assertions() -> None:
+    """No accumulator may leak from one gene into the next.
+
+    The governing requirement is that a gene is never displayed as better
+    evidenced than its evidence, and the way this module would break it is not a
+    ranking error but a scoping one: an accumulator hoisted out of the per-gene
+    loop, or an inner loop reading `corpus.assertions` instead of this gene's
+    slice. Either publishes `HGNC:11604` — curated `limited` — as `definitive`,
+    because some *other* gene in the corpus is definitive.
+
+    A single-gene fixture cannot see any of that, and every other test in this
+    file uses one. The two genes here are given disjoint values for each derived
+    field so a leak cannot coincidentally agree with the truth, and the
+    assertions are on the gene derived *second*, which is the one a leak reaches.
+    """
     corpus = _corpus(
         assertions=(
             _assertion(
-                id="CHDA:AST:0000001", lesion_groups=["septal"], classification="definitive"
+                id="CHDA:AST:0000001",
+                gene="HGNC:11599",
+                classification="definitive",
+                lesion_groups=["avsd"],
+                evidence=[
+                    _evidence(publication="PMID:1001", evidence_class="genetic_segregation")
+                ],
             ),
             _assertion(
-                id="CHDA:AST:0000002", lesion_groups=["conotruncal"], classification="limited"
+                id="CHDA:AST:0000002",
+                gene="HGNC:11604",
+                classification="limited",
+                lesion_groups=["septal"],
+                evidence=[_evidence(publication="PMID:2002", evidence_class="genetic_case")],
             ),
         )
     )
 
     facts = gene_facts(corpus)
 
+    second = facts["HGNC:11604"]
+    assert second.gene == "HGNC:11604"
+    assert second.headline_confidence == Classification.LIMITED
+    assert second.lesion_groups == (LesionGroup.SEPTAL,)
+    assert second.publications == ("PMID:2002",)
+    assert second.evidence_counts == {EvidenceClass.GENETIC_CASE: 1}
+
+    # The gene derived first keeps its own values too, so nothing is fixed by
+    # leaking in the other direction.
+    assert facts["HGNC:11599"].headline_confidence == Classification.DEFINITIVE
+    assert facts["HGNC:11599"].publications == ("PMID:1001",)
+
+
+def test_confidence_is_broken_down_per_lesion_group() -> None:
+    """The two halves of the fan-out, neither of which a disjoint fixture reaches.
+
+    An assertion listing several lesion groups scores *every* one of them — a
+    curator writing `[septal, conotruncal]` is claiming the gene for both, and
+    dropping the tail would silently narrow the claim. And a group reaching more
+    than one classification takes the strongest, not the first seen, which is why
+    the weaker of septal's two is ordered first here: taking first-seen would
+    publish septal as `limited` and this fixture is the only thing that notices.
+    """
+    corpus = _corpus(
+        assertions=(
+            _assertion(
+                id="CHDA:AST:0000001",
+                lesion_groups=["septal", "conotruncal"],
+                classification="limited",
+            ),
+            _assertion(
+                id="CHDA:AST:0000002", lesion_groups=["septal"], classification="definitive"
+            ),
+            _assertion(id="CHDA:AST:0000003", lesion_groups=["avsd"], classification="moderate"),
+        )
+    )
+
+    facts = gene_facts(corpus)
+
     assert facts["HGNC:11604"].confidence_by_lesion_group == {
+        LesionGroup.AVSD: Classification.MODERATE,
         LesionGroup.CONOTRUNCAL: Classification.LIMITED,
         LesionGroup.SEPTAL: Classification.DEFINITIVE,
     }
+    # The array and the breakdown describe the same set of groups in the same
+    # order. Pinned together so neither can start reporting a group the other
+    # does not.
+    assert facts["HGNC:11604"].lesion_groups == tuple(
+        facts["HGNC:11604"].confidence_by_lesion_group
+    )
 
 
 def test_evidence_is_counted_per_class() -> None:
@@ -259,7 +329,15 @@ def test_every_functional_record_about_a_gene_is_counted() -> None:
         )
     )
 
-    assert gene_facts(corpus)["HGNC:11604"].functional_count == 2
+    facts = gene_facts(corpus)
+
+    assert facts["HGNC:11604"].functional_count == 2
+    # HGNC:11599 has a functional record and no assertion, which is the state the
+    # docstring calls deliberately absent: keying off the union of assertions and
+    # functional records is a coherent alternative design, and this is what says
+    # it is not the one chosen. A gene with nothing asserted has no confidence to
+    # display, so there is no headline it could be given.
+    assert "HGNC:11599" not in facts
 
 
 def test_a_gene_with_no_functional_records_counts_zero() -> None:
