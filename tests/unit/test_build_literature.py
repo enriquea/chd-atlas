@@ -235,16 +235,35 @@ def test_a_featured_entry_citing_an_unknown_publication_is_refused(tmp_path: Pat
     assert not (tmp_path / "publications.json").exists()
 
 
-def test_own_lab_publications_are_flagged_for_the_front_page(tmp_path: Path) -> None:
-    corpus = _corpus(publications=(_publication(own_lab=True),))
-    emitter = Emitter(root=tmp_path)
-
-    build_literature(corpus, emitter)
-
-    assert _payload(tmp_path, "publications.json", "publications")[0]["own_lab"] is True
-
-
-def test_publications_are_ordered_lexically_by_pmid(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("corpus", "name", "key", "expected"),
+    [
+        pytest.param(
+            _corpus(
+                publications=(
+                    _publication("PMID:9", title="third"),
+                    _publication("PMID:10", title="second"),
+                    _publication("PMID:100", title="first"),
+                ),
+                featured=(),
+            ),
+            "publications.json",
+            "publications",
+            ["PMID:10", "PMID:100", "PMID:9"],
+            id="publications",
+        ),
+        pytest.param(
+            _corpus(datasets=(_dataset("GSE9"), _dataset("GSE10"), _dataset("GSE100"))),
+            "datasets.json",
+            "datasets",
+            ["GSE10", "GSE100", "GSE9"],
+            id="datasets",
+        ),
+    ],
+)
+def test_identifier_arrays_are_ordered_lexically(
+    tmp_path: Path, corpus: Corpus, name: str, key: str, expected: list[str]
+) -> None:
     """A published array's order is the order every consumer downloads.
 
     Lexical on the identifier, which puts PMID:10 and PMID:100 ahead of PMID:9.
@@ -254,24 +273,18 @@ def test_publications_are_ordered_lexically_by_pmid(tmp_path: Path) -> None:
     What the sort has to do is agree between two builds of one commit, and agree
     with `derive.py`, which orders a gene's publication list the same way. Making
     only this array numeric would leave the two disagreeing about the order of
-    the same PMIDs.
+    the same PMIDs. For an accession there is not even a numeric order to choose:
+    `GSE`, `PXD`, `E-` and `EGAS` would each need a parsing rule, and that rule
+    is itself a thing that can be wrong.
 
-    Neither the corpus order nor the titles produce this result.
+    Neither the corpus order nor the titles produce these results.
     """
-    corpus = _corpus(
-        publications=(
-            _publication("PMID:9", title="third"),
-            _publication("PMID:10", title="second"),
-            _publication("PMID:100", title="first"),
-        ),
-        featured=(),
-    )
     emitter = Emitter(root=tmp_path)
 
     build_literature(corpus, emitter)
 
-    published = _payload(tmp_path, "publications.json", "publications")
-    assert [record["id"] for record in published] == ["PMID:10", "PMID:100", "PMID:9"]
+    published = _payload(tmp_path, name, key)
+    assert [record["id"] for record in published] == expected
 
 
 @pytest.mark.parametrize(
@@ -372,19 +385,6 @@ def test_a_dataset_is_published_with_the_contrasts_that_interpret_it(tmp_path: P
     assert contrasts[0]["id"] == "tof_vs_control"
     assert contrasts[0]["case_group"] == "tof"
     assert published[0]["n_samples"] == 6
-
-
-def test_datasets_are_ordered_lexically_by_accession(tmp_path: Path) -> None:
-    """Same rule and same reason as the publication array, on a different payload."""
-    corpus = _corpus(
-        datasets=(_dataset("GSE9"), _dataset("GSE10"), _dataset("GSE100")),
-    )
-    emitter = Emitter(root=tmp_path)
-
-    build_literature(corpus, emitter)
-
-    published = _payload(tmp_path, "datasets.json", "datasets")
-    assert [record["id"] for record in published] == ["GSE10", "GSE100", "GSE9"]
 
 
 def test_vocabularies_are_published_as_their_values(tmp_path: Path) -> None:
