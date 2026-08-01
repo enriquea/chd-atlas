@@ -1,0 +1,403 @@
+# tests/unit/test_build_literature.py
+import json
+from pathlib import Path
+
+import pytest
+
+from chd_atlas.build.emit import Emitter
+from chd_atlas.build.literature import build_literature
+from chd_atlas.corpus import Corpus
+from chd_atlas.models.dataset import Dataset
+from chd_atlas.models.literature import FeaturedManuscript, PhenotypeTerm, Publication
+
+
+def _publication(pmid: str = "PMID:8988165", **overrides: object) -> Publication:
+    payload: dict[str, object] = {
+        "id": pmid,
+        "title": "Mutations in human TBX5 cause Holt-Oram syndrome",
+        "journal": "Nature Genetics",
+        "year": 1997,
+        "authors": ["Li QY"],
+        "study_type": "family_linkage",
+    }
+    payload.update(overrides)
+    return Publication.model_validate(payload)
+
+
+def _phenotype(
+    term: str = "HP:0001631", label: str = "Atrial septal defect", **overrides: object
+) -> PhenotypeTerm:
+    payload: dict[str, object] = {"id": term, "label": label, "lesion_group": "septal"}
+    payload.update(overrides)
+    return PhenotypeTerm.model_validate(payload)
+
+
+def _dataset(accession: str = "GSE1000", **overrides: object) -> Dataset:
+    payload: dict[str, object] = {
+        "id": accession,
+        "archive": "geo",
+        "technology": "bulk_rnaseq",
+        "tissue": "right ventricular myocardium",
+        "developmental_stage": "infant",
+        "organism": "NCBITaxon:9606",
+        "n_samples": 6,
+        "licence": "CC-BY-4.0",
+        "contrasts": [
+            {
+                "id": "tof_vs_control",
+                "description": "Tetralogy of Fallot versus structurally normal heart",
+                "case_group": "tof",
+                "control_group": "control",
+                "statistical_method": "Wald test",
+                "software": "DESeq2 1.44.0",
+            }
+        ],
+    }
+    payload.update(overrides)
+    return Dataset.model_validate(payload)
+
+
+def _corpus(**overrides: object) -> Corpus:
+    payload: dict[str, object] = {
+        "root": Path("."),
+        "publications": (_publication(),),
+        "featured": (
+            FeaturedManuscript(publication="PMID:8988165", order=1, blurb="b", topic="genomics"),
+        ),
+        "phenotypes": (_phenotype(),),
+    }
+    payload.update(overrides)
+    return Corpus(**payload)  # type: ignore[arg-type]
+
+
+def _payload(root: Path, name: str, key: str) -> list[dict[str, object]]:
+    """One emitted payload's array, read back from the file that was written."""
+    written = json.loads((root / name).read_text())
+    records: list[dict[str, object]] = written[key]
+    return records
+
+
+def _cited(entry: dict[str, object]) -> str:
+    """The PMID of the publication one featured entry carries inline."""
+    publication = entry["publication"]
+    assert isinstance(publication, dict)
+    return str(publication["id"])
+
+
+def test_emits_all_four_payloads(tmp_path: Path) -> None:
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(_corpus(), emitter)
+
+    assert set(emitter.checksums) == {
+        "publications.json",
+        "featured.json",
+        "phenotypes.json",
+        "datasets.json",
+    }
+
+
+def test_featured_manuscripts_are_emitted_in_display_order(tmp_path: Path) -> None:
+    """The front page renders this list as given; order is the curator's decision.
+
+    Nothing else in these two entries produces this result: their PMIDs, blurbs,
+    topics and corpus order each rank the pair the other way round, so a build
+    that sorted on any of those — or that emitted the corpus order untouched —
+    fails here rather than passing on a fixture that was already sorted.
+    """
+    corpus = _corpus(
+        publications=(_publication("PMID:1"), _publication("PMID:2")),
+        featured=(
+            FeaturedManuscript(
+                publication="PMID:1", order=2, blurb="a broader review", topic="genomics"
+            ),
+            FeaturedManuscript(
+                publication="PMID:2", order=1, blurb="zebrafish knockdown", topic="review"
+            ),
+        ),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    featured = _payload(tmp_path, "featured.json", "featured")
+    assert [entry["order"] for entry in featured] == [1, 2]
+
+
+def test_a_featured_entry_carries_its_publication_inline(tmp_path: Path) -> None:
+    """The landing page is one fetch; resolving a PMID against publications.json
+    client-side would make the first paint depend on a second request."""
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(_corpus(), emitter)
+
+    featured = _payload(tmp_path, "featured.json", "featured")
+    publication = featured[0]["publication"]
+    assert isinstance(publication, dict)
+    assert str(publication["title"]).startswith("Mutations in human TBX5")
+
+
+def test_the_inline_publication_is_the_one_the_entry_cites(tmp_path: Path) -> None:
+    """A single-publication corpus cannot tell "the cited one" from "any of them".
+
+    With two publications curated and the second one featured, a build that
+    inlined the first — or the wrong element of a list it had sorted separately —
+    puts a manuscript on the landing page under another paper's blurb.
+    """
+    corpus = _corpus(
+        publications=(
+            _publication("PMID:1", title="Not this one"),
+            _publication("PMID:2", title="The featured one"),
+        ),
+        featured=(
+            FeaturedManuscript(publication="PMID:2", order=1, blurb="b", topic="genomics"),
+        ),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    featured = _payload(tmp_path, "featured.json", "featured")
+    assert featured[0]["publication"] == {
+        "id": "PMID:2",
+        "title": "The featured one",
+        "journal": "Nature Genetics",
+        "year": 1997,
+        "authors": ["Li QY"],
+        "study_type": "family_linkage",
+        "doi": None,
+        "pmcid": None,
+        "own_lab": False,
+        "cohort_size": None,
+        "ancestry": [],
+    }
+
+
+def test_featured_entries_sharing_a_display_order_are_ranked_by_pmid(tmp_path: Path) -> None:
+    """`FeaturedFile.display_order_is_unique` forbids this pair, and featured.yaml is
+    the only file the list is loaded from, so a tie is reachable only by building a
+    `Corpus` directly — as this does.
+
+    Pinned anyway because the alternative is a tie broken by the order two records
+    happen to sit in the file. Two curators writing the same order into featured.yaml
+    would then publish different bytes from the same records, and every checksum
+    covering featured.json would move when one of them reordered two lines.
+    """
+    corpus = _corpus(
+        publications=(_publication("PMID:1"), _publication("PMID:2")),
+        featured=(
+            FeaturedManuscript(publication="PMID:2", order=1, blurb="b", topic="genomics"),
+            FeaturedManuscript(publication="PMID:1", order=1, blurb="b", topic="genomics"),
+        ),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    featured = _payload(tmp_path, "featured.json", "featured")
+    assert [_cited(entry) for entry in featured] == ["PMID:1", "PMID:2"]
+
+
+def test_a_featured_entry_keeps_the_curators_own_words(tmp_path: Path) -> None:
+    """The blurb says why a manuscript leads the front page and exists nowhere else
+    in the corpus, so a payload that inlined the publication and dropped everything
+    around it would lose the only writing the entry contributes."""
+    corpus = _corpus(
+        featured=(
+            FeaturedManuscript(
+                publication="PMID:8988165",
+                order=1,
+                blurb="The founding demonstration of TBX5 haploinsufficiency.",
+                topic="review",
+            ),
+        ),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    entry = _payload(tmp_path, "featured.json", "featured")[0]
+    assert entry["blurb"] == "The founding demonstration of TBX5 haploinsufficiency."
+    assert entry["topic"] == "review"
+    assert entry["order"] == 1
+
+
+def test_a_featured_entry_citing_an_unknown_publication_is_refused(tmp_path: Path) -> None:
+    """`validate_references` reports this as REF002 and `build_site` refuses to
+    build on any error, so reaching here means validation was bypassed.
+
+    Publishing anyway is the costly branch: the entry's `publication` would be a
+    bare PMID string where every other entry carries an object, so a page reading
+    `entry.publication.title` gets `undefined` with nothing raised anywhere — in
+    the one payload the landing page renders without a second fetch.
+    """
+    corpus = _corpus(
+        publications=(),
+        featured=(
+            FeaturedManuscript(publication="PMID:404", order=1, blurb="b", topic="genomics"),
+        ),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    with pytest.raises(ValueError, match="PMID:404"):
+        build_literature(corpus, emitter)
+
+    # Refused before anything is written, rather than after half the payloads are.
+    assert emitter.checksums == {}
+    assert not (tmp_path / "publications.json").exists()
+
+
+def test_own_lab_publications_are_flagged_for_the_front_page(tmp_path: Path) -> None:
+    corpus = _corpus(publications=(_publication(own_lab=True),))
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    assert _payload(tmp_path, "publications.json", "publications")[0]["own_lab"] is True
+
+
+def test_publications_are_ordered_lexically_by_pmid(tmp_path: Path) -> None:
+    """A published array's order is the order every consumer downloads.
+
+    Lexical on the identifier, which puts PMID:10 and PMID:100 ahead of PMID:9.
+    That is deliberate: a PMID is issued when a record is indexed, so PMID order
+    is neither chronological nor topical and nothing displays this array in it —
+    a reader is shown publications by year, or in the curator's featured order.
+    What the sort has to do is agree between two builds of one commit, and agree
+    with `derive.py`, which orders a gene's publication list the same way. Making
+    only this array numeric would leave the two disagreeing about the order of
+    the same PMIDs.
+
+    Neither the corpus order nor the titles produce this result.
+    """
+    corpus = _corpus(
+        publications=(
+            _publication("PMID:9", title="third"),
+            _publication("PMID:10", title="second"),
+            _publication("PMID:100", title="first"),
+        ),
+        featured=(),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    published = _payload(tmp_path, "publications.json", "publications")
+    assert [record["id"] for record in published] == ["PMID:10", "PMID:100", "PMID:9"]
+
+
+def test_two_publications_sharing_a_pmid_are_both_published(tmp_path: Path) -> None:
+    """`PublicationFile.ids_are_unique` forbids the pair, so this is the bypassed
+    case — and it must not be the case where a curated record disappears.
+
+    Keying the emitted array on the PMID (as the featured lookup must be keyed)
+    would drop one of the two silently: the build stays green, the manifest
+    counts what it wrote, and nothing anywhere says a record was discarded. A
+    duplicate published twice is at least visible to whoever reads the file.
+    """
+    corpus = _corpus(
+        publications=(
+            _publication("PMID:1", title="first transcription"),
+            _publication("PMID:1", title="second transcription"),
+        ),
+        featured=(),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    published = _payload(tmp_path, "publications.json", "publications")
+    assert [record["title"] for record in published] == [
+        "first transcription",
+        "second transcription",
+    ]
+
+
+def test_phenotypes_are_ordered_by_identifier_and_keep_their_synonyms(tmp_path: Path) -> None:
+    """Synonyms are what a search box matches "VSD" on, so dropping them is silent.
+
+    The labels rank these three differently from their identifiers, and the
+    corpus order differs from both.
+    """
+    corpus = _corpus(
+        phenotypes=(
+            _phenotype("MONDO:0005453", "Atrioventricular septal defect", lesion_group="avsd"),
+            _phenotype("HP:0001631", "Atrial septal defect", synonyms=["ASD"]),
+            _phenotype("HP:0001629", "Ventricular septal defect", synonyms=["VSD"]),
+        ),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    published = _payload(tmp_path, "phenotypes.json", "phenotypes")
+    assert [term["id"] for term in published] == [
+        "HP:0001629",
+        "HP:0001631",
+        "MONDO:0005453",
+    ]
+    assert published[0]["synonyms"] == ["VSD"]
+
+
+def test_a_dataset_is_published_with_the_contrasts_that_interpret_it(tmp_path: Path) -> None:
+    """A fold change is uninterpretable without knowing what was compared.
+
+    The omics shards carry the numbers and name a contrast id; this payload is
+    the only place that id is defined, so a dataset published without its
+    contrasts makes every shard row unreadable.
+    """
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(_corpus(datasets=(_dataset(),)), emitter)
+
+    published = _payload(tmp_path, "datasets.json", "datasets")
+    contrasts = published[0]["contrasts"]
+    assert isinstance(contrasts, list)
+    assert contrasts[0]["id"] == "tof_vs_control"
+    assert contrasts[0]["case_group"] == "tof"
+    assert published[0]["n_samples"] == 6
+
+
+def test_datasets_are_ordered_lexically_by_accession(tmp_path: Path) -> None:
+    """Same rule and same reason as the publication array, on a different payload."""
+    corpus = _corpus(
+        datasets=(_dataset("GSE9"), _dataset("GSE10"), _dataset("GSE100")),
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    published = _payload(tmp_path, "datasets.json", "datasets")
+    assert [record["id"] for record in published] == ["GSE10", "GSE100", "GSE9"]
+
+
+def test_vocabularies_are_published_as_their_values(tmp_path: Path) -> None:
+    """What the front end reads off these fields, pinned as a wire contract.
+
+    Each is a `StrEnum` in the model. A serialisation change that published a
+    member's repr, or an alias, or an object, would break every consumer
+    switching on these values, and none of it is visible from the Python side.
+    """
+    corpus = _corpus(datasets=(_dataset(),))
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(corpus, emitter)
+
+    assert _payload(tmp_path, "publications.json", "publications")[0]["study_type"] == (
+        "family_linkage"
+    )
+    assert _payload(tmp_path, "featured.json", "featured")[0]["topic"] == "genomics"
+    assert _payload(tmp_path, "phenotypes.json", "phenotypes")[0]["lesion_group"] == "septal"
+    assert _payload(tmp_path, "datasets.json", "datasets")[0]["archive"] == "geo"
+
+
+def test_an_empty_corpus_still_emits_every_payload(tmp_path: Path) -> None:
+    """A consumer fetching phenotypes.json must not 404 before curation starts."""
+    emitter = Emitter(root=tmp_path)
+
+    build_literature(Corpus(root=Path(".")), emitter)
+
+    assert json.loads((tmp_path / "phenotypes.json").read_text()) == {"phenotypes": []}
+    assert json.loads((tmp_path / "publications.json").read_text()) == {"publications": []}
+    assert json.loads((tmp_path / "featured.json").read_text()) == {"featured": []}
+    assert json.loads((tmp_path / "datasets.json").read_text()) == {"datasets": []}
