@@ -166,10 +166,18 @@ def test_cited_publications_come_back_sorted() -> None:
 
     Array order survives `encode_json`, whose `sort_keys` orders dict keys and
     nothing else, so an unsorted tuple here reaches `genes/<HGNC>.json` verbatim.
-    Set iteration order for strings depends on `PYTHONHASHSEED`, which makes that
-    a build that checksums differently on the CI runner than on the machine that
-    reproduces it. Dropping the sort leaves every other assertion in this file
-    green, so this is the one that pins it.
+    Set iteration order for strings depends on `PYTHONHASHSEED`, so dropping the
+    sort yields a build that checksums differently on the CI runner than on the
+    machine trying to reproduce it. No other assertion in this file notices.
+
+    The fixture is six publications because this guard is probabilistic, not
+    deterministic: *n* strings can land in an order that happens to equal sorted
+    order, in which case the unsorted code passes. That chance falls sharply with
+    *n*. Measured here, one process per seed, counting seeds on which removing
+    the `sorted()` still passes: 48/200 at three publications, 1/200 at five,
+    0/1000 at the six below. Nothing pins `PYTHONHASHSEED` in CI or in a
+    `conftest.py`, so at three this was a guard that would have waved a
+    regression through roughly one run in four.
     """
     corpus = _corpus(
         assertions=(
@@ -178,13 +186,21 @@ def test_cited_publications_come_back_sorted() -> None:
                     _evidence(publication="PMID:9"),
                     _evidence(publication="PMID:8988165"),
                     _evidence(publication="PMID:11729"),
+                    _evidence(publication="PMID:3"),
+                    _evidence(publication="PMID:40404"),
+                    _evidence(publication="PMID:777"),
                 ]
             ),
         )
     )
 
+    # Lexicographic, not numeric: these are strings, and that is what the site
+    # serves.
     assert gene_facts(corpus)["HGNC:11604"].publications == (
         "PMID:11729",
+        "PMID:3",
+        "PMID:40404",
+        "PMID:777",
         "PMID:8988165",
         "PMID:9",
     )
