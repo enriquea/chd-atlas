@@ -124,25 +124,14 @@ def test_featured_manuscripts_are_emitted_in_display_order(tmp_path: Path) -> No
     assert [entry["order"] for entry in featured] == [1, 2]
 
 
-def test_a_featured_entry_carries_its_publication_inline(tmp_path: Path) -> None:
-    """The landing page is one fetch; resolving a PMID against publications.json
-    client-side would make the first paint depend on a second request."""
-    emitter = Emitter(root=tmp_path)
-
-    build_literature(_corpus(), emitter)
-
-    featured = _payload(tmp_path, "featured.json", "featured")
-    publication = featured[0]["publication"]
-    assert isinstance(publication, dict)
-    assert str(publication["title"]).startswith("Mutations in human TBX5")
-
-
 def test_the_inline_publication_is_the_one_the_entry_cites(tmp_path: Path) -> None:
-    """A single-publication corpus cannot tell "the cited one" from "any of them".
+    """The landing page is one fetch: resolving a PMID against publications.json
+    client-side would make first paint depend on a second request.
 
-    With two publications curated and the second one featured, a build that
-    inlined the first — or the wrong element of a list it had sorted separately —
-    puts a manuscript on the landing page under another paper's blurb.
+    Asserted against two curated publications rather than one, because with one
+    "the publication it cites" and "any publication" are the same record. A build
+    that inlined the first — or the wrong element of a list it had sorted
+    separately — puts a manuscript on the front page under another's blurb.
     """
     corpus = _corpus(
         publications=(
@@ -178,10 +167,9 @@ def test_featured_entries_sharing_a_display_order_are_ranked_by_pmid(tmp_path: P
     the only file the list is loaded from, so a tie is reachable only by building a
     `Corpus` directly — as this does.
 
-    Pinned anyway because the alternative is a tie broken by the order two records
-    happen to sit in the file. Two curators writing the same order into featured.yaml
-    would then publish different bytes from the same records, and every checksum
-    covering featured.json would move when one of them reordered two lines.
+    Pinned anyway because the alternative is a tie broken by the order the two
+    records happen to arrive in, which is not content: nothing about the records
+    themselves would decide which manuscript leads the page.
     """
     corpus = _corpus(
         publications=(_publication("PMID:1"), _publication("PMID:2")),
@@ -286,31 +274,59 @@ def test_publications_are_ordered_lexically_by_pmid(tmp_path: Path) -> None:
     assert [record["id"] for record in published] == ["PMID:10", "PMID:100", "PMID:9"]
 
 
-def test_two_publications_sharing_a_pmid_are_both_published(tmp_path: Path) -> None:
-    """`PublicationFile.ids_are_unique` forbids the pair, so this is the bypassed
-    case — and it must not be the case where a curated record disappears.
-
-    Keying the emitted array on the PMID (as the featured lookup must be keyed)
-    would drop one of the two silently: the build stays green, the manifest
-    counts what it wrote, and nothing anywhere says a record was discarded. A
-    duplicate published twice is at least visible to whoever reads the file.
-    """
-    corpus = _corpus(
-        publications=(
-            _publication("PMID:1", title="first transcription"),
-            _publication("PMID:1", title="second transcription"),
+@pytest.mark.parametrize(
+    ("corpus", "name", "key", "field", "expected"),
+    [
+        pytest.param(
+            _corpus(
+                publications=(
+                    _publication("PMID:1", title="first transcription"),
+                    _publication("PMID:1", title="second transcription"),
+                ),
+                featured=(),
+            ),
+            "publications.json",
+            "publications",
+            "title",
+            ["first transcription", "second transcription"],
+            id="publications",
         ),
-        featured=(),
-    )
+        pytest.param(
+            _corpus(datasets=(_dataset("GSE1000", n_samples=6), _dataset("GSE1000", n_samples=99))),
+            "datasets.json",
+            "datasets",
+            "n_samples",
+            [6, 99],
+            id="datasets",
+        ),
+    ],
+)
+def test_records_colliding_on_one_identifier_are_all_published(
+    tmp_path: Path,
+    corpus: Corpus,
+    name: str,
+    key: str,
+    field: str,
+    expected: list[object],
+) -> None:
+    """Keying an emitted array on the identifier drops the second of two records
+    sharing one, and drops it silently: the build stays green, the manifest counts
+    what it wrote, and nothing anywhere says a curated record was discarded. A
+    record published twice is at least visible to whoever reads the file.
+
+    The two cases are not equally reachable, which is the fact worth recording.
+    `PublicationFile.ids_are_unique` rejects the whole file, so a duplicate PMID
+    reaches `load_curation` as SCHEMA001 and leaves `corpus.publications` empty —
+    this module never sees that pair. A dataset is one file per accession, so two
+    files both declaring GSE1000 load with no issue at all and both records arrive
+    here; only `REF011` reports them, and that is a referential check run beside
+    the loader, not a guard inside it.
+    """
     emitter = Emitter(root=tmp_path)
 
     build_literature(corpus, emitter)
 
-    published = _payload(tmp_path, "publications.json", "publications")
-    assert [record["title"] for record in published] == [
-        "first transcription",
-        "second transcription",
-    ]
+    assert [record[field] for record in _payload(tmp_path, name, key)] == expected
 
 
 def test_phenotypes_are_ordered_by_identifier_and_keep_their_synonyms(tmp_path: Path) -> None:
@@ -374,9 +390,12 @@ def test_datasets_are_ordered_lexically_by_accession(tmp_path: Path) -> None:
 def test_vocabularies_are_published_as_their_values(tmp_path: Path) -> None:
     """What the front end reads off these fields, pinned as a wire contract.
 
-    Each is a `StrEnum` in the model. A serialisation change that published a
-    member's repr, or an alias, or an object, would break every consumer
-    switching on these values, and none of it is visible from the Python side.
+    Each is a `StrEnum`, which `json.dumps` writes as its value whether the model
+    was dumped in json or in python mode — so this does not pin that choice, and
+    nothing here can. What it pins is that the value reaches the payload at all,
+    as a bare string rather than renamed or nested. `lesion_group` and `archive`
+    are asserted nowhere else in this file, and they are what a browse facet and
+    an archive filter switch on.
     """
     corpus = _corpus(datasets=(_dataset(),))
     emitter = Emitter(root=tmp_path)
