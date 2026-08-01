@@ -69,6 +69,9 @@ def write_bytes_atomically(path: Path, payload: bytes) -> None:
     - The committed `schemas/*.schema.json` are compared byte-for-byte by the
       drift test. A truncated one reads as merely stale, sending a curator to
       re-run the export rather than telling them the file is not a schema at all.
+    - A `dist/` build artifact costs only a re-run. Its manifest checksum is
+      taken from the complete payload, so a short file fails verification at the
+      consumer instead of passing as valid content.
 
     Writing a sibling temporary and renaming it leaves the target as either its
     old content or the complete new content, never a prefix of the new one.
