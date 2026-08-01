@@ -3,7 +3,11 @@ name: validate
 on:
   pull_request:
   push:
-    branches: [main]
+    # `dev` is the working branch and the default branch, so most commits land
+    # there directly rather than through a pull request. Without it listed here
+    # those commits get no CI at all, which is how a push to `dev` came to sit
+    # unvalidated on the remote.
+    branches: [main, dev]
 
 jobs:
   validate:
