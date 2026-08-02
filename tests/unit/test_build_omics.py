@@ -644,3 +644,68 @@ def test_the_accession_index_survives_a_repeated_pair_and_a_blank_cell(tmp_path:
     assert "None" not in index.literal
     assert "None" not in index.canonical
     assert index.literal["Q99593"] == ("HGNC:11604",)
+
+
+def test_a_phospho_shard_can_be_filtered_to_the_gene_its_bundle_counted(tmp_path: Path) -> None:
+    """Issue #3: the rows a summary counts are now selectable out of the shard.
+
+    `phospho` has no gene column at all, and the only route from a row's
+    accession to a gene is `mirrors/genes.tsv`, which the site does not publish.
+    So a consumer following `shards` from a bundle could fetch the file and had
+    no way to pick out the rows it had just been told the count of — the `count`
+    was a promise the shard could not keep.
+
+    Each row now carries the attribution the summary was built from, and this
+    asserts the property that makes it worth publishing: **filtering the shard on
+    `genes` reproduces the count exactly**. Not that the field is present — that
+    a consumer following the documented route arrives at the same number.
+
+    Two genes on one accession is the case a scalar field would have got wrong.
+    P62805 is a histone cluster in reality; A12c records the build dropping all
+    but one of them once already.
+    """
+    _registry(
+        tmp_path,
+        _gene_row("HGNC:11604", "TBX5", "Q99593") + _gene_row("HGNC:4173", "GATA4", "Q99593"),
+    )
+    _table(
+        tmp_path,
+        "phospho",
+        "PXD012345.tsv",
+        PHOSPHO_HEADER + _phospho_row("Q99593", 100) + _phospho_row("Q99593", 200),
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(tmp_path, emitter)
+
+    shard = json.loads((tmp_path / "dist" / "omics" / "phospho" / "PXD012345.json").read_text())
+    for gene in ("HGNC:11604", "HGNC:4173"):
+        selected = [row for row in shard["rows"] if gene in row["genes"]]
+        assert len(selected) == summaries[gene]["phospho"]["count"], (
+            f"a consumer filtering the shard for {gene} does not get the count it was promised"
+        )
+    # Both genes on one accession, so neither may displace the other.
+    assert shard["rows"][0]["genes"] == ["HGNC:11604", "HGNC:4173"]
+
+
+def test_an_expression_row_carries_the_same_attribution_as_a_phospho_row(
+    tmp_path: Path,
+) -> None:
+    """Written for every modality, so a consumer filters one way everywhere.
+
+    `expression` rows have their own `gene` column and did not need this. Adding
+    it anyway is what makes the guarantee uniform: `count` is derived from the
+    published attribution for every modality, so there is no table where a
+    consumer must know to filter differently, and no table where the row's own
+    column and the attribution could come to disagree.
+    """
+    _registry(tmp_path, _gene_row("HGNC:11604", "TBX5", "Q99593"))
+    repo = _repo(tmp_path, _row(gene="HGNC:11604", fdr="0.01"))
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(repo, emitter)
+
+    shard = json.loads((tmp_path / "dist" / "omics" / "expression" / "PXD012345.json").read_text())
+    assert shard["rows"][0]["genes"] == ["HGNC:11604"]
+    selected = [row for row in shard["rows"] if "HGNC:11604" in row["genes"]]
+    assert len(selected) == summaries["HGNC:11604"]["expression"]["count"]
