@@ -8,6 +8,8 @@ from typer.testing import CliRunner
 
 from chd_atlas.build.runner import BuildRefused
 from chd_atlas.cli import app
+from chd_atlas.tables import TABLE_SCHEMAS
+from chd_atlas.validate.runner import validate_repository
 
 REPO = Path(__file__).parent.parent.parent
 runner = CliRunner()
@@ -146,6 +148,44 @@ def test_a_destination_that_cannot_be_written_exits_2_rather_than_crashing(
     assert result.exit_code == 2
     assert "could not write the site to" in result.stdout
     assert str(out) in result.stdout
+
+
+def test_a_build_guard_that_validate_does_not_cover_reports_instead_of_crashing(
+    repo: Path, tmp_path: Path
+) -> None:
+    """The guards in `build/` are reachable by ordinary curation, not only by a bypass.
+
+    `validate/` checks a variant shard's `chrom` column but not its filename, so
+    `mirrors/variants/chr12.tsv` — schema-correct, wrongly named — passes at 0
+    errors and 0 warnings and then raises inside `build_variants`. Measured; it
+    is why the guard docstrings no longer claim reaching one means the gate was
+    bypassed.
+
+    Before this was handled, typer printed a rich traceback and exited 1: the
+    right code, attached to a stack trace instead of a sentence, under a message
+    that named no file. A curator's first move would have been to run `validate`,
+    which reports nothing.
+
+    The partial-site warning is asserted because it is the operational half. This
+    failure arrives after writing has begun, so unlike a `BuildRefused` there may
+    be a `dist/` on disk — one with no manifest, which a deploy step must not
+    upload.
+    """
+    columns = [column.name for column in TABLE_SCHEMAS["variants"].columns]
+    shards = repo / "mirrors" / "variants"
+    shards.mkdir(parents=True, exist_ok=True)
+    (shards / "chr12.tsv").write_text("\t".join(columns) + "\n")
+    assert validate_repository(repo).ok is True, "the premise is that validation passes"
+    out = tmp_path / "dist"
+
+    result = runner.invoke(app, ["build", "--root", str(repo), "--out", str(out)])
+
+    assert result.exit_code == 1
+    assert "chr12" in result.stdout, "the message must name the offending shard"
+    assert "must not be published" in result.stdout
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        "a curation problem must not surface as a traceback"
+    )
 
 
 def test_a_root_that_is_not_a_directory_exits_2_without_building(

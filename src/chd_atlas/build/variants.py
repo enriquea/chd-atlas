@@ -20,12 +20,20 @@ job, and it refuses to publish rather than publish a shard filed under the wrong
 name.
 
 Reporting the same rule from `validate/` is queued, and these guards stay when it
-lands. They sit on the footing `encode_json`'s `allow_nan=False` already
-occupies: reaching one means the gate was bypassed, and a bypassed gate must
-still fail rather than publish. Deleting them would rest on the gate having run,
-which nothing in code requires — `build_variants` is callable directly and
-`chd-atlas validate` is a separate command. `assert` would be worse still, since
-`-O` strips it and silent evidence loss is this project's characteristic failure.
+lands. Until it does they are not a backstop behind a gate — they are the *only*
+check: `mirrors/variants/chr12.tsv` validates at 0 errors and 0 warnings and then
+raises here. Measured, and worth stating plainly because an earlier draft of this
+docstring claimed reaching a guard "means the gate was bypassed", which invited a
+reader to delete them as unreachable. They are reachable by an ordinary curation
+mistake, today.
+
+That makes the failure a curator's to read, so `cli.build` catches `ValueError`
+and reports it rather than letting typer print a traceback. `assert` would be
+worse still, since `-O` strips it and silent evidence loss is this project's
+characteristic failure. When the `validate/` rule lands these become what the
+docstring first claimed — a backstop for a bypassed gate — and they still stay,
+because `build_variants` is callable directly and `chd-atlas validate` is a
+separate command.
 """
 
 from __future__ import annotations

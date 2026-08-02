@@ -74,13 +74,36 @@ def build(
     except OSError as exc:
         # A destination that cannot be written is a bad argument, not a defect,
         # and the same exit code `schemas export` uses for the same reason. The
-        # guard above catches the shapes that are visible before the build; this
-        # catches the rest — a read-only parent, a full disk, a path that
-        # becomes unwritable while the build runs. Everything that reads the
-        # repository already reports its own failures as validation issues and
-        # was gated on above, so an OSError reaching here is a write.
+        # guard above catches the shapes visible before the build; this catches
+        # the rest — a read-only parent, a full disk, a path that becomes
+        # unwritable while the build runs. Reads are not in scope: `read_table`
+        # and `_read_yaml` turn their own failures into validation issues, which
+        # the gate above already acted on.
         typer.echo(f"error: could not write the site to {out}: {exc}")
         raise typer.Exit(code=2) from exc
+    except ValueError as exc:
+        # Every refusal inside `build/` is a `ValueError`: the emitter's path,
+        # duplicate, case and seal guards, the variant shard-name and foreign-row
+        # guards, the unresolvable featured PMID, the unsplit alias cell.
+        #
+        # These were documented as firing only on a bypassed gate. That is not
+        # true yet and this is where it showed: `validate/` checks a variant
+        # shard's `chrom` column but not its filename, so `mirrors/variants/
+        # chr12.tsv` validates clean at 0 errors and then raises here. Measured.
+        # Without this clause typer printed a rich traceback and exited 1, so a
+        # curator got a stack trace under the code that means "your data is
+        # wrong" — right about the data, useless about which file.
+        #
+        # Exit 1 is correct: it *is* a repository problem, the same class as a
+        # refusal. What was wrong was the presentation. Unlike `BuildRefused`,
+        # this fires after writing has begun, so `out` may hold a partial site —
+        # said plainly, because a deploy step must not upload it.
+        typer.echo(f"error: the build refused this repository: {exc}")
+        typer.echo(
+            f"note: {out} may hold a partial site and must not be published; "
+            f"`chd-atlas validate` does not yet report this class of problem"
+        )
+        raise typer.Exit(code=1) from exc
 
     typer.echo(f"wrote {len(written)} file(s) to {out}")
 

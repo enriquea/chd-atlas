@@ -101,10 +101,18 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     """Build the published API into `out`. Returns path-to-checksum per file.
 
     Raises `BuildRefused` before writing anything if validation reports errors.
-    Nothing is written on refusal — not a partial `dist/`, not an empty
-    directory — because a half-built site that a deploy step then uploads is
-    worse than no build at all, and `out` not existing is the signal a caller
-    can act on.
+    Nothing is written on *that* refusal — not a partial `dist/`, not an empty
+    directory — because a half-built site a deploy step then uploads is worse
+    than no build at all.
+
+    That is not a guarantee about every failure, and saying so once read as one.
+    The builders below carry their own guards, and `validate/` does not yet check
+    everything they do — a variant shard named `chr12.tsv` validates clean and
+    raises here — so a `ValueError` from one of them can arrive after earlier
+    builders have written. `out` may then hold a partial site with no manifest.
+    The manifest is the signal: it is written last and seals the emitter, so a
+    `dist/` without one is a build that did not finish. `cli.build` says so in
+    as many words rather than leaving a caller to infer it.
 
     The returned mapping covers every artifact including `manifest.json`, which
     the manifest itself cannot list. `dict()` is hygiene and nothing more: the
