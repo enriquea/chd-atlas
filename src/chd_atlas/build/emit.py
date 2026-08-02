@@ -108,11 +108,18 @@ class Emitter:
     `_write` rejects the shapes it cannot serve.
 
     `_casefolded` maps the casefold of each written path back to the path itself,
-    so `_write` can refuse two paths that differ only in case. It is maintained in
-    step with `checksums`, and only by `_write`: an entry placed into `checksums`
-    directly — including by passing one to the constructor — is still seen by the
-    exact-duplicate guard but is invisible to the case guard, so the direction it
-    weakens is the silent one.
+    so `_write` can refuse two paths that differ only in case. `__post_init__`
+    seeds it from whatever `checksums` was constructed with, so the guard covers
+    every path the emitter knows about rather than only the ones it wrote. It
+    was not always so: seeding it only in `_write` left a constructor-supplied
+    entry visible to the exact-duplicate guard and invisible to the case guard —
+    the direction that fails silently, on exactly the filesystems where the two
+    files become one.
+
+    Mutating `checksums` directly after construction still evades both guards.
+    That is not defended against, because a caller reaching into the mapping the
+    emitter uses to record what it wrote has already left the contract, and no
+    amount of checking in `_write` can make that safe.
 
     `_sealed` records that the build has been published and no further write is
     accepted; see `seal`.
@@ -126,7 +133,23 @@ class Emitter:
     root: Path
     checksums: dict[str, str] = field(default_factory=dict)
     _casefolded: dict[str, str] = field(default_factory=dict, repr=False)
+
     _sealed: bool = field(default=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Seed the case index from whatever `checksums` was constructed with.
+
+        Raises on a supplied mapping that already holds the collision, rather
+        than leaving an emitter whose own invariant is false from the first line
+        and letting whichever later write happens to notice report it.
+        """
+        for relative in self.checksums:
+            clash = self._casefolded.setdefault(relative.casefold(), relative)
+            if clash != relative:
+                raise ValueError(
+                    f"{relative} and {clash} differ only in case; a case-insensitive "
+                    f"filesystem would keep only one of the two"
+                )
 
     def write_json(self, relative: str, payload: Json) -> None:
         self._write(relative, encode_json(payload))

@@ -86,6 +86,68 @@ def test_a_refused_build_exits_1_and_says_why(
     assert not out.exists()
 
 
+@pytest.mark.parametrize("shape", ["existing file", "dangling symlink"])
+def test_an_out_that_cannot_hold_a_site_is_refused_before_the_build(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    """A destination that cannot work is a bad argument, not a bad repository.
+
+    Both shapes exited 1 with a traceback before this guard existed, which is
+    the code meaning "this repository has errors" — so a mistyped `--out` was
+    indistinguishable from a corpus that genuinely fails, and the two are fixed
+    by different people.
+
+    The dangling symlink is the case a check written the obvious way misses:
+    `Path.exists()` follows the link, so a broken one answers False to both
+    `exists()` and `is_dir()`. Testing it is what makes `is_symlink()` in the
+    guard load-bearing rather than decorative.
+
+    `build_site` is a tripwire because exit 2 alone does not distinguish this
+    guard from the `OSError` handler below it — measured: with only the handler,
+    both shapes still exit 2. What the guard uniquely buys is refusing *before*
+    a second and a half of validation is spent on an argument that cannot work,
+    and saying which argument it was.
+    """
+    monkeypatch.setattr("chd_atlas.cli.build_site", _never_called)
+    out = tmp_path / "out"
+    if shape == "existing file":
+        out.write_text("not a directory\n")
+    else:
+        out.symlink_to(tmp_path / "nowhere")
+
+    result = runner.invoke(app, ["build", "--root", str(repo), "--out", str(out)])
+
+    assert result.exit_code == 2, f"{shape} reported as a repository failure"
+    assert "exists and is not a directory" in result.stdout
+    assert str(out) in result.stdout
+
+
+def test_a_destination_that_cannot_be_written_exits_2_rather_than_crashing(
+    repo: Path, tmp_path: Path
+) -> None:
+    """The shapes no pre-check can see, caught where `schemas export` catches them.
+
+    A read-only parent is indistinguishable from a writable one until the write
+    is attempted, and the same is true of a full disk or a path that becomes
+    unwritable while the build runs. Left uncaught these surfaced as a
+    `NotADirectoryError` traceback and exit 1 — a stack trace where a sentence
+    belongs, under the code that means the curation is wrong.
+    """
+    parent = tmp_path / "readonly"
+    parent.mkdir()
+    parent.chmod(0o555)
+    out = parent / "site"
+
+    try:
+        result = runner.invoke(app, ["build", "--root", str(repo), "--out", str(out)])
+    finally:
+        parent.chmod(0o755)
+
+    assert result.exit_code == 2
+    assert "could not write the site to" in result.stdout
+    assert str(out) in result.stdout
+
+
 def test_a_root_that_is_not_a_directory_exits_2_without_building(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

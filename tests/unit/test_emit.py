@@ -198,6 +198,31 @@ def test_two_paths_differing_only_in_case_are_refused(
     assert json.loads((tmp_path / first).read_bytes()) == {"record": "first"}
 
 
+def test_the_case_guard_covers_paths_the_emitter_was_constructed_with(tmp_path: Path) -> None:
+    """The guard has to hold for every path the emitter knows, not just its own writes.
+
+    `checksums` is a constructor argument, so an emitter can start out already
+    knowing about files. Seeding `_casefolded` only from `_write` left those
+    entries visible to the exact-duplicate guard and invisible to this one —
+    weakening precisely the direction that fails silently, since an exact
+    duplicate is refused on every filesystem while a case collision is refused
+    on none and then loses a file on macOS and Windows.
+
+    The second half is the state the first cannot reach: a mapping handed in
+    that already contains the collision. Accepting it would leave an emitter
+    whose own invariant is false from the first line, so it is refused at
+    construction rather than at whichever later write happens to notice.
+    """
+    emitter = Emitter(root=tmp_path, checksums={"genes/HGNC_11604.json": "sha256:0"})
+
+    with pytest.raises(ValueError, match="differ only in case"):
+        emitter.write_json("genes/hgnc_11604.json", {"record": "second"})
+    assert not (tmp_path / "genes").exists()
+
+    with pytest.raises(ValueError, match="differ only in case"):
+        Emitter(root=tmp_path, checksums={"a.json": "sha256:0", "A.json": "sha256:1"})
+
+
 def test_the_case_guard_reports_a_different_failure_than_the_exact_one(tmp_path: Path) -> None:
     """Two distinct bugs: one path built twice, versus two paths one disk merges.
 

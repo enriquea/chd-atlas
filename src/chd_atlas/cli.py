@@ -49,6 +49,19 @@ def build(
         typer.echo(f"error: --root {root} is not a directory")
         raise typer.Exit(code=2)
 
+    # `--out` may legitimately not exist, since the build creates it — but if
+    # something is already there it has to be a directory. `is_symlink()` is
+    # tested first because `exists()` follows the link, so a dangling symlink
+    # answers False to both `exists()` and `is_dir()` and would slip past a
+    # check written the obvious way.
+    #
+    # Checked here rather than left to fail during the build for the same
+    # reason `--root` is: an argument that cannot work should not cost a second
+    # and a half of validation before saying so.
+    if (out.is_symlink() or out.exists()) and not out.is_dir():
+        typer.echo(f"error: --out {out} exists and is not a directory")
+        raise typer.Exit(code=2)
+
     try:
         written = build_site(root, out)
     except BuildRefused as exc:
@@ -58,6 +71,16 @@ def build(
         # there is no partial `dist/` here for a deploy step to pick up.
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        # A destination that cannot be written is a bad argument, not a defect,
+        # and the same exit code `schemas export` uses for the same reason. The
+        # guard above catches the shapes that are visible before the build; this
+        # catches the rest — a read-only parent, a full disk, a path that
+        # becomes unwritable while the build runs. Everything that reads the
+        # repository already reports its own failures as validation issues and
+        # was gated on above, so an OSError reaching here is a write.
+        typer.echo(f"error: could not write the site to {out}: {exc}")
+        raise typer.Exit(code=2) from exc
 
     typer.echo(f"wrote {len(written)} file(s) to {out}")
 
