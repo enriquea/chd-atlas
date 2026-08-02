@@ -46,6 +46,27 @@ class BuildRefused(Exception):
     """
 
 
+def _cell(value: object) -> str | None:
+    """One mirror cell as text, with blank and whitespace-only treated as absent.
+
+    `read_table` maps the empty string to null, so TBL003 catches `symbol` left
+    empty — and catches nothing when the cell holds a single space. A generated
+    mirror produces exactly that, and the space survived every check to be
+    published as the gene's browse label and its search result: a row rendering
+    as nothing, on a build reporting zero errors, against a `docs/data-api.md`
+    that promises `symbol` is "always a non-empty string you can render and
+    search". Found by adversarial review of #2.
+
+    Stripped rather than reported, because the fallback the caller already has —
+    keep the HGNC id — is better than either publishing the blank or refusing to
+    build over one stray character.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _gene_registry(root: Path) -> dict[str, GeneLabels]:
     """What `mirrors/genes.tsv` says about each gene, keyed on HGNC id.
 
@@ -77,19 +98,20 @@ def _gene_registry(root: Path) -> dict[str, GeneLabels]:
 
     registry: dict[str, GeneLabels] = {}
     for row in frame.to_dicts():
-        gene = row.get("hgnc_id")
-        symbol = row.get("symbol")
-        # Both are non-nullable in the schema, so a null here is a bypassed
-        # TBL003. A row with no id has nothing to key on and no row to correct
-        # it against; a row with no symbol would label the gene with the string
-        # "None" in the browse row and the page heading alike.
+        gene = _cell(row.get("hgnc_id"))
+        symbol = _cell(row.get("symbol"))
+        # Both are non-nullable in the schema, so a blank here is a bypassed
+        # TBL003. A row with no id has nothing to key on and no row to correct it
+        # against; a row with no symbol would label the gene with the string
+        # "None" in the browse row and the page heading alike. Dropping the row
+        # instead lets `build_genes` and `search.py` fall back to the HGNC id,
+        # which renders and searches.
         if gene is None or symbol is None:
             continue
         raw = row.get("aliases")
-        name = row.get("name")
-        registry[str(gene)] = GeneLabels(
-            symbol=str(symbol),
-            name=str(name) if name is not None else None,
+        registry[gene] = GeneLabels(
+            symbol=symbol,
+            name=_cell(row.get("name")),
             aliases=tuple(part.strip() for part in str(raw).split("|") if part.strip())
             if raw
             else (),
