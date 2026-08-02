@@ -94,9 +94,7 @@ class Dataset(BaseModel):
     def accession_matches_archive(self) -> Dataset:
         prefixes = _ACCESSION_PREFIX[self.archive]
         if not self.id.startswith(prefixes):
-            raise ValueError(
-                f"accession {self.id} does not match archive '{self.archive.value}'"
-            )
+            raise ValueError(f"accession {self.id} does not match archive '{self.archive.value}'")
         return self
 
     @model_validator(mode="after")

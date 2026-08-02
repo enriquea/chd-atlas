@@ -8,18 +8,14 @@ from chd_atlas.schema_export import EXPORTED_MODELS, export_schemas
 
 def test_writes_one_schema_file_per_model(tmp_path: Path) -> None:
     written = export_schemas(tmp_path)
-    assert {path.name for path in written} == {
-        f"{name}.schema.json" for name in EXPORTED_MODELS
-    }
+    assert {path.name for path in written} == {f"{name}.schema.json" for name in EXPORTED_MODELS}
     for path in written:
         assert path.is_file()
 
 
 def test_emitted_schema_is_valid_json_with_a_title(tmp_path: Path) -> None:
     export_schemas(tmp_path)
-    payload = json.loads(
-        (tmp_path / "assertion_file.schema.json").read_text(encoding="utf-8")
-    )
+    payload = json.loads((tmp_path / "assertion_file.schema.json").read_text(encoding="utf-8"))
     assert payload["title"] == "AssertionFile"
 
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from chd_atlas.build.emit import Emitter, Json
+from chd_atlas.build.paths import DATASETS, FEATURED, PHENOTYPES, PUBLICATIONS
 from chd_atlas.corpus import Corpus
 
 
@@ -109,7 +110,7 @@ def build_literature(corpus: Corpus, emitter: Emitter) -> None:
     # about what happens when it is reached anyway — a record published twice is
     # visible to whoever reads the file, one dropped is not.
     emitter.write_json(
-        "publications.json",
+        PUBLICATIONS,
         {
             "publications": [
                 _dump(publication)
@@ -118,14 +119,14 @@ def build_literature(corpus: Corpus, emitter: Emitter) -> None:
         },
     )
 
-    emitter.write_json("featured.json", {"featured": featured})
+    emitter.write_json(FEATURED, {"featured": featured})
 
     emitter.write_json(
-        "phenotypes.json",
+        PHENOTYPES,
         {"phenotypes": [_dump(term) for term in sorted(corpus.phenotypes, key=lambda t: t.id)]},
     )
 
     emitter.write_json(
-        "datasets.json",
+        DATASETS,
         {"datasets": [_dump(dataset) for dataset in sorted(corpus.datasets, key=lambda d: d.id)]},
     )

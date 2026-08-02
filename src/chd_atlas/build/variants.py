@@ -19,21 +19,19 @@ shard is a `.tsv` — so making the filename and the column agree is this module
 job, and it refuses to publish rather than publish a shard filed under the wrong
 name.
 
-Reporting the same rule from `validate/` is queued, and these guards stay when it
-lands. Until it does they are not a backstop behind a gate — they are the *only*
-check: `mirrors/variants/chr12.tsv` validates at 0 errors and 0 warnings and then
-raises here. Measured, and worth stating plainly because an earlier draft of this
-docstring claimed reaching a guard "means the gate was bypassed", which invited a
-reader to delete them as unreachable. They are reachable by an ordinary curation
-mistake, today.
+`unexpected_mirror_entries` now reports a shard named for no chromosome as
+TBL011, so a curator meets `chr12.tsv` in a validation report rather than in a
+traceback. That rule is the primary check and this guard is the backstop behind
+it — which is what an earlier draft of this docstring claimed before it was true.
+It was not: for a while `chr12.tsv` validated at 0 errors and raised only here,
+and the claim invited a reader to delete a guard that was in fact the only one.
 
-That makes the failure a curator's to read, so `cli.build` catches `ValueError`
-and reports it rather than letting typer print a traceback. `assert` would be
-worse still, since `-O` strips it and silent evidence loss is this project's
-characteristic failure. When the `validate/` rule lands these become what the
-docstring first claimed — a backstop for a bypassed gate — and they still stay,
-because `build_variants` is callable directly and `chd-atlas validate` is a
-separate command.
+Kept now that the gate does cover it, because reaching this means the gate did
+not run: `build_variants` is callable directly and `chd-atlas validate` is a
+separate command. `cli.build` still catches `ValueError` and reports it, so even
+the bypassed path costs a curator a sentence rather than a stack trace. `assert`
+would be worse, since `-O` strips it and silent evidence loss is this project's
+characteristic failure.
 """
 
 from __future__ import annotations
@@ -42,18 +40,19 @@ from pathlib import Path
 from typing import Any, Final
 
 from chd_atlas.build.emit import Emitter
-from chd_atlas.tables import TABLE_SCHEMAS, mirror_paths, read_table
+from chd_atlas.tables import CHROMOSOMES, TABLE_SCHEMAS, mirror_paths, read_table
 
 # The chromosomes, in karyotype order. The same 25 values as the `chrom` column's
-# `allowed` set — a frozenset, which carries no order, so the order lives here
-# and `test_the_chromosome_vocabulary_matches_the_schema` fails if the two drift.
+# The publication order, derived from the schema's own vocabulary in `tables.py`.
+# It used to be declared here and checked against the schema by a test; deriving
+# the schema's `allowed` set from the same tuple made that drift impossible to
+# express, so the test was retired rather than kept as decoration.
 #
 # Ordered, because the index is what a consumer builds a chromosome picker from,
 # and sorting shard names as strings publishes 1, 10, 11, ..., 19, 2, 20 with MT
 # ahead of X. A consumer's only fix for that is to reimplement this rule in
 # JavaScript against a vocabulary it has to hardcode; publishing the order costs
 # nothing and is the same order every genome browser shows.
-CHROMOSOMES: Final[tuple[str, ...]] = (*(str(n) for n in range(1, 23)), "X", "Y", "MT")
 _ORDER: Final[dict[str, int]] = {name: index for index, name in enumerate(CHROMOSOMES)}
 
 

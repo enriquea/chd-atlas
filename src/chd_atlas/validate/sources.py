@@ -111,9 +111,7 @@ class SourceRegistry(BaseModel):
         validated against — the opposite of pinning it.
         """
         found = duplicates(
-            source.ontology_prefix
-            for source in self.sources
-            if source.ontology_prefix is not None
+            source.ontology_prefix for source in self.sources if source.ontology_prefix is not None
         )
         if found:
             raise ValueError(f"duplicate ontology prefixes: {found}")
@@ -202,8 +200,7 @@ def validate_source_references(
                         "SRC003",
                         Severity.ERROR,
                         location,
-                        f"source '{source}' has no entry in mirrors/sources.yaml "
-                        f"(licence unknown)",
+                        f"source '{source}' has no entry in mirrors/sources.yaml (licence unknown)",
                     )
                 )
             elif entry.redistribution is Redistribution.PROHIBITED:

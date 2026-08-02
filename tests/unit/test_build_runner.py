@@ -89,6 +89,10 @@ def test_the_registry_reader_cleans_the_alias_cell_and_skips_an_unlabelled_row(
         "hgnc_id\tsymbol\tname\taliases\tensembl_gene\tncbi_gene\tlocus\tuniprot\tmane_select\n"
         "HGNC:11604\tTBX5\tT-box transcription factor 5\tT-box 5|  TBX5B  ||Chr12\t\t\t\t\t\n"
         "HGNC:4173\t\tGATA binding protein 4\t\t\t\t\t\t\n"
+        # A single space, which TBL003 does not catch: `read_table` maps only the
+        # empty string to null. Published, it is a browse row and a search result
+        # that render as nothing.
+        "HGNC:9999\t \tSome gene\t\t\t\t\t\t\n"
     )
 
     registry = _gene_registry(tmp_path)

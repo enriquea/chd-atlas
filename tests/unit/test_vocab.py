@@ -81,8 +81,7 @@ def test_strongest_hides_a_refutation_behind_a_stronger_claim() -> None:
     than by accident.
     """
     assert (
-        strongest([Classification.DEFINITIVE, Classification.REFUTED])
-        is Classification.DEFINITIVE
+        strongest([Classification.DEFINITIVE, Classification.REFUTED]) is Classification.DEFINITIVE
     )
 
 

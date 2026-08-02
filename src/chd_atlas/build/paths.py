@@ -82,3 +82,20 @@ def gene_bundle_path(gene: HgncId) -> str:
     "n/a" belong to no grammar and must still be able to reach it.
     """
     return f"genes/{slug(gene)}.json"
+
+
+# The whole-corpus payloads, named here because two modules have to agree on each
+# and neither owns it: `literature.py` writes these files and `search.py`
+# advertises two of them as the `path` a search result resolves to. Held apart as
+# string literals in both, a rename in one published dead links from the other,
+# with nothing in code tying the pair — `Emitter.checksums` records what was
+# written, never what a payload promised. That is amendment A36; the dead-link
+# sweep in `tests/test_built_site_is_consumable.py` detects the drift, and these
+# constants are what make it unrepresentable.
+#
+# Gene bundles never needed this: `gene_bundle_path` above is already the single
+# place that names one, which is why they carry no such risk.
+PUBLICATIONS: Final = "publications.json"
+FEATURED: Final = "featured.json"
+PHENOTYPES: Final = "phenotypes.json"
+DATASETS: Final = "datasets.json"

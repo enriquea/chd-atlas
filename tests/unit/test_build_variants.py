@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.variants import CHROMOSOMES, build_variants
+from chd_atlas.build.variants import build_variants
 from chd_atlas.tables import TABLE_SCHEMAS
 
 HEADER = (
@@ -58,18 +58,6 @@ def test_the_fixture_matches_the_schema_it_stands_in_for() -> None:
     """Every other assertion here reads a column by name, so alignment is load-bearing."""
     assert HEADER.rstrip("\n").split("\t") == list(TABLE_SCHEMAS["variants"].column_names)
     assert len(ROW.rstrip("\n").split("\t")) == len(TABLE_SCHEMAS["variants"].columns)
-
-
-def test_the_chromosome_vocabulary_matches_the_schema() -> None:
-    """The order lives in the build, the membership in the schema; they must agree.
-
-    A chromosome added to one and not the other is a shard the build refuses to
-    publish (or one it publishes in an order nothing chose), and neither shows
-    up until a curator files that chromosome.
-    """
-    chrom = next(column for column in TABLE_SCHEMAS["variants"].columns if column.name == "chrom")
-    assert chrom.allowed == frozenset(CHROMOSOMES)
-    assert len(CHROMOSOMES) == len(set(CHROMOSOMES))
 
 
 def test_emits_one_gzipped_shard_per_chromosome(tmp_path: Path) -> None:

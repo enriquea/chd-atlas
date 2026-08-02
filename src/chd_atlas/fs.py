@@ -41,9 +41,7 @@ def list_dir(directory: Path, code: str) -> tuple[list[Path], list[ValidationIss
     file-manager droppings here cannot hide curated work.
     """
     try:
-        return sorted(
-            entry for entry in directory.iterdir() if entry.name not in OS_METADATA
-        ), []
+        return sorted(entry for entry in directory.iterdir() if entry.name not in OS_METADATA), []
     except OSError as exc:
         issue = ValidationIssue(
             code,

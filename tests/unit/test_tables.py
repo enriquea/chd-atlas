@@ -6,6 +6,7 @@ import polars as pl
 import pytest
 
 from chd_atlas.tables import (
+    CHROMOSOMES,
     TABLE_SCHEMAS,
     Column,
     TableSchema,
@@ -263,9 +264,7 @@ def test_every_real_schema_accepts_a_header_only_file(name: str, tmp_path: Path)
 
 def test_reports_a_duplicate_sort_key(tmp_path: Path) -> None:
     path = tmp_path / "demo.tsv"
-    path.write_text(
-        "gene\tpos\ttier\tnote\nHGNC:1\t100\ta\t\nHGNC:1\t100\tb\t\nHGNC:2\t200\ta\t\n"
-    )
+    path.write_text("gene\tpos\ttier\tnote\nHGNC:1\t100\ta\t\nHGNC:1\t100\tb\t\nHGNC:2\t200\ta\t\n")
 
     issues = validate_table(path, SCHEMA)
 
@@ -360,21 +359,69 @@ def test_a_correctly_named_shard_is_not_reported(tmp_path: Path) -> None:
         ("phospho", "protein"),
     ],
 )
-def test_every_protein_column_constrains_the_accession(
-    schema_name: str, column_name: str
-) -> None:
+def test_every_protein_column_constrains_the_accession(schema_name: str, column_name: str) -> None:
     """A protein identifier column must not accept free text.
 
     `UniprotAccession` constrains the curated YAML side, but the mirror tables
     are where the bulk protein data lives, and a column with no pattern took
     anything at all — a gene symbol, a RefSeq accession, an empty placeholder.
     """
-    column = next(
-        c for c in TABLE_SCHEMAS[schema_name].columns if c.name == column_name
-    )
+    column = next(c for c in TABLE_SCHEMAS[schema_name].columns if c.name == column_name)
     assert column.pattern is not None
     compiled = re.compile(column.pattern)
     assert compiled.fullmatch("Q99593")
     assert compiled.fullmatch("P12345-2")
     assert not compiled.fullmatch("TBX5")
     assert not compiled.fullmatch("NP_852259.1")
+
+
+def test_the_chromosome_vocabulary_is_free_of_duplicates() -> None:
+    """What deriving the schema from this tuple does not make impossible.
+
+    `VARIANTS`'s `chrom` column takes its `allowed` set from `CHROMOSOMES`, so
+    the two can no longer disagree about membership — the test that used to
+    check that was retired rather than kept as decoration.
+
+    A duplicate entry survives that refactor and fails quietly in two directions
+    at once: `frozenset` silently collapses it, so the schema looks right, while
+    `build/variants.py`'s `_ORDER` keeps the *last* index, so one chromosome
+    sorts where its twin sat. Neither surfaces until a curator files a shard for
+    that chromosome.
+    """
+    assert len(CHROMOSOMES) == len(set(CHROMOSOMES))
+    # Karyotype order is the published contract: the variant index drives a
+    # chromosome picker, and it is the one property no other test would notice
+    # losing, since every shard-emitting test uses a handful of chromosomes.
+    assert CHROMOSOMES[:3] == ("1", "2", "3")
+    assert CHROMOSOMES[-3:] == ("X", "Y", "MT")
+
+
+def test_a_variant_shard_named_for_no_chromosome_is_reported(tmp_path: Path) -> None:
+    """The filename is the whole addressing scheme, and nothing else checked it.
+
+    `mirrors/variants/<chrom>.tsv` becomes `variants/<chrom>.json.gz`, and a
+    consumer turns a chromosome into a URL by that rule alone. `validate_table`
+    checks the `chrom` column; the sweep here checked only the extension. So
+    `chr12.tsv` validated at 0 errors and 0 warnings and then raised inside the
+    build, giving a curator a traceback where a report belongs — measured before
+    this rule existed.
+
+    The vocabulary is the schema's own, derived from the same `CHROMOSOMES`
+    tuple as the `chrom` column's `allowed` set, so this cannot come to disagree
+    with the column it addresses.
+
+    A correctly named shard is asserted alongside, because a rule that fired on
+    every shard would be worse than none.
+    """
+    shards = tmp_path / "mirrors" / "variants"
+    shards.mkdir(parents=True)
+    (shards / "12.tsv").write_text("")
+    (shards / "MT.tsv").write_text("")
+    (shards / "chr12.tsv").write_text("")
+    (shards / "12_part2.tsv").write_text("")
+
+    issues = unexpected_mirror_entries(tmp_path)
+
+    reported = sorted(Path(issue.location).name for issue in issues if issue.code == "TBL011")
+    assert reported == ["12_part2.tsv", "chr12.tsv"]
+    assert all("is not one of" in issue.message for issue in issues if issue.code == "TBL011")

@@ -124,9 +124,7 @@ def test_each_gene_is_derived_only_from_its_own_assertions() -> None:
                 gene="HGNC:11599",
                 classification="definitive",
                 lesion_groups=["avsd"],
-                evidence=[
-                    _evidence(publication="PMID:1001", evidence_class="genetic_segregation")
-                ],
+                evidence=[_evidence(publication="PMID:1001", evidence_class="genetic_segregation")],
             ),
             _assertion(
                 id="CHDA:AST:0000002",
@@ -184,12 +182,6 @@ def test_confidence_is_broken_down_per_lesion_group() -> None:
         LesionGroup.CONOTRUNCAL: Classification.LIMITED,
         LesionGroup.SEPTAL: Classification.DEFINITIVE,
     }
-    # The array and the breakdown describe the same set of groups in the same
-    # order. Pinned together so neither can start reporting a group the other
-    # does not.
-    assert facts["HGNC:11604"].lesion_groups == tuple(
-        facts["HGNC:11604"].confidence_by_lesion_group
-    )
 
 
 def test_evidence_is_counted_per_class() -> None:

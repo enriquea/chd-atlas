@@ -78,9 +78,7 @@ def test_non_utf8_bytes_are_reported_rather_than_raised(tmp_path: Path) -> None:
 def test_reports_every_duplicate_source_id(tmp_path: Path) -> None:
     _write_sources(
         tmp_path,
-        SOURCES_YAML
-        + SOURCES_YAML.split("sources:\n")[1]
-        + SOURCES_YAML.split("sources:\n")[1],
+        SOURCES_YAML + SOURCES_YAML.split("sources:\n")[1] + SOURCES_YAML.split("sources:\n")[1],
     )
 
     _, issues = load_sources(tmp_path)
