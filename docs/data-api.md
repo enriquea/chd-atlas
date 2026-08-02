@@ -50,7 +50,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>"
 }
 ```
@@ -70,6 +70,11 @@ wrong by the next one.
   its provenance.
 - `counts` counts curated records, which is not the same as files. A gene with
   no assertion contributes to no count and gets no bundle.
+- `schema_version` is `major.minor`. **Minor** rises when a field is added and
+  nothing is removed or repurposed, so a consumer written against an earlier
+  version keeps working; **major** rises when a field changes shape or leaves.
+  `1.1` added `genes` to omics shard rows and `conflicting_lesion_groups` to
+  gene index rows.
 
 ## `genes/index.json`
 
@@ -166,25 +171,36 @@ or `phospho` — to a summary of that gene's rows:
 
 - `count` is every row about the gene, across every shard listed.
 - `shards` are the files holding them. Each shard is
-  `{"table": "<modality>", "rows": [ … ]}` — the mirror rows verbatim.
+  `{"table": "<modality>", "rows": [ … ]}` — the mirror rows, each with one field
+  added by the build (see below).
 - **`top` is capped at 25 rows.** It is a preview, ranked by significance, not a
   page of results. `count` is frequently larger, and the cap is not carried in
   the payload, so do not infer completeness from `len(top)`.
 
-**A limitation to know before you build against this.** For `expression` and
-`profiles`, a shard row carries its own `gene`, so filtering a fetched shard down
-to one gene works. For `phospho` it does not: those rows have **no gene column at
-all**, and the only mapping from their `protein` accession to a gene lives in
-`mirrors/genes.tsv`, which this site does not publish. `proteomics` sits in
-between — its `gene` column is nullable, and rows with it empty were joined by
-accession at build time.
+**To get the rows a bundle counted, filter the shard on `genes`.**
 
-So for `phospho`, and for accession-joined `proteomics` rows, there is currently
-no reliable way to select the rows `count` counted out of the shard it links.
-Tracked in [issue #3](https://github.com/enriquea/chd-atlas/issues/3); the fix
-will either resolve the gene onto shard rows or publish the accession map, and
-either way this section will change. Until then, treat `top` as the addressable
-part for those two modalities.
+Every shard row carries `genes`, a list of the HGNC ids that row is evidence
+about:
+
+```json
+{ "dataset": "PXD012345", "protein": "Q99593", "position": 100, "genes": ["HGNC:11604"] }
+```
+
+```js
+const shard = await (await fetch(summary.shards[0])).json();
+const mine = shard.rows.filter(row => row.genes.includes("HGNC:11604"));
+// mine.length === summary.count, when the gene has one shard
+```
+
+That equality is the point of the field, and it holds by construction: `count` is
+derived from the same attribution the rows publish, computed once. It is a
+**list** because one protein accession can belong to several genes — a histone
+cluster, for instance — and a single-valued field would silently drop all but one.
+
+`genes` is present on every modality, including `expression` and `profiles` whose
+rows already carry their own `gene` column, so a consumer filters one way
+everywhere. Where the two exist side by side they agree; `genes` is the one
+`count` is built from.
 
 `mirrors/ptm_sites.tsv` is a validated mirror table that this site does not
 publish at all. It is reference data about modification sites rather than
@@ -326,18 +342,26 @@ badge, a different colour, an explicit note. Rendering `headline_confidence`
 alone would tell a reader that a gene the field disputes is settled science,
 which is the one failure this resource exists to prevent.
 
-`confidence_by_lesion_group` is the finer-grained view, and is worth showing
-wherever a specific lesion is in question — **but it carries no conflict flag of
-its own, and it must not be read as one.**
+`confidence_by_lesion_group` is the finer-grained view, and it collapses the same
+way: each group's value is `strongest()` over that group's classifications, so a
+group that is both `definitive` and `refuted` resolves to `definitive` exactly as
+the headline does.
 
-Each group's value is `strongest()` over that group's classifications, on the
-same single linear scale, so a group that is both `definitive` and `refuted`
-resolves to `definitive` exactly as the headline does. `has_conflicting_evidence`
-is computed over the gene's whole classification set, so it tells you *the gene*
-is contested without telling you *which group* is. A consumer cannot presently
-distinguish "this gene is contested, but not about septal defects" from "this
-gene is contested about septal defects".
+**`conflicting_lesion_groups` is its flag**, and the same obligation applies one
+level down. It lists the groups that are themselves contested:
 
-Until that is resolved, pair any per-group display with the gene-level flag and
-present the gene as contested. Tracked in
-[issue #4](https://github.com/enriquea/chd-atlas/issues/4).
+```json
+{
+  "has_conflicting_evidence": true,
+  "confidence_by_lesion_group": { "septal": "definitive", "conotruncal": "moderate" },
+  "conflicting_lesion_groups": ["septal"]
+}
+```
+
+Read together, those say: the gene is contested, and specifically about septal
+disease — the conotruncal association is not in dispute. `has_conflicting_evidence`
+alone cannot make that distinction, since it is computed over the gene's whole
+classification set.
+
+The list is always present and may be empty. Every group it names is a key of
+`confidence_by_lesion_group`, so the two join directly.

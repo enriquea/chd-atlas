@@ -149,7 +149,7 @@ def test_the_manifest_publishes_four_keys_and_nothing_that_varies(
 
     manifest = _published(tmp_path)
     assert set(manifest) == {"schema_version", "source_commit", "counts", "files"}
-    assert manifest["schema_version"] == "1.0" == SCHEMA_VERSION
+    assert manifest["schema_version"] == "1.1" == SCHEMA_VERSION
     assert manifest["source_commit"] == commit
     assert manifest["files"] == {}
 
