@@ -136,6 +136,7 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
             "has_conflicting_evidence": False,
             "lesion_groups": ["septal"],
             "confidence_by_lesion_group": {"septal": "definitive"},
+            "conflicting_lesion_groups": [],
             "evidence_counts": {"genetic_case": 1},
             "assertion_count": 1,
             "functional_count": 0,
@@ -702,3 +703,77 @@ def test_the_index_is_emitted_for_an_empty_corpus(tmp_path: Path) -> None:
 
     assert _read(tmp_path, "genes/index.json") == {"genes": []}
     assert set(emitter.checksums) == {"genes/index.json"}
+
+
+def test_a_lesion_group_contested_on_its_own_is_named_beside_the_collapsed_value(
+    tmp_path: Path,
+) -> None:
+    """The gene-level pairing, one level down — issue #4.
+
+    `confidence_by_lesion_group` collapses each group with `strongest()` on the
+    same linear scale where definitive outranks refuted, so a group asserted both
+    ways publishes `definitive` and the refutation vanishes exactly as it would
+    from the headline. `has_conflicting_evidence` is computed gene-wide, so it
+    says the gene is contested without saying which group is.
+
+    Two groups, contested differently, are what make that visible: septal carries
+    both a definitive and a refuted assertion, conotruncal carries only moderate.
+    A build that named every group of a contested gene, or none, fails here — and
+    so does one that let the gene-level flag stand in for the per-group answer,
+    since both groups belong to the same contested gene.
+
+    The collapsed values are asserted alongside, because the new list is only
+    meaningful as a qualifier on them: septal must still read `definitive`, or
+    the list is describing something the map no longer says.
+    """
+    corpus = _corpus(
+        assertions=(
+            _assertion(
+                id="CHDA:AST:0000001", lesion_groups=["septal"], classification="definitive"
+            ),
+            _assertion(id="CHDA:AST:0000002", lesion_groups=["septal"], classification="refuted"),
+            _assertion(
+                id="CHDA:AST:0000003", lesion_groups=["conotruncal"], classification="moderate"
+            ),
+        )
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+
+    entry = _entries(tmp_path)[0]
+    assert entry["has_conflicting_evidence"] is True, "the gene is contested"
+    assert entry["conflicting_lesion_groups"] == ["septal"], "but only about septal disease"
+    assert entry["confidence_by_lesion_group"] == {
+        "conotruncal": "moderate",
+        "septal": "definitive",
+    }
+
+
+def test_the_conflicting_groups_are_a_subset_of_the_groups_that_carry_confidence(
+    tmp_path: Path,
+) -> None:
+    """A list naming a group the map does not carry would describe nothing.
+
+    Both are built from the same `ordered_groups`, so this cannot diverge today;
+    it is pinned because the list is published beside the map and a reader joins
+    the two by key. An uncontested gene must publish an empty list rather than
+    omit the field, so a consumer reads one shape.
+    """
+    corpus = _corpus(
+        assertions=(
+            _assertion(id="CHDA:AST:0000001", lesion_groups=["septal"], classification="refuted"),
+            _assertion(id="CHDA:AST:0000002", lesion_groups=["septal"], classification="moderate"),
+            _assertion(id="CHDA:AST:0000003", gene=GATA4, classification="definitive"),
+        )
+    )
+    emitter = Emitter(root=tmp_path)
+
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+
+    for entry in _entries(tmp_path):
+        named = set(entry["conflicting_lesion_groups"])
+        assert named <= set(entry["confidence_by_lesion_group"])
+    rows = _by_gene(tmp_path)
+    assert rows[TBX5]["conflicting_lesion_groups"] == ["septal"]
+    assert rows[GATA4]["conflicting_lesion_groups"] == []
