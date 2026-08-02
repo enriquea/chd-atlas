@@ -138,9 +138,7 @@ def test_the_inline_publication_is_the_one_the_entry_cites(tmp_path: Path) -> No
             _publication("PMID:1", title="Not this one"),
             _publication("PMID:2", title="The featured one"),
         ),
-        featured=(
-            FeaturedManuscript(publication="PMID:2", order=1, blurb="b", topic="genomics"),
-        ),
+        featured=(FeaturedManuscript(publication="PMID:2", order=1, blurb="b", topic="genomics"),),
     )
     emitter = Emitter(root=tmp_path)
 

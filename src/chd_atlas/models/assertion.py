@@ -71,9 +71,7 @@ class Evidence(BaseModel):
     def functional_reference_matches_class(self) -> Evidence:
         is_functional = self.evidence_class is EvidenceClass.FUNCTIONAL_MODEL
         if is_functional and self.functional_evidence is None:
-            raise ValueError(
-                "evidence_class 'functional_model' requires 'functional_evidence'"
-            )
+            raise ValueError("evidence_class 'functional_model' requires 'functional_evidence'")
         if not is_functional and self.functional_evidence is not None:
             raise ValueError(
                 "'functional_evidence' is only valid for evidence_class 'functional_model'"
@@ -83,9 +81,7 @@ class Evidence(BaseModel):
     @model_validator(mode="after")
     def omics_evidence_cites_a_dataset(self) -> Evidence:
         if self.evidence_class in _DATASET_BACKED_CLASSES and self.dataset is None:
-            raise ValueError(
-                f"evidence_class '{self.evidence_class.value}' requires 'dataset'"
-            )
+            raise ValueError(f"evidence_class '{self.evidence_class.value}' requires 'dataset'")
         return self
 
 
@@ -111,17 +107,13 @@ class GeneDiseaseAssertion(BaseModel):
     @model_validator(mode="after")
     def extracardiac_requires_syndromic(self) -> GeneDiseaseAssertion:
         if self.extracardiac_features and self.syndromic is SyndromicStatus.ISOLATED:
-            raise ValueError(
-                "'extracardiac_features' cannot be set when syndromic is 'isolated'"
-            )
+            raise ValueError("'extracardiac_features' cannot be set when syndromic is 'isolated'")
         return self
 
     @model_validator(mode="after")
     def syndromic_lists_extracardiac_features(self) -> GeneDiseaseAssertion:
         if self.syndromic is SyndromicStatus.SYNDROMIC and not self.extracardiac_features:
-            raise ValueError(
-                "syndromic assertions must list at least one extracardiac feature"
-            )
+            raise ValueError("syndromic assertions must list at least one extracardiac feature")
         return self
 
     @model_validator(mode="after")

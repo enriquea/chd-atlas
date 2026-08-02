@@ -127,9 +127,7 @@ def test_expression_evidence_requires_a_dataset() -> None:
 
 
 def test_expression_evidence_accepts_a_dataset() -> None:
-    evidence = Evidence.model_validate(
-        _evidence(evidence_class="expression", dataset="PXD012345")
-    )
+    evidence = Evidence.model_validate(_evidence(evidence_class="expression", dataset="PXD012345"))
     assert evidence.dataset == "PXD012345"
 
 

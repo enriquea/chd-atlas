@@ -38,9 +38,7 @@ def load_id_registry(root: Path) -> tuple[IdRegistry | None, list[ValidationIssu
     """
     path = root / "curation" / ".id_registry.yaml"
     if not path.is_file():
-        return None, [
-            ValidationIssue("ID001", Severity.ERROR, str(path), "ID registry not found")
-        ]
+        return None, [ValidationIssue("ID001", Severity.ERROR, str(path), "ID registry not found")]
 
     yaml = YAML(typ="safe")
     try:
@@ -61,9 +59,7 @@ def load_id_registry(root: Path) -> tuple[IdRegistry | None, list[ValidationIssu
         ]
 
 
-def _registry_from(
-    location: str, raw: object
-) -> tuple[IdRegistry | None, list[ValidationIssue]]:
+def _registry_from(location: str, raw: object) -> tuple[IdRegistry | None, list[ValidationIssue]]:
     """Validate the parsed document's shape before trusting it as a counter.
 
     Every rejection returns `None`. Coercing instead would rewind the counter:
@@ -121,8 +117,7 @@ def _registry_from(
                     "ID004",
                     Severity.ERROR,
                     location,
-                    f"counter for '{prefix}' must be a non-negative integer, "
-                    f"found {value!r}",
+                    f"counter for '{prefix}' must be a non-negative integer, found {value!r}",
                 )
             )
             continue

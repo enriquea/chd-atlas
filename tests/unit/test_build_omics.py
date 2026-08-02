@@ -8,8 +8,7 @@ from chd_atlas.build.emit import Emitter
 from chd_atlas.build.omics import TOP_N, build_omics
 
 EXPRESSION_HEADER = (
-    "dataset\tcontrast\tgene\tlog2fc\tpvalue\tfdr\tdirection\t"
-    "n_case\tn_control\ttissue\tstage\n"
+    "dataset\tcontrast\tgene\tlog2fc\tpvalue\tfdr\tdirection\tn_case\tn_control\ttissue\tstage\n"
 )
 PROFILES_HEADER = "dataset\tgene\ttissue\tstage\tmedian_abundance\tunit\tq25\tq75\tn_samples\n"
 PROTEOMICS_HEADER = (
@@ -33,10 +32,7 @@ def _row(
     dataset: str = "PXD012345",
     contrast: str = "tof_vs_control",
 ) -> str:
-    return (
-        f"{dataset}\t{contrast}\t{gene}\t{log2fc}\t0.001\t{fdr}\tup\t"
-        f"10\t10\tRV\tinfant\n"
-    )
+    return f"{dataset}\t{contrast}\t{gene}\t{log2fc}\t0.001\t{fdr}\tup\t10\t10\tRV\tinfant\n"
 
 
 def _phospho_row(protein: str, position: int, fdr: str = "0.01") -> str:
@@ -48,9 +44,7 @@ def _phospho_row(protein: str, position: int, fdr: str = "0.01") -> str:
 
 def _repo(tmp_path: Path, rows: str) -> Path:
     (tmp_path / "mirrors" / "expression").mkdir(parents=True)
-    (tmp_path / "mirrors" / "expression" / "PXD012345.tsv").write_text(
-        EXPRESSION_HEADER + rows
-    )
+    (tmp_path / "mirrors" / "expression" / "PXD012345.tsv").write_text(EXPRESSION_HEADER + rows)
     return tmp_path
 
 
@@ -111,9 +105,7 @@ def test_summarises_each_gene_by_modality(tmp_path: Path) -> None:
     summaries = build_omics(root, emitter)
 
     assert summaries["HGNC:11604"]["expression"]["count"] == 2
-    assert summaries["HGNC:11604"]["expression"]["shards"] == [
-        "omics/expression/PXD012345.json"
-    ]
+    assert summaries["HGNC:11604"]["expression"]["shards"] == ["omics/expression/PXD012345.json"]
 
 
 def test_the_summary_keeps_only_the_most_significant_rows(tmp_path: Path) -> None:
@@ -129,9 +121,7 @@ def test_the_summary_keeps_only_the_most_significant_rows(tmp_path: Path) -> Non
     `top[0]["fdr"] < top[-1]["fdr"]`, and so does one that truncates before it
     ranks. Both were measured passing against exactly that assertion.
     """
-    rows = "".join(
-        _row("HGNC:11604", f"0.{index:03d}") for index in range(TOP_N + 9, 0, -1)
-    )
+    rows = "".join(_row("HGNC:11604", f"0.{index:03d}") for index in range(TOP_N + 9, 0, -1))
     root = _repo(tmp_path, rows)
     emitter = Emitter(root=tmp_path / "dist")
 
@@ -140,9 +130,7 @@ def test_the_summary_keeps_only_the_most_significant_rows(tmp_path: Path) -> Non
     top = summaries["HGNC:11604"]["expression"]["top"]
     # Ranked by FDR ascending, so the most significant row leads — and the rows
     # kept are the most significant ones, not the first ones encountered.
-    assert [row["fdr"] for row in top] == [
-        float(f"0.{index:03d}") for index in range(1, TOP_N + 1)
-    ]
+    assert [row["fdr"] for row in top] == [float(f"0.{index:03d}") for index in range(1, TOP_N + 1)]
     assert summaries["HGNC:11604"]["expression"]["count"] == TOP_N + 9
     # The other half of the bargain: the bundle is bounded because the shard is
     # not. Truncating the published rows too would make the count a promise the
@@ -160,16 +148,11 @@ def test_the_slice_is_the_best_rows_across_every_dataset(tmp_path: Path) -> None
     (tmp_path / "mirrors" / "expression").mkdir(parents=True)
     (tmp_path / "mirrors" / "expression" / "PXD000001.tsv").write_text(
         EXPRESSION_HEADER
-        + "".join(
-            _row("HGNC:11604", "0.500", dataset="PXD000001") for _ in range(TOP_N)
-        )
+        + "".join(_row("HGNC:11604", "0.500", dataset="PXD000001") for _ in range(TOP_N))
     )
     (tmp_path / "mirrors" / "expression" / "PXD000002.tsv").write_text(
         EXPRESSION_HEADER
-        + "".join(
-            _row("HGNC:11604", f"0.00{index}", dataset="PXD000002")
-            for index in range(1, 4)
-        )
+        + "".join(_row("HGNC:11604", f"0.00{index}", dataset="PXD000002") for index in range(1, 4))
     )
     emitter = Emitter(root=tmp_path / "dist")
 
@@ -226,12 +209,9 @@ def test_an_isoform_specific_registry_entry_wins_over_the_canonical_one(
     """
     _registry(
         tmp_path,
-        _gene_row("HGNC:11604", "TBX5", "Q99593")
-        + _gene_row("HGNC:99999", "TBX5B", "Q99593-2"),
+        _gene_row("HGNC:11604", "TBX5", "Q99593") + _gene_row("HGNC:99999", "TBX5B", "Q99593-2"),
     )
-    _table(
-        tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("Q99593-2", 12)
-    )
+    _table(tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("Q99593-2", 12))
     emitter = Emitter(root=tmp_path / "dist")
 
     summaries = build_omics(tmp_path, emitter)
@@ -323,8 +303,7 @@ def test_a_row_with_no_protein_is_attributed_to_no_gene(tmp_path: Path) -> None:
         tmp_path,
         "phospho",
         "PXD012345.tsv",
-        PHOSPHO_HEADER
-        + "PXD012345\ttof_vs_control\tX_S12\t\tS\t12\tMOD:00046\t\t"
+        PHOSPHO_HEADER + "PXD012345\ttof_vs_control\tX_S12\t\tS\t12\tMOD:00046\t\t"
         "1.2\t0.001\t0.01\ttrue\t\t\n",
     )
     emitter = Emitter(root=tmp_path / "dist")
@@ -385,8 +364,7 @@ def test_a_registry_missing_its_uniprot_column_does_not_abort_the_build(
     """
     (tmp_path / "mirrors").mkdir()
     (tmp_path / "mirrors" / "genes.tsv").write_text(
-        GENES_HEADER.replace("uniprot", "swissprot")
-        + _gene_row("HGNC:11604", "TBX5", "Q99593")
+        GENES_HEADER.replace("uniprot", "swissprot") + _gene_row("HGNC:11604", "TBX5", "Q99593")
     )
     _table(tmp_path, "phospho", "PXD012345.tsv", PHOSPHO_HEADER + _phospho_row("Q99593", 12))
     emitter = Emitter(root=tmp_path / "dist")
@@ -612,9 +590,7 @@ def test_an_unreadable_mirror_does_not_stop_the_others(tmp_path: Path) -> None:
     would report it twice and abort every shard behind it.
     """
     _table(tmp_path, "expression", "PXD000001.tsv", "")
-    _table(
-        tmp_path, "expression", "PXD000002.tsv", EXPRESSION_HEADER + _row("HGNC:11604", "0.01")
-    )
+    _table(tmp_path, "expression", "PXD000002.tsv", EXPRESSION_HEADER + _row("HGNC:11604", "0.01"))
     emitter = Emitter(root=tmp_path / "dist")
 
     summaries = build_omics(tmp_path, emitter)

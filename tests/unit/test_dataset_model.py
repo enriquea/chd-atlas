@@ -62,9 +62,7 @@ def test_dataset_requires_a_licence() -> None:
 
 
 def test_dataset_rejects_an_accession_that_does_not_match_its_archive() -> None:
-    with pytest.raises(
-        ValidationError, match="accession GSE123456 does not match archive 'pride'"
-    ):
+    with pytest.raises(ValidationError, match="accession GSE123456 does not match archive 'pride'"):
         Dataset.model_validate(_dataset(id="GSE123456"))
 
 

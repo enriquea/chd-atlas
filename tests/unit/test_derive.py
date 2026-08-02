@@ -124,9 +124,7 @@ def test_each_gene_is_derived_only_from_its_own_assertions() -> None:
                 gene="HGNC:11599",
                 classification="definitive",
                 lesion_groups=["avsd"],
-                evidence=[
-                    _evidence(publication="PMID:1001", evidence_class="genetic_segregation")
-                ],
+                evidence=[_evidence(publication="PMID:1001", evidence_class="genetic_segregation")],
             ),
             _assertion(
                 id="CHDA:AST:0000002",

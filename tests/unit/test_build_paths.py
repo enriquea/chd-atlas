@@ -184,9 +184,7 @@ def test_the_sample_covers_every_grammar_that_exists() -> None:
     through silently — the hand-maintained weakness `slug`'s docstring admits to.
     `Doi` is the deliberate omission and is pinned by its own test.
     """
-    declared = {
-        name for name, obj in vars(identifiers).items() if isinstance(obj, NewType)
-    }
+    declared = {name for name, obj in vars(identifiers).items() if isinstance(obj, NewType)}
     covered = {type_.__name__ for type_, _ in SAMPLE}
     assert declared, "no NewType grammars found; the introspection above has rotted"
     assert declared - covered == {"Doi"}

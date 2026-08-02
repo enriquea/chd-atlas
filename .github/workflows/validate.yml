@@ -34,6 +34,12 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      # `ruff check` and `ruff format` are separate tools with separate rule
+      # sets, and only the first was run here. Fifteen files had drifted out of
+      # formatted shape with CI green throughout, because nothing was asking.
+      - name: Format check
+        run: uv run ruff format --check .
+
       - name: Type check
         run: uv run mypy
 
