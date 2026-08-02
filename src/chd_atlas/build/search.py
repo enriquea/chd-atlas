@@ -44,7 +44,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from chd_atlas.build.emit import Emitter, Json
-from chd_atlas.build.paths import gene_bundle_path
+from chd_atlas.build.paths import PHENOTYPES, PUBLICATIONS, gene_bundle_path
 from chd_atlas.corpus import Corpus
 
 
@@ -219,7 +219,7 @@ def build_search(
                 "terms": _terms(
                     [publication.title, publication.id, publication.journal, *publication.authors]
                 ),
-                "path": "publications.json",
+                "path": PUBLICATIONS,
             }
         )
 
@@ -230,7 +230,7 @@ def build_search(
                 "id": term.id,
                 "label": term.label,
                 "terms": _terms([term.label, term.id, *term.synonyms]),
-                "path": "phenotypes.json",
+                "path": PHENOTYPES,
             }
         )
 
