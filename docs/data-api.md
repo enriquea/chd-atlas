@@ -326,5 +326,18 @@ badge, a different colour, an explicit note. Rendering `headline_confidence`
 alone would tell a reader that a gene the field disputes is settled science,
 which is the one failure this resource exists to prevent.
 
-`confidence_by_lesion_group` is the finer-grained view and should be preferred
-wherever a specific lesion is in question.
+`confidence_by_lesion_group` is the finer-grained view, and is worth showing
+wherever a specific lesion is in question — **but it carries no conflict flag of
+its own, and it must not be read as one.**
+
+Each group's value is `strongest()` over that group's classifications, on the
+same single linear scale, so a group that is both `definitive` and `refuted`
+resolves to `definitive` exactly as the headline does. `has_conflicting_evidence`
+is computed over the gene's whole classification set, so it tells you *the gene*
+is contested without telling you *which group* is. A consumer cannot presently
+distinguish "this gene is contested, but not about septal defects" from "this
+gene is contested about septal defects".
+
+Until that is resolved, pair any per-group display with the gene-level flag and
+present the gene as contested. Tracked in
+[issue #4](https://github.com/enriquea/chd-atlas/issues/4).
