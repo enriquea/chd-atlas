@@ -204,6 +204,40 @@ def test_source_commit_reads_the_head_of_the_checkout_it_is_given(tmp_path: Path
     assert source_commit(checkout) == head
 
 
+def test_a_root_inside_an_unrelated_checkout_has_no_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`git -C` searches upward, so "not a checkout" has to be made to mean it.
+
+    A tarball unpacked anywhere inside some other repository — a scratch clone, a
+    monorepo, a home directory under version control — is not a checkout of this
+    atlas, and the docstring and `docs/data-api.md` both promise `null` for it.
+    Before this guard it published the *enclosing* repository's HEAD: a real,
+    verifiable sha naming a commit that contains none of the built data.
+
+    That is strictly worse than the `"HEAD"` the returncode check exists to
+    prevent, and for the opposite reason. A provenance claim resolving to nothing
+    announces itself the first time anyone follows it; one that resolves to a
+    real commit in the wrong repository never does.
+
+    `GIT_DIR` is set here because it overrides `-C` outright, so a build
+    inheriting it from a surrounding tool would report that repository's commit
+    however carefully `root` was chosen. It is the same defect by a quieter
+    route, which is why the environment is cleared rather than trusted.
+    """
+    enclosing = _checkout(tmp_path / "enclosing", commits=1)
+    unpacked = enclosing / "tarball"
+    unpacked.mkdir()
+
+    assert source_commit(unpacked) is None
+    # The enclosing repository is genuinely resolvable — the None above is the
+    # guard working, not git failing to find anything.
+    assert source_commit(enclosing) == _git(enclosing, "rev-parse", "HEAD")
+
+    monkeypatch.setenv("GIT_DIR", str(enclosing / ".git"))
+    assert source_commit(unpacked) is None
+
+
 def _plain_directory(tmp_path: Path) -> Path:
     return tmp_path
 

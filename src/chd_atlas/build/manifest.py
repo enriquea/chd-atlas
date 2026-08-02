@@ -22,6 +22,7 @@ file are already fixed.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Final
@@ -53,24 +54,49 @@ def source_commit(root: Path) -> str | None:
     catches, so the two spellings behave identically. `timeout` is a real one —
     without it a git that blocks on a dead network mount or a credential prompt
     hangs the build with nothing to read.
+
+    The toplevel comparison is what makes "not a checkout" mean it. `git -C X`
+    searches *upward* from X, so a `--root` that is merely unpacked inside some
+    unrelated repository resolves that repository's HEAD, and this published a
+    real, verifiable sha naming a commit containing none of the built data —
+    strictly worse than the `"HEAD"` the returncode check exists to prevent,
+    because a false provenance claim that resolves is one nobody thinks to
+    check. Two environment variables do the same thing more quietly: `GIT_DIR`
+    and `GIT_WORK_TREE` override `-C` outright, so they are cleared rather than
+    trusted. Reproduced before fixing, and pinned by
+    `test_a_root_inside_an_unrelated_checkout_has_no_provenance`.
     """
+    # `-C` still points git at `root`; `--show-toplevel` then reports which
+    # repository it actually found, which is the answer that has to be checked.
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
+        located = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel", "HEAD"],
             capture_output=True,
             text=True,
             check=False,
             timeout=10,
+            env=environment,
         )
     # OSError is git absent from PATH, which a build must survive for the same
     # reason a tarball build must.
     except (OSError, subprocess.SubprocessError):
         return None
-    if completed.returncode != 0:
+    if located.returncode != 0:
+        return None
+
+    lines = located.stdout.split()
+    if len(lines) != 2:
+        return None
+    toplevel, commit = lines
+    try:
+        if Path(toplevel).resolve() != root.resolve():
+            return None
+    except OSError:
         return None
     # `or None`, because "" is falsy but still reads as a recorded commit to a
     # consumer testing the key against null.
-    return completed.stdout.strip() or None
+    return commit.strip() or None
 
 
 def write_manifest(corpus: Corpus, emitter: Emitter, commit: str | None) -> None:

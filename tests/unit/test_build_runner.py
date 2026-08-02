@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,41 @@ def test_the_build_publishes_every_artifact_and_a_manifest_that_verifies(
     # a caller checking what was built does not have to know that one artifact
     # is missing from the manifest by construction.
     assert set(written) == on_disk
+
+
+def test_a_build_from_a_checkout_stamps_the_manifest_with_that_commit(
+    repo: Path, tmp_path: Path
+) -> None:
+    """The provenance branch that only ever runs in the deploy, and nowhere else.
+
+    Every other test here builds from a `tmp_path` copy that is not a git
+    repository, so `source_commit` returns `None` in all of them and the manifest
+    records no commit. That is the opposite of what happens in CI, where the
+    build always runs inside a checkout — so the wiring the published site
+    actually depends on was reachable by no test, and a regression in how
+    `build_site` obtains the commit would have shipped green.
+
+    Made a checkout here rather than asserting against this repository's own
+    HEAD, which would pass just as well against a `source_commit` that ignored
+    `root` entirely.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "corpus"],
+        cwd=repo,
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    out = tmp_path / "dist"
+
+    build_site(repo, out)
+
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["source_commit"] == head
+    assert len(head) >= 40
 
 
 def test_a_repository_that_fails_validation_is_refused_before_anything_is_written(
