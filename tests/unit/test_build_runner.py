@@ -25,6 +25,7 @@ PUBLISHED = (
     "featured.json",
     "phenotypes.json",
     "datasets.json",
+    "sources.json",
     "variants/index.json",
     "search/index.json.gz",
 )
@@ -275,3 +276,33 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
         "Chr12q24.1",
         "T-box 5",
     ]
+
+
+def test_the_site_carries_the_terms_of_everything_it_republishes(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Attribution has to travel with the data, not sit in a README.
+
+    `mirrors/sources.yaml` records HPO as `permitted_with_attribution`, and the
+    build republishes its term labels and synonyms verbatim in `phenotypes.json`
+    and in the search index. A consumer fetching JSON never opens the README, and
+    the repository's only `LICENSE` is Apache-2.0 — which a reader will
+    reasonably take to cover the published files too.
+
+    So the obligation is asserted where it is discharged: every source the
+    registry knows appears in the published payload, with its licence and its
+    redistribution terms intact.
+    """
+    out = tmp_path / "dist"
+
+    build_site(repo, out)
+
+    published = json.loads((out / "sources.json").read_text())["sources"]
+    by_id = {source["id"]: source for source in published}
+    assert "hpo" in by_id, "the ontology whose content is republished must be named"
+    assert by_id["hpo"]["redistribution"] == "permitted_with_attribution"
+    assert by_id["hpo"]["licence"], "a source with terms must carry them"
+    for source in published:
+        assert source["name"] and source["url"] and source["licence"]
+    # Ordered, because this is a published array like every other.
+    assert [source["id"] for source in published] == sorted(by_id)

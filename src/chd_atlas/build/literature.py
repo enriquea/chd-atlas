@@ -23,8 +23,9 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from chd_atlas.build.emit import Emitter, Json
-from chd_atlas.build.paths import DATASETS, FEATURED, PHENOTYPES, PUBLICATIONS
+from chd_atlas.build.paths import DATASETS, FEATURED, PHENOTYPES, PUBLICATIONS, SOURCES
 from chd_atlas.corpus import Corpus
+from chd_atlas.validate.sources import SourceRegistry
 
 
 def _dump(model: BaseModel) -> dict[str, Json]:
@@ -83,6 +84,32 @@ def _featured(corpus: Corpus) -> list[Json]:
         payload["publication"] = _dump(cited)
         entries.append(payload)
     return entries
+
+
+def build_sources(registry: SourceRegistry, emitter: Emitter) -> None:
+    """Emit `sources.json`: what the atlas mirrors, and on whose terms.
+
+    A licensing obligation rather than a curated payload. `mirrors/sources.yaml`
+    records HPO as `redistribution: permitted_with_attribution`, and the site
+    republishes its term labels and synonyms verbatim in `phenotypes.json` and in
+    the search index. Attribution therefore has to travel *with the data*: a
+    consumer fetching JSON never opens the README, and the repository's only
+    `LICENSE` is Apache-2.0, which a reader will reasonably take to cover the
+    published files as well.
+
+    The whole registry is published rather than only the sources whose terms
+    demand it. Which resources a claim rests on is provenance a scientific reader
+    is entitled to, and filtering to the ones with obligations would make the
+    file a compliance artifact instead of a statement of where the data came
+    from — and would silently drop a source the day someone relaxes its terms.
+
+    Sorted by id so two builds of one commit agree, for the same reason every
+    other array here is sorted.
+    """
+    emitter.write_json(
+        SOURCES,
+        {"sources": [_dump(source) for source in sorted(registry.sources, key=lambda s: s.id)]},
+    )
 
 
 def build_literature(corpus: Corpus, emitter: Emitter) -> None:

@@ -99,3 +99,8 @@ PUBLICATIONS: Final = "publications.json"
 FEATURED: Final = "featured.json"
 PHENOTYPES: Final = "phenotypes.json"
 DATASETS: Final = "datasets.json"
+# Not a curated payload but a licensing obligation. `mirrors/sources.yaml`
+# records HPO as `permitted_with_attribution`, and the site republishes its term
+# labels and synonyms verbatim — so the attribution has to travel with the data,
+# not sit only in a README a JSON consumer never opens.
+SOURCES: Final = "sources.json"

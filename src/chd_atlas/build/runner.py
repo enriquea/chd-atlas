@@ -25,7 +25,7 @@ from pathlib import Path
 
 from chd_atlas.build.bundles import build_genes
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.literature import build_literature
+from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
 from chd_atlas.build.search import GeneLabels, build_search
@@ -33,6 +33,7 @@ from chd_atlas.build.variants import build_variants
 from chd_atlas.corpus import load_curation
 from chd_atlas.tables import TABLE_SCHEMAS, read_table
 from chd_atlas.validate.runner import validate_repository
+from chd_atlas.validate.sources import load_sources
 
 
 class BuildRefused(Exception):
@@ -167,6 +168,12 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         variants=variants,
     )
     build_literature(corpus, emitter)
+    # Read again rather than threaded down from the gate: `validate_repository`
+    # discards its registry, and re-reading one small YAML costs less than
+    # widening the gate's return type to carry a value only the build wants.
+    # It cannot fail here — SRC001 is an error, so the gate refused already.
+    registry, _ = load_sources(root)
+    build_sources(registry, emitter)
     build_search(corpus, emitter, genes=genes)
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))

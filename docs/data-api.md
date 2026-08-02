@@ -89,6 +89,7 @@ the evidence itself.
       "assertion_count": 1,
       "bundle": "genes/HGNC_11604.json",
       "confidence_by_lesion_group": { "septal": "definitive" },
+      "conflicting_lesion_groups": [],
       "evidence_counts": { "genetic_case": 1 },
       "functional_count": 0,
       "gene": "HGNC:11604",
@@ -110,6 +111,16 @@ the evidence itself.
 - `confidence_by_lesion_group` may disagree with `headline_confidence` by
   design: a gene can be definitive for septal disease and refuted for
   conotruncal.
+- `conflicting_lesion_groups` names the groups that are themselves contested,
+  and is always present though often empty. It is the per-group counterpart of
+  `has_conflicting_evidence` — see [Contested genes](#contested-genes-the-one-consumer-obligation),
+  which is the one obligation this API places on a consumer.
+- **These two per-group fields appear here and nowhere else.** The gene bundle
+  carries `has_conflicting_evidence` but neither of them, so a detail page that
+  needs group-level confidence must carry it over from the browse row it was
+  opened from. It cannot be derived from the bundle: that would mean
+  reimplementing the classification ranking and the contested test, neither of
+  which is published.
 - The three counts describe what the bundle contains, so a browse row never
   promises more than the page delivers.
 
@@ -145,9 +156,9 @@ One gene's whole detail page, in one fetch.
 - **`variants` are embedded; omics rows are linked.** That asymmetry is a
   curation policy, not a property of the data — this atlas curates variants by
   hand, so the count per gene is bounded by effort. Omics tables are not, so a
-  bundle carries per-modality summaries with `shards` to fetch. See the omics
-  section below for the shape of those summaries, and for a limitation on
-  selecting a gene's rows out of a `phospho` shard.
+  bundle carries per-modality summaries with `shards` to fetch. The omics section
+  below gives their shape and how to select a gene's rows out of a fetched
+  shard.
 - `publications` lists the PMIDs the gene's assertion evidence cites, in lexical
   order. It does not include PMIDs cited only by its functional records.
 - `assertions` and `functional` are ordered by id.
@@ -163,13 +174,17 @@ or `phospho` — to a summary of that gene's rows:
     "expression": {
       "count": 412,
       "shards": ["omics/expression/GSE1000.json"],
-      "top": [ { "dataset": "GSE1000", "gene": "HGNC:11604", "log2fc": 2.1, "fdr": 0.001 } ]
+      "top": [
+        { "dataset": "GSE1000", "gene": "HGNC:11604", "log2fc": 2.1, "fdr": 0.001,
+          "genes": ["HGNC:11604"] }
+      ]
     }
   }
 }
 ```
 
 - `count` is every row about the gene, across every shard listed.
+- `top` holds the same row objects the shard does, `genes` included.
 - `shards` are the files holding them. Each shard is
   `{"table": "<modality>", "rows": [ … ]}` — the mirror rows, each with one field
   added by the build (see below).
@@ -292,6 +307,40 @@ organism, sample count, licence and its contrasts. This is what an omics row's
 `dataset` column resolves against, the way `publications.json` resolves a PMID.
 Empty in the committed corpus today.
 
+## `sources.json`
+
+What the atlas mirrors, and on whose terms.
+
+```json
+{
+  "sources": [
+    {
+      "id": "hpo",
+      "name": "Human Phenotype Ontology",
+      "version": "hp/releases/2026-06-23",
+      "retrieved_on": "2026-07-31",
+      "url": "https://hpo.jax.org/",
+      "licence": "https://hpo.jax.org/app/license",
+      "redistribution": "permitted_with_attribution",
+      "ontology_prefix": "HP",
+      "ontology_file": "ontologies/hp-2026-06-23.obo"
+    }
+  ]
+}
+```
+
+**Read this before redistributing anything from this site.** Phenotype labels
+and synonyms in `phenotypes.json` and in the search index are transcribed from
+the pinned HPO release, whose terms are `permitted_with_attribution` — so a
+consumer republishing them carries the same obligation, and this file is where
+the attribution to satisfy it comes from.
+
+The repository's `LICENSE` (Apache-2.0) covers the **code**. It does not govern
+mirrored third-party content, whose terms are the ones recorded here.
+
+`version` is the upstream release identifier and `retrieved_on` the date it was
+taken, so a claim can be traced to the exact release it rests on.
+
 ## `search/index.json.gz`
 
 A flat array of records over genes, publications and phenotypes. Deliberately
@@ -362,6 +411,27 @@ Read together, those say: the gene is contested, and specifically about septal
 disease — the conotruncal association is not in dispute. `has_conflicting_evidence`
 alone cannot make that distinction, since it is computed over the gene's whole
 classification set.
+
+**Where these two fields live.** `confidence_by_lesion_group` and
+`conflicting_lesion_groups` appear in `genes/index.json` and **nowhere else**.
+The gene bundle carries `has_conflicting_evidence` but neither of them, so a
+detail page needing group-level confidence must carry it over from the browse
+row it was opened from. It cannot be recovered from the bundle: that would mean
+reimplementing the classification ranking and the contested test against the
+embedded assertions, and neither rule is published.
+
+**The three states the pair can express**, which is why both are needed:
+
+| `has_conflicting_evidence` | `conflicting_lesion_groups` | what it means |
+| --- | --- | --- |
+| `false` | `[]` | nothing about this gene is disputed |
+| `true` | `["septal"]` | septal disease itself is disputed — supportive and contesting assertions about the same group |
+| `true` | `[]` | no single group is internally disputed; the gene carries opposing validity across *different* groups — definitive for one lesion, refuted for another |
+
+That last row is not a contradiction, and it is the case the
+`confidence_by_lesion_group` bullet above calls "by design". Present it as
+*lesion-specific validity*, not as a dispute: showing such a gene with the same
+badge as a genuinely contested one would overstate the disagreement.
 
 The list is always present and may be empty. Every group it names is a key of
 `confidence_by_lesion_group`, so the two join directly.
