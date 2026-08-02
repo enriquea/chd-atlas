@@ -97,10 +97,20 @@ def source_commit(root: Path) -> str | None:
     if located.returncode != 0:
         return None
 
-    lines = located.stdout.split()
-    if len(lines) != 2:
+    # Line-based, not whitespace-based. `--show-toplevel` prints a path, and a
+    # path may contain spaces — `~/My Projects/atlas` is ordinary on macOS.
+    # Splitting on whitespace made that three tokens instead of two and returned
+    # `None`, so a perfectly valid checkout published no provenance and did it
+    # by failing into the same answer that means "not a checkout at all".
+    # Reported by review on #7 and reproduced before fixing.
+    #
+    # The commit is the last line and never contains whitespace; everything
+    # before it is the path, rejoined, so even a newline in a directory name
+    # compares correctly rather than silently answering `None`.
+    lines = located.stdout.splitlines()
+    if len(lines) < 2:
         return None
-    toplevel, commit = lines
+    toplevel, commit = "\n".join(lines[:-1]), lines[-1]
     try:
         if Path(toplevel).resolve() != root.resolve():
             return None

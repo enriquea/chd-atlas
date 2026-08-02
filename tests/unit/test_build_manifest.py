@@ -204,6 +204,27 @@ def test_source_commit_reads_the_head_of_the_checkout_it_is_given(tmp_path: Path
     assert source_commit(checkout) == head
 
 
+def test_a_checkout_whose_path_contains_a_space_still_reports_its_commit(
+    tmp_path: Path,
+) -> None:
+    """`--show-toplevel` prints a path, and paths have spaces in them.
+
+    `~/My Projects/atlas` and `~/My Drive/…` are ordinary on macOS. Parsing the
+    two-line output by whitespace made such a path three tokens instead of two,
+    so a perfectly valid checkout published no provenance — and did it by
+    failing into the same `None` that means "not a checkout at all", which is
+    the reading a curator would take from `"source_commit": null`.
+
+    Asserted against the real HEAD rather than against not-None, because the
+    line-based parse has to put the two fields the right way round: returning the
+    *path* as the commit would also be non-null.
+    """
+    checkout = _checkout(tmp_path / "My Projects" / "atlas", commits=1)
+
+    assert " " in str(checkout)
+    assert source_commit(checkout) == _git(checkout, "rev-parse", "HEAD")
+
+
 def test_a_root_inside_an_unrelated_checkout_has_no_provenance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
