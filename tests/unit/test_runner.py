@@ -156,6 +156,36 @@ def test_a_failed_registry_does_not_cascade_one_error_per_term(tmp_path: Path) -
     assert "ONT003" not in codes
 
 
+def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
+    """The second kind of warning, and why `ok` may ignore one that arrives alone.
+
+    A *skip* warning means a check did not run, and is ignored safely only
+    because an error always accompanies it — the three parametrised cases below
+    pin that. REF013 is a *gap* warning: the check ran and found curated evidence
+    that will reach no reader, and it deliberately arrives alone.
+
+    That is a real weakening of the gate, not an oversight, and it is asserted
+    here so that it is a decision on record. The assertion is sound and the site
+    is publishable; what is missing is one cell in a mirror, and refusing a whole
+    deploy over it is the wrong trade for a corpus curated incrementally. What
+    makes it acceptable is the alternative: before REF013 the same gap was
+    reported nowhere at all, on a build that said 0 errors and 0 warnings.
+
+    The report is constructed rather than provoked because the claim is about
+    `ok`'s semantics, not about when the validator fires — that is
+    `test_referential.py`'s subject, where the rule lives.
+    """
+    gap = ValidationReport(
+        issues=[
+            ValidationIssue("REF013", Severity.WARNING, "mirrors/genes.tsv", "no uniprot accession")
+        ]
+    )
+
+    assert gap.warning_count == 1
+    assert gap.error_count == 0
+    assert gap.ok is True, "a gap must not block a deploy; it must be visible in the report"
+
+
 @pytest.mark.parametrize(
     ("setup", "expected_warnings", "causing_errors"),
     [

@@ -77,7 +77,14 @@ def gene_facts(corpus: Corpus) -> dict[str, GeneFacts]:
     functional_counts: Counter[str] = Counter(record.gene for record in corpus.functional)
 
     facts: dict[str, GeneFacts] = {}
-    for gene, assertions in by_gene.items():
+    # `sorted` rather than insertion order, which would follow `corpus.assertions`
+    # and so the filenames it was loaded from. That is stable, so this is not what
+    # keeps the build byte-identical today; it is what makes the ordering rule at
+    # the top of this module true of the returned dict as well, and what stops a
+    # consumer that iterates `facts.items()` into a JSON array having its gene
+    # index reordered by an unrelated file rename.
+    for gene in sorted(by_gene):
+        assertions = by_gene[gene]
         classifications = [assertion.classification for assertion in assertions]
 
         per_group: dict[LesionGroup, list[Classification]] = {}

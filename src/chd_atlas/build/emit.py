@@ -108,14 +108,48 @@ class Emitter:
     `_write` rejects the shapes it cannot serve.
 
     `_casefolded` maps the casefold of each written path back to the path itself,
-    so `_write` can refuse two paths a case-insensitive filesystem would merge.
-    It is maintained in step with `checksums`; code that inserts into `checksums`
-    directly rather than through `_write` defeats both guards.
+    so `_write` can refuse two paths that differ only in case. `__post_init__`
+    seeds it from whatever `checksums` was constructed with, so the guard covers
+    every path the emitter knows about rather than only the ones it wrote. It
+    was not always so: seeding it only in `_write` left a constructor-supplied
+    entry visible to the exact-duplicate guard and invisible to the case guard —
+    the direction that fails silently, on exactly the filesystems where the two
+    files become one.
+
+    Mutating `checksums` directly after construction still evades both guards.
+    That is not defended against, because a caller reaching into the mapping the
+    emitter uses to record what it wrote has already left the contract, and no
+    amount of checking in `_write` can make that safe.
+
+    `_sealed` records that the build has been published and no further write is
+    accepted; see `seal`.
+
+    Case is one of two axes on which a filesystem merges names; normalisation is
+    the other. macOS will treat NFC and NFD spellings of one name as one file, and
+    this does not check that. Unreachable through `paths.slug`, whose output is
+    pure ASCII, but `_write` accepts an arbitrary string.
     """
 
     root: Path
     checksums: dict[str, str] = field(default_factory=dict)
     _casefolded: dict[str, str] = field(default_factory=dict, repr=False)
+
+    _sealed: bool = field(default=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Seed the case index from whatever `checksums` was constructed with.
+
+        Raises on a supplied mapping that already holds the collision, rather
+        than leaving an emitter whose own invariant is false from the first line
+        and letting whichever later write happens to notice report it.
+        """
+        for relative in self.checksums:
+            clash = self._casefolded.setdefault(relative.casefold(), relative)
+            if clash != relative:
+                raise ValueError(
+                    f"{relative} and {clash} differ only in case; a case-insensitive "
+                    f"filesystem would keep only one of the two"
+                )
 
     def write_json(self, relative: str, payload: Json) -> None:
         self._write(relative, encode_json(payload))
@@ -123,7 +157,39 @@ class Emitter:
     def write_json_gz(self, relative: str, payload: Json) -> None:
         self._write(relative, compress(encode_json(payload)))
 
+    def seal(self) -> None:
+        """Refuse every write from here on, because the build has been published.
+
+        `checksums` is the manifest's entire `files` mapping, so once the
+        manifest is on disk a later write publishes a URL that appears in no
+        manifest and carries no checksum: invisible to any consumer that
+        verifies what it downloaded, and afterwards indistinguishable from a
+        file that was meant to be there. That the manifest must be written last
+        was documented and unenforced; the violation was reproduced by writing
+        one shard after it, which left the file served with nothing raised.
+
+        A guard on a bypassed gate, on the same footing as the duplicate-path
+        and case-fold checks below and `encode_json`'s `allow_nan=False`:
+        reaching it means the build was assembled in the wrong order, and a
+        wrongly assembled build must fail rather than publish. Nothing in an
+        ordinary build can trip it.
+
+        This module still knows nothing about manifests beyond the wording of
+        one error message. It is `build/manifest.py` that decides a build ends
+        when the manifest is written, and it calls this; the alternative —
+        testing `"manifest.json" in self.checksums` here — would put a
+        filename this module does not own into its logic.
+        """
+        self._sealed = True
+
     def _write(self, relative: str, raw: bytes) -> None:
+        # Before the path is even looked at: a write arriving here at all means
+        # the build was assembled in the wrong order, which is true whatever
+        # path it carries. See `seal`.
+        if self._sealed:
+            raise ValueError(
+                f"{relative} written after the manifest; it would be served with no checksum"
+            )
         segments = relative.split("/")
         # An absolute or dot-bearing path desynchronises the manifest from the
         # disk rather than failing: "/tmp/a.json" splits to a leading "" that
@@ -157,8 +223,15 @@ class Emitter:
         # `paths.slug` cannot prevent this. It is injective over strings, and
         # case is precisely what these filesystems discard: `HGNC:11604` is an
         # `HgncId` and `hgnc_11604` a `ContrastId`, and they slug to
-        # `HGNC_11604` and `hgnc_11604`. Nothing builds both today; the omics
-        # shards keyed by `ContrastId` are what would.
+        # `HGNC_11604` and `hgnc_11604`. Nothing builds that pair today.
+        #
+        # What does reach this guard is `build/omics.py`. Its shard paths are
+        # keyed on a mirror filename stem — a dataset accession rather than the
+        # `ContrastId` an earlier draft of this comment predicted — and `slug`
+        # leaves case alone, so two shards in one table directory whose names
+        # differ only in case are two files on the CI checkout and one on a
+        # curator's. A filename is not reviewed the way an identifier in a
+        # curated record is, which is what makes the pair reachable.
         if (clash := self._casefolded.get(relative.casefold())) is not None:
             raise ValueError(
                 f"{relative} and {clash} differ only in case; a case-insensitive "

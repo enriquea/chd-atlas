@@ -10,6 +10,7 @@ from chd_atlas.corpus import Corpus
 from chd_atlas.duplicates import duplicates
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import TABLE_SCHEMAS, mirror_paths, read_table
+from chd_atlas.vocab import EvidenceClass
 
 # Mirror tables whose rows point back at a curated dataset (and usually a contrast).
 _DATASET_LINKED_TABLES: Final[frozenset[str]] = frozenset(
@@ -17,9 +18,7 @@ _DATASET_LINKED_TABLES: Final[frozenset[str]] = frozenset(
 )
 
 
-def validate_references(
-    corpus: Corpus, known_genes: set[str] | None
-) -> list[ValidationIssue]:
+def validate_references(corpus: Corpus, known_genes: set[str] | None) -> list[ValidationIssue]:
     """Check that every reference in the corpus resolves to something real.
 
     ``known_genes`` comes from ``mirrors/genes.tsv``; it is passed in rather
@@ -192,9 +191,7 @@ def validate_mirror_references(root: Path, corpus: Corpus) -> list[ValidationIss
     """
     known_datasets = {dataset.id for dataset in corpus.datasets}
     known_contrasts = {
-        (dataset.id, contrast.id)
-        for dataset in corpus.datasets
-        for contrast in dataset.contrasts
+        (dataset.id, contrast.id) for dataset in corpus.datasets for contrast in dataset.contrasts
     }
     issues: list[ValidationIssue] = []
 
@@ -240,3 +237,67 @@ def validate_mirror_references(root: Path, corpus: Corpus) -> list[ValidationIss
                 )
 
     return issues
+
+
+def validate_ptm_evidence_is_reachable(root: Path, corpus: Corpus) -> list[ValidationIssue]:
+    """Warn when a gene asserts PTM evidence but has no accession to join it by.
+
+    `mirrors/phospho/` carries no gene column at all, so the only route from a
+    phospho row to a gene is `mirrors/genes.tsv:uniprot`, and that column is
+    nullable. A gene whose cell is blank has its PTM sites published in a shard
+    and summarised in no bundle: `"omics": {}` on the gene page while the browse
+    row beside it advertises `evidence_counts: {"ptm": 1}` from the assertion.
+    Reproduced end to end on a build reporting 0 errors and 0 warnings, which is
+    what makes it this project's characteristic failure rather than a nuisance.
+
+    Keyed on the curated side, not the mirror. Scanning the omics tables for
+    unmatched accessions would report every protein the atlas has no gene for,
+    which for a real proteomics release is most of them — the cascade REF000 and
+    SRC000 exist to prevent. An assertion that *claims* PTM evidence is a small,
+    curated set where every hit is actionable: the curator wrote the claim, so
+    the missing cell is theirs to fill.
+
+    Exact rather than heuristic. REF001 already guarantees the asserting gene is
+    in the registry, so a null `uniprot` is the only remaining hole.
+
+    A WARNING, not an error. The evidence is real and the assertion is sound; what
+    is missing is one mirror cell, and refusing to build the site over it would be
+    the wrong trade for a resource curated incrementally. `proteomics` is
+    deliberately not covered — its rows carry their own nullable `gene` column, so
+    an accession is one of two routes there rather than the only one.
+    """
+    asserted_ptm = sorted(
+        {
+            (str(assertion.gene), str(assertion.id))
+            for assertion in corpus.assertions
+            for evidence in assertion.evidence
+            if evidence.evidence_class is EvidenceClass.PTM
+        }
+    )
+    if not asserted_ptm:
+        return []
+
+    path = root / "mirrors" / "genes.tsv"
+    frame, _ = read_table(path, TABLE_SCHEMAS["genes"])
+    if frame is None or "hgnc_id" not in frame.columns or "uniprot" not in frame.columns:
+        # A registry that did not load is TBL008 and a missing column is TBL002.
+        # Reporting "no accession" for every gene on top of either is the cascade
+        # REF000 exists to avoid.
+        return []
+
+    accessions = {
+        str(row["hgnc_id"]): row["uniprot"]
+        for row in frame.select(["hgnc_id", "uniprot"]).to_dicts()
+        if row["hgnc_id"] is not None
+    }
+    return [
+        ValidationIssue(
+            "REF013",
+            Severity.WARNING,
+            str(path),
+            f"{gene} asserts PTM evidence in {assertion_id} but has no uniprot accession, "
+            f"so its phospho sites can reach no gene page",
+        )
+        for gene, assertion_id in asserted_ptm
+        if not accessions.get(gene)
+    ]

@@ -57,9 +57,11 @@ SAMPLE: Final = [
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
+        # One colon row, not one per CURIE grammar: the colon is the same
+        # character in `PMID:8988165` and `HP:0001631`, and rows for those two
+        # detected nothing this row does not. Per-grammar coverage is
+        # `SAMPLE`'s job, checked by the injectivity test below.
         ("HGNC:11604", "HGNC_11604"),
-        ("PMID:8988165", "PMID_8988165"),
-        ("HP:0001631", "HP_0001631"),
         # Zygosity.NOT_APPLICABLE is the value "n/a"; an unslugged slash would
         # silently become a directory separator in any path built from it.
         ("n/a", "n_a"),
