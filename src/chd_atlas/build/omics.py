@@ -244,9 +244,30 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, ModalitySum
 
         # Materialised once: `to_dicts()` builds a fresh list of fresh dicts on
         # every call, so asking again for the summary would copy every row in the
-        # atlas a second time. Nothing here mutates a row, so the shard and the
-        # summary can share them.
+        # atlas a second time. The dicts are this function's own, which is what
+        # makes the attribution below safe to write into them.
         rows = frame.to_dicts()
+
+        # Every row is attributed before any is published, and the shard and the
+        # summary then read the same answer. That is the whole point rather than
+        # a convenience: `count` is derived from this attribution, so a consumer
+        # filtering a shard on `genes` selects exactly the rows the bundle
+        # counted. They cannot drift, because there is only one computation.
+        #
+        # Issue #3 is what this closes. `phospho` has no gene column at all and
+        # `proteomics.gene` is nullable, so for those rows the only route to a
+        # gene was `mirrors/genes.tsv`, which the site does not publish — a
+        # consumer following `shards` from a bundle had no way to select the
+        # rows it had just been told the count of.
+        #
+        # A list, not a scalar: one accession can belong to several genes, which
+        # a histone cluster on P62805 does in practice (see A12c). Written for
+        # every modality rather than only the two that need it, so a consumer
+        # filters one way everywhere — and so that the guarantee above holds for
+        # `expression` and `profiles` too, where the row's own `gene` column and
+        # the attribution would otherwise be two things that could disagree.
+        for row in rows:
+            row["genes"] = list(_genes_for_row(row, _GENE_COLUMN[schema_name], index))
 
         # Through `slug` for the same reason a gene bundle path is: the stem is a
         # filename, and a space or a colon in one would be published as a URL
@@ -259,7 +280,13 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, ModalitySum
         emitter.write_json(relative, {"table": schema_name, "rows": rows})
 
         for row in rows:
-            for gene in _genes_for_row(row, _GENE_COLUMN[schema_name], index):
+            # The attribution written above, not a second call. Measured: calling
+            # `_genes_for_row` again here survives the whole suite, because today
+            # it returns the same answer — an equivalent mutant, in the sense
+            # A45 records, not a gap in the tests. What reading the row buys is
+            # that the shard and the count cannot come to disagree at all, rather
+            # than agreeing as long as one function stays deterministic.
+            for gene in row["genes"]:
                 modality = summaries.setdefault(gene, {}).setdefault(
                     schema_name, ModalitySummary(count=0, shards=[], top=[])
                 )

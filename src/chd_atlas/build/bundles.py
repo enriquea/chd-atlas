@@ -185,6 +185,15 @@ def build_genes(
                     group.value: classification.value
                     for group, classification in fact.confidence_by_lesion_group.items()
                 },
+                # Written immediately beside the map it qualifies, for the reason
+                # `_headline` exists: a confidence a reader can act on must never
+                # be published without the flag that says it is contested. At
+                # gene level one function guarantees that; here it is adjacency
+                # plus the test that reads both, because the two are different
+                # shapes and cannot share a writer.
+                "conflicting_lesion_groups": [
+                    group.value for group in fact.conflicting_lesion_groups
+                ],
                 "evidence_counts": {
                     evidence_class.value: count
                     for evidence_class, count in fact.evidence_counts.items()

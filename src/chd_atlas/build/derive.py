@@ -46,6 +46,19 @@ class GeneFacts:
     has_conflicting_evidence: bool
     lesion_groups: tuple[LesionGroup, ...]
     confidence_by_lesion_group: dict[LesionGroup, Classification]
+    # The same pairing as `headline_confidence`/`has_conflicting_evidence`, one
+    # level down. `confidence_by_lesion_group` collapses a group's
+    # classifications with `strongest()` on the same linear scale, so a group
+    # asserted both definitive and refuted publishes `definitive` — and the
+    # gene-level flag says only that *the gene* is contested, not which group is.
+    # Without this a consumer could not tell "contested, but not about septal
+    # defects" from "contested about septal defects", in the field the API doc
+    # points them at for a specific lesion. Issue #4.
+    #
+    # A list beside the map rather than a flag inside it: additive, so a consumer
+    # already reading `confidence_by_lesion_group` is unaffected, and it mirrors
+    # how `lesion_groups` already sits beside the same map.
+    conflicting_lesion_groups: tuple[LesionGroup, ...]
     evidence_counts: dict[EvidenceClass, int]
     assertion_count: int
     # Every functional record about the gene, not only those an assertion cites.
@@ -113,6 +126,14 @@ def gene_facts(corpus: Corpus) -> dict[str, GeneFacts]:
             confidence_by_lesion_group={
                 group: strongest(per_group[group]) for group in ordered_groups
             },
+            # Built from the same `ordered_groups` and the same `per_group`, so
+            # this can only ever name groups the map also carries, and in the
+            # same order. `has_conflicting_evidence` is the identical test the
+            # gene level uses, applied to one group's classifications rather
+            # than to every one of them.
+            conflicting_lesion_groups=tuple(
+                group for group in ordered_groups if has_conflicting_evidence(per_group[group])
+            ),
             evidence_counts={
                 item: counts[item] for item in sorted(counts, key=lambda item: item.value)
             },

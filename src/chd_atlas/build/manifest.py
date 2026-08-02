@@ -30,7 +30,19 @@ from typing import Final
 from chd_atlas.build.emit import Emitter
 from chd_atlas.corpus import Corpus
 
-SCHEMA_VERSION: Final = "1.0"
+# What a consumer can rely on across two builds, in the usual major.minor sense
+# — spelled out here because the field was published for three releases without
+# anyone saying what it meant.
+#
+# MINOR rises when a field is added and nothing is removed or repurposed: a
+# consumer written against the previous version keeps working, and one that
+# wants the new field can test for the version rather than for the key.
+# MAJOR rises when a field changes shape or leaves, which breaks such a reader.
+#
+# 1.1 added `genes` to every omics shard row (issue #3) and
+# `conflicting_lesion_groups` to every gene index row (issue #4). Both are
+# additive, so 1.0 readers are unaffected.
+SCHEMA_VERSION: Final = "1.1"
 
 
 def source_commit(root: Path) -> str | None:
