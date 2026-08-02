@@ -1,0 +1,77 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  # Manual runs let a deploy be retried without an empty commit — a re-run is
+  # safe because the build is byte-identical for a given commit, so redeploying
+  # publishes the same checksums rather than churning every consumer's cache.
+  workflow_dispatch:
+
+# The default token is read-only for contents; Pages deployment needs the rest.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. `cancel-in-progress: false` because cancelling a
+# half-finished Pages deployment can leave the site serving a partial upload.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # `uv sync --locked` installs from the committed uv.lock and fails if the
+      # lock has drifted from pyproject.toml, so a deploy uses the exact
+      # dependency set the repository pins. No `--extra dev`, unlike validate.yml:
+      # this job runs no tests, and `chd-atlas build` needs only the runtime
+      # dependencies. Verified locally against an isolated environment.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # This step is the gate as well as the build. `chd-atlas build` exits 1
+      # and writes nothing when validation reports errors, and exits 2 when
+      # `--root` is wrong, so a corpus that cannot validate never reaches the
+      # upload below and no partial `dist/` exists for it to pick up.
+      #
+      # `dist` is fresh on every run because `actions/checkout` starts from a
+      # clean workspace and nothing caches it. That is load-bearing rather than
+      # incidental: `build_site` writes files and never deletes, so building on
+      # top of a previous `dist/` would keep serving a gene retired from
+      # curation at the URL it always had, absent from the new manifest. See
+      # `tests/test_build_is_reproducible.py`, which pins that behaviour and
+      # makes publishing a fresh artifact this workflow's responsibility.
+      - name: Build the published data API
+        run: uv run chd-atlas build --root . --out dist
+
+      - uses: actions/configure-pages@v5
+
+      # Uploads `dist` as a self-contained artifact that `deploy-pages` then
+      # publishes wholesale, so the live site is exactly one build's output and
+      # never an accumulation of several. Jekyll does not run on an
+      # Actions-deployed artifact, so the files are served as written — which
+      # matters for `search/index.json.gz`, whose handling is documented in
+      # `src/chd_atlas/build/emit.py`: Pages serves a `.json.gz` as
+      # `application/gzip` with no `Content-Encoding`, so a browser receives raw
+      # compressed bytes and must decompress them itself.
+      - name: Upload the built site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
