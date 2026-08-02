@@ -140,10 +140,55 @@ One gene's whole detail page, in one fetch.
 - **`variants` are embedded; omics rows are linked.** That asymmetry is a
   curation policy, not a property of the data — this atlas curates variants by
   hand, so the count per gene is bounded by effort. Omics tables are not, so a
-  bundle carries per-modality summaries with `shards` to fetch.
+  bundle carries per-modality summaries with `shards` to fetch. See the omics
+  section below for the shape of those summaries, and for a limitation on
+  selecting a gene's rows out of a `phospho` shard.
 - `publications` lists the PMIDs the gene's assertion evidence cites, in lexical
   order. It does not include PMIDs cited only by its functional records.
 - `assertions` and `functional` are ordered by id.
+
+## `omics/<modality>/<accession>.json`
+
+A gene bundle's `omics` maps a modality — `expression`, `profiles`, `proteomics`
+or `phospho` — to a summary of that gene's rows:
+
+```json
+{
+  "omics": {
+    "expression": {
+      "count": 412,
+      "shards": ["omics/expression/GSE1000.json"],
+      "top": [ { "dataset": "GSE1000", "gene": "HGNC:11604", "log2fc": 2.1, "fdr": 0.001 } ]
+    }
+  }
+}
+```
+
+- `count` is every row about the gene, across every shard listed.
+- `shards` are the files holding them. Each shard is
+  `{"table": "<modality>", "rows": [ … ]}` — the mirror rows verbatim.
+- **`top` is capped at 25 rows.** It is a preview, ranked by significance, not a
+  page of results. `count` is frequently larger, and the cap is not carried in
+  the payload, so do not infer completeness from `len(top)`.
+
+**A limitation to know before you build against this.** For `expression` and
+`profiles`, a shard row carries its own `gene`, so filtering a fetched shard down
+to one gene works. For `phospho` it does not: those rows have **no gene column at
+all**, and the only mapping from their `protein` accession to a gene lives in
+`mirrors/genes.tsv`, which this site does not publish. `proteomics` sits in
+between — its `gene` column is nullable, and rows with it empty were joined by
+accession at build time.
+
+So for `phospho`, and for accession-joined `proteomics` rows, there is currently
+no reliable way to select the rows `count` counted out of the shard it links.
+Tracked in [issue #3](https://github.com/enriquea/chd-atlas/issues/3); the fix
+will either resolve the gene onto shard rows or publish the accession map, and
+either way this section will change. Until then, treat `top` as the addressable
+part for those two modalities.
+
+`mirrors/ptm_sites.tsv` is a validated mirror table that this site does not
+publish at all. It is reference data about modification sites rather than
+evidence about a gene, and no bundle links it.
 
 ## `variants/index.json` and `variants/<chrom>.json.gz`
 
