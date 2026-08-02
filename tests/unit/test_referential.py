@@ -3,6 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from chd_atlas.corpus import Corpus
+from chd_atlas.issues import Severity
 from chd_atlas.models.assertion import (
     Evidence,
     GeneDiseaseAssertion,
@@ -11,8 +12,10 @@ from chd_atlas.models.assertion import (
 from chd_atlas.models.dataset import Dataset
 from chd_atlas.models.functional import FunctionalEvidence
 from chd_atlas.models.literature import FeaturedManuscript, PhenotypeTerm, Publication
+from chd_atlas.tables import TABLE_SCHEMAS
 from chd_atlas.validate.referential import (
     validate_mirror_references,
+    validate_ptm_evidence_is_reachable,
     validate_references,
 )
 
@@ -92,9 +95,7 @@ def test_reports_evidence_citing_an_unknown_publication() -> None:
 
 
 def test_reports_an_unresolvable_functional_evidence_reference() -> None:
-    evidence = _evidence(
-        evidence_class="functional_model", functional_evidence="CHDA:FUN:0000009"
-    )
+    evidence = _evidence(evidence_class="functional_model", functional_evidence="CHDA:FUN:0000009")
     corpus = _corpus(assertions=(_assertion(evidence=[evidence]),))
     issues = validate_references(corpus, known_genes={"HGNC:11604"})
     assert [i.code for i in issues] == ["REF003"]
@@ -114,12 +115,8 @@ def test_resolves_a_present_functional_evidence_reference() -> None:
             "publication": "PMID:8988165",
         }
     )
-    evidence = _evidence(
-        evidence_class="functional_model", functional_evidence="CHDA:FUN:0000009"
-    )
-    corpus = _corpus(
-        assertions=(_assertion(evidence=[evidence]),), functional=(functional,)
-    )
+    evidence = _evidence(evidence_class="functional_model", functional_evidence="CHDA:FUN:0000009")
+    corpus = _corpus(assertions=(_assertion(evidence=[evidence]),), functional=(functional,))
     assert validate_references(corpus, known_genes={"HGNC:11604"}) == []
 
 
@@ -137,12 +134,8 @@ def test_reports_a_functional_record_about_a_different_gene() -> None:
             "publication": "PMID:8988165",
         }
     )
-    evidence = _evidence(
-        evidence_class="functional_model", functional_evidence="CHDA:FUN:0000009"
-    )
-    corpus = _corpus(
-        assertions=(_assertion(evidence=[evidence]),), functional=(functional,)
-    )
+    evidence = _evidence(evidence_class="functional_model", functional_evidence="CHDA:FUN:0000009")
+    corpus = _corpus(assertions=(_assertion(evidence=[evidence]),), functional=(functional,))
 
     issues = validate_references(corpus, known_genes={"HGNC:11604", "HGNC:4173"})
 
@@ -172,9 +165,7 @@ def test_reports_a_functional_record_with_an_unknown_gene_and_publication() -> N
 
 
 def test_reports_a_featured_manuscript_citing_an_unknown_publication() -> None:
-    featured = FeaturedManuscript(
-        publication="PMID:999", order=1, blurb="b", topic="genomics"
-    )
+    featured = FeaturedManuscript(publication="PMID:999", order=1, blurb="b", topic="genomics")
     issues = validate_references(_corpus(featured=(featured,)), known_genes={"HGNC:11604"})
     assert [i.code for i in issues] == ["REF002"]
 
@@ -271,9 +262,7 @@ def test_an_empty_phenotype_register_reports_nothing_per_record() -> None:
 
 def test_reports_a_cardiac_lesion_listed_as_an_extracardiac_feature() -> None:
     corpus = _corpus(
-        assertions=(
-            _assertion(syndromic="syndromic", extracardiac_features=["HP:0001631"]),
-        ),
+        assertions=(_assertion(syndromic="syndromic", extracardiac_features=["HP:0001631"]),),
         phenotypes=(_septal_term(),),
     )
 
@@ -357,14 +346,11 @@ contrasts:
 """
 
 EXPRESSION_TSV_HEADER = (
-    "dataset\tcontrast\tgene\tlog2fc\tpvalue\tfdr\tdirection\t"
-    "n_case\tn_control\ttissue\tstage\n"
+    "dataset\tcontrast\tgene\tlog2fc\tpvalue\tfdr\tdirection\tn_case\tn_control\ttissue\tstage\n"
 )
 
 # profiles is the one dataset-linked schema with no contrast column.
-PROFILES_TSV_HEADER = (
-    "dataset\tgene\ttissue\tstage\tmedian_abundance\tunit\tq25\tq75\tn_samples\n"
-)
+PROFILES_TSV_HEADER = "dataset\tgene\ttissue\tstage\tmedian_abundance\tunit\tq25\tq75\tn_samples\n"
 VALID_EXPRESSION_ROW = (
     "PXD012345\ttof_vs_control\tHGNC:11604\t1.2\t0.001\t0.01\tup\t10\t10\tRV\tinfant\n"
 )
@@ -385,9 +371,7 @@ def _mirror_repo(tmp_path: Path, row: str) -> Path:
         "    study_type: case_control\n"
     )
     (tmp_path / "mirrors" / "expression").mkdir(parents=True)
-    (tmp_path / "mirrors" / "expression" / "PXD012345.tsv").write_text(
-        EXPRESSION_TSV_HEADER + row
-    )
+    (tmp_path / "mirrors" / "expression" / "PXD012345.tsv").write_text(EXPRESSION_TSV_HEADER + row)
     load_curation(tmp_path)
     return tmp_path
 
@@ -396,9 +380,7 @@ def _profiles_repo(tmp_path: Path, row: str) -> Path:
     """A repository whose expression shard is clean, so only profiles can fail."""
     root = _mirror_repo(tmp_path, VALID_EXPRESSION_ROW)
     (root / "mirrors" / "profiles").mkdir(parents=True)
-    (root / "mirrors" / "profiles" / "PXD012345.tsv").write_text(
-        PROFILES_TSV_HEADER + row
-    )
+    (root / "mirrors" / "profiles" / "PXD012345.tsv").write_text(PROFILES_TSV_HEADER + row)
     return root
 
 
@@ -446,9 +428,7 @@ def test_a_profiles_shard_is_checked_although_it_has_no_contrast_column(
     """profiles rows are two columns wide here; indexing row[1] would raise."""
     from chd_atlas.corpus import load_curation
 
-    root = _profiles_repo(
-        tmp_path, "PXD012345\tHGNC:11604\tRV\tinfant\t12.5\ttpm\t8.0\t20.0\t24\n"
-    )
+    root = _profiles_repo(tmp_path, "PXD012345\tHGNC:11604\tRV\tinfant\t12.5\ttpm\t8.0\t20.0\t24\n")
     corpus, _ = load_curation(root)
 
     assert validate_mirror_references(root, corpus) == []
@@ -457,9 +437,7 @@ def test_a_profiles_shard_is_checked_although_it_has_no_contrast_column(
 def test_reports_a_profiles_row_referencing_an_unknown_dataset(tmp_path: Path) -> None:
     from chd_atlas.corpus import load_curation
 
-    root = _profiles_repo(
-        tmp_path, "PXD999999\tHGNC:11604\tRV\tinfant\t12.5\ttpm\t8.0\t20.0\t24\n"
-    )
+    root = _profiles_repo(tmp_path, "PXD999999\tHGNC:11604\tRV\tinfant\t12.5\ttpm\t8.0\t20.0\t24\n")
     corpus, _ = load_curation(root)
 
     issues = validate_mirror_references(root, corpus)
@@ -492,3 +470,74 @@ def test_a_null_contrast_cell_is_not_reported_as_a_missing_contrast(tmp_path: Pa
     corpus, _ = load_curation(root)
 
     assert validate_mirror_references(root, corpus) == []
+
+
+def _registry(root: Path, uniprot: str) -> None:
+    """A one-row `mirrors/genes.tsv` for HGNC:11604 with the given accession."""
+    columns = [column.name for column in TABLE_SCHEMAS["genes"].columns]
+    cells = dict.fromkeys(columns, "")
+    cells["hgnc_id"] = "HGNC:11604"
+    cells["symbol"] = "TBX5"
+    cells["name"] = "T-box transcription factor 5"
+    cells["uniprot"] = uniprot
+    mirrors = root / "mirrors"
+    mirrors.mkdir(parents=True, exist_ok=True)
+    (mirrors / "genes.tsv").write_text(
+        "\t".join(columns) + "\n" + "\t".join(cells[c] for c in columns) + "\n"
+    )
+
+
+def test_ptm_evidence_with_no_accession_to_join_by_is_reported(tmp_path: Path) -> None:
+    """The only route from a phospho row to a gene is one nullable mirror cell.
+
+    `mirrors/phospho/` carries no gene column at all, so `genes.tsv:uniprot` is
+    the whole join. Blank, and the gene's PTM sites are published in a shard and
+    summarised in no bundle: `"omics": {}` on the page while the browse row
+    beside it advertises the PTM evidence the assertion claims. Reproduced end to
+    end on a build reporting 0 errors and 0 warnings before this rule existed,
+    which is what makes it the project's characteristic failure rather than an
+    inconvenience.
+
+    Both rows matter. With the accession present there must be no issue at all —
+    otherwise the rule fires on every correctly curated gene and a curator learns
+    to ignore it, which is worse than not reporting.
+    """
+    ptm = _evidence(evidence_class="ptm", dataset="PXD012345")
+    corpus = _corpus(assertions=(_assertion(evidence=[ptm]),))
+
+    _registry(tmp_path, uniprot="")
+    issues = validate_ptm_evidence_is_reachable(tmp_path, corpus)
+    assert [issue.code for issue in issues] == ["REF013"]
+    assert issues[0].severity is Severity.WARNING
+    # The gene and the assertion, because the curator has to find both to fix it.
+    assert "HGNC:11604" in issues[0].message
+    assert "CHDA:AST:0000001" in issues[0].message
+
+    _registry(tmp_path, uniprot="Q99593")
+    assert validate_ptm_evidence_is_reachable(tmp_path, corpus) == []
+
+
+def test_a_gene_asserting_no_ptm_evidence_is_never_asked_for_an_accession(
+    tmp_path: Path,
+) -> None:
+    """`uniprot` is nullable because most genes never need it.
+
+    Only PTM evidence depends on it: `proteomics` rows carry their own `gene`
+    column, so an accession is one of two routes there rather than the only one,
+    and `expression`/`profiles` never use it. A rule that asked every gene for an
+    accession would report most of the registry, which is the cascade REF000 and
+    SRC000 exist to prevent.
+    """
+    _registry(tmp_path, uniprot="")
+
+    others = [
+        _evidence(evidence_class="genetic_case"),
+        # Dataset-backed and accession-adjacent, and still not covered: a
+        # `proteomics` row carries its own `gene` column, so an accession is one
+        # of two routes there rather than the only one.
+        _evidence(evidence_class="proteomic", dataset="PXD012345"),
+        _evidence(evidence_class="expression", dataset="GSE1000"),
+    ]
+    for evidence in others:
+        corpus = _corpus(assertions=(_assertion(evidence=[evidence]),))
+        assert validate_ptm_evidence_is_reachable(tmp_path, corpus) == [], evidence.evidence_class

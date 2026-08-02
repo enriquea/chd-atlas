@@ -22,7 +22,11 @@ from chd_atlas.validate.ontology import (
     validate_labels,
     validate_terms,
 )
-from chd_atlas.validate.referential import validate_mirror_references, validate_references
+from chd_atlas.validate.referential import (
+    validate_mirror_references,
+    validate_ptm_evidence_is_reachable,
+    validate_references,
+)
 from chd_atlas.validate.sort_order import validate_sort_order
 from chd_atlas.validate.sources import load_sources, validate_source_references
 
@@ -52,16 +56,27 @@ class ValidationReport:
     @property
     def ok(self) -> bool:
         # Warnings are deliberately ignored, so a warnings-only report exits 0.
-        # That is only sound because of an invariant this runner must keep:
-        # every warning it emits (REF000, SRC000, ONT000) means "a check was
-        # skipped", and each is emitted in the same branch as the error that
-        # caused the skip — a failed corpus load, or a failed source registry
-        # load — so a skip can never be the only thing wrong. A validator that
-        # emitted a warning without an accompanying error would break this:
-        # CI would report green on a repository where checks were silently
-        # skipped. Such a warning must either be raised to an error or `ok`
-        # must stop ignoring warnings.
-        # Pinned by test_every_skip_warning_arrives_with_the_error_that_caused_it.
+        # Two kinds of warning exist, and the reasoning differs for each.
+        #
+        # SKIP warnings (REF000, SRC000, ONT000) mean "a check did not run".
+        # Ignoring one would let CI go green on a repository whose checks were
+        # silently skipped, so each is emitted in the same branch as the error
+        # that caused the skip — a failed corpus load, or a failed source
+        # registry load — and a skip can therefore never be the only thing
+        # wrong. A skip warning that could arrive alone must be raised to an
+        # error. Pinned by
+        # test_every_skip_warning_arrives_with_the_error_that_caused_it.
+        #
+        # GAP warnings (REF013) mean "a check ran and found curated data that
+        # will not reach a reader". They arrive alone, deliberately: the record
+        # is sound and the site is publishable, and what is missing is one
+        # mirror cell. Blocking a whole deploy on that would be the wrong trade
+        # for a resource curated incrementally. This is a real weakening — the
+        # site can publish with a known gap — and it is accepted because the
+        # alternative before REF013 existed was the same gap reported nowhere at
+        # all. The safety they rest on is different from the skip warnings': the
+        # check ran, so the report names the gene, the assertion and the file.
+        # Pinned by test_a_gap_warning_is_reported_without_blocking_the_build.
         return self.error_count == 0
 
     def render(self) -> str:
@@ -119,10 +134,7 @@ def _relative_to_root(issues: list[ValidationIssue], root: Path) -> list[Validat
     absolute, and silently void the guarantee this function exists to provide.
     """
     prefix = f"{root}{os.sep}"
-    return [
-        replace(issue, location=issue.location.removeprefix(prefix))
-        for issue in issues
-    ]
+    return [replace(issue, location=issue.location.removeprefix(prefix)) for issue in issues]
 
 
 def validate_repository(root: Path) -> ValidationReport:
@@ -171,8 +183,7 @@ def validate_repository(root: Path) -> ValidationReport:
                     "TBL008",
                     Severity.ERROR,
                     str(root / "mirrors" / "genes.tsv"),
-                    "gene registry is missing or unreadable, so gene references "
-                    "cannot be checked",
+                    "gene registry is missing or unreadable, so gene references cannot be checked",
                 )
             )
         # Without the phenotype vocabulary, REF007/REF009/REF010 silently no-op:
@@ -201,6 +212,10 @@ def validate_repository(root: Path) -> ValidationReport:
             )
         issues.extend(validate_references(corpus, known_genes=known_genes))
         issues.extend(validate_mirror_references(root, corpus))
+        # Inside the same branch as the two above, and for the same reason: it
+        # reads the gene registry, so on a corpus that failed to load it would
+        # report a missing accession for every gene at once.
+        issues.extend(validate_ptm_evidence_is_reachable(root, corpus))
 
     # Same reasoning as the referential skip above: on a failed registry load
     # `registry` is empty, so every source every mirror table uses would report
