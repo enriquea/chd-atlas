@@ -44,7 +44,16 @@ def validate_sort_order(path: Path, schema: TableSchema) -> list[ValidationIssue
 
 
 def _precedes(left: tuple[object, ...], right: tuple[object, ...]) -> bool:
-    """True when ``left`` sorts before ``right``, treating null as smallest."""
+    """True when ``left`` sorts before ``right``, treating null as smallest.
+
+    `build/omics.py`'s `_rank_key` implements the same total order for the same
+    reason and is deliberately not shared with this: it must never raise, since
+    a ranking that dies mid-build publishes nothing, while this must raise on a
+    column pair it cannot compare, because a sort order it cannot verify is one
+    it must not call clean. The two must agree on the null rule regardless, so a
+    reader changing either should read the other — noted here as well as there,
+    since a change is as likely to start from this side.
+    """
     for a, b in zip(left, right, strict=True):
         if a == b:
             continue

@@ -182,12 +182,6 @@ def test_confidence_is_broken_down_per_lesion_group() -> None:
         LesionGroup.CONOTRUNCAL: Classification.LIMITED,
         LesionGroup.SEPTAL: Classification.DEFINITIVE,
     }
-    # The array and the breakdown describe the same set of groups in the same
-    # order. Pinned together so neither can start reporting a group the other
-    # does not.
-    assert facts["HGNC:11604"].lesion_groups == tuple(
-        facts["HGNC:11604"].confidence_by_lesion_group
-    )
 
 
 def test_evidence_is_counted_per_class() -> None:

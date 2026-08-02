@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.omics import TOP_N, build_omics
+from chd_atlas.build.omics import TOP_N, _accession_index, build_omics
 
 EXPRESSION_HEADER = (
     "dataset\tcontrast\tgene\tlog2fc\tpvalue\tfdr\tdirection\tn_case\tn_control\ttissue\tstage\n"
@@ -597,3 +597,50 @@ def test_an_unreadable_mirror_does_not_stop_the_others(tmp_path: Path) -> None:
 
     assert list(emitter.checksums) == ["omics/expression/PXD000002.json"]
     assert summaries["HGNC:11604"]["expression"]["count"] == 1
+
+
+def test_the_accession_index_survives_a_repeated_pair_and_a_blank_cell(tmp_path: Path) -> None:
+    """Two registry states nothing forbids, each of which corrupts the join quietly.
+
+    `mirrors/genes.tsv` has no uniqueness rule over `(hgnc_id, uniprot)`, so a
+    generated registry may list the same pair twice — a merge of two upstream
+    releases, or a gene reported under two transcripts. Without the
+    duplicate check in `_record`, that gene is filed twice under one accession
+    and every phospho row on it counts double, so a bundle advertises twice the
+    evidence the shard holds.
+
+    `uniprot` is nullable, and `str(None)` is the string "None". Without the null
+    skip, every gene with a blank cell is filed under one fictional accession
+    "None" — so a row whose protein failed to parse into anything else joins to
+    all of them at once, which is amendment A12(b) in a second place.
+
+    Read through `build_omics` rather than against the index directly, because
+    the count in the summary is what a reader sees and the doubling is only
+    visible there.
+    """
+    _registry(
+        tmp_path,
+        _gene_row("HGNC:11604", "TBX5", "Q99593")
+        + _gene_row("HGNC:11604", "TBX5", "Q99593")
+        + _gene_row("HGNC:4173", "GATA4", ""),
+    )
+    _table(
+        tmp_path,
+        "phospho",
+        "PXD012345.tsv",
+        PHOSPHO_HEADER + _phospho_row("Q99593", 100) + _phospho_row("Q99593", 200),
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(tmp_path, emitter)
+
+    assert summaries["HGNC:11604"]["phospho"]["count"] == 2, "the repeated pair doubled the count"
+
+    # The blank cell is checked against the index rather than the summary: with
+    # the null skip removed the gene is filed under the literal key "None", and
+    # nothing surfaces until a row's accession canonicalises to that same string
+    # — at which point every gene with a blank cell joins it at once.
+    index = _accession_index(tmp_path)
+    assert "None" not in index.literal
+    assert "None" not in index.canonical
+    assert index.literal["Q99593"] == ("HGNC:11604",)
