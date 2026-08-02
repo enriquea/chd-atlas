@@ -73,9 +73,7 @@ def read_table(
     try:
         present = pl.read_csv(path, separator="\t", n_rows=0).columns
         overrides = {
-            name: dtype
-            for name, dtype in schema.polars_overrides().items()
-            if name in present
+            name: dtype for name, dtype in schema.polars_overrides().items() if name in present
         }
         frame = pl.read_csv(
             path,
@@ -85,9 +83,7 @@ def read_table(
             infer_schema_length=0 if not overrides else None,
         )
     except (PolarsError, OSError) as exc:
-        issue = ValidationIssue(
-            "TBL000", Severity.ERROR, str(path), f"could not read TSV: {exc}"
-        )
+        issue = ValidationIssue("TBL000", Severity.ERROR, str(path), f"could not read TSV: {exc}")
         return None, [issue]
     return frame, []
 
@@ -239,9 +235,7 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
             else:
                 seen.add(key)
         issues.extend(
-            _row_issues(
-                "TBL007", path, offenders_dupe, f"duplicate {list(schema.sort_key)} key"
-            )
+            _row_issues("TBL007", path, offenders_dupe, f"duplicate {list(schema.sort_key)} key")
         )
 
     return issues
@@ -254,9 +248,7 @@ def _null_row_indices(series: pl.Series) -> list[int]:
 
 def _string_values(series: pl.Series) -> list[tuple[int, str]]:
     return [
-        (index + 2, str(value))
-        for index, value in enumerate(series.to_list())
-        if value is not None
+        (index + 2, str(value)) for index, value in enumerate(series.to_list()) if value is not None
     ]
 
 
@@ -302,16 +294,25 @@ PTM_SITES = TableSchema(
     sort_key=("protein", "position", "mod_type"),
 )
 
+# The chromosomes, in karyotype order. Ordered because the published variant
+# index drives a chromosome picker, and sorting shard names as strings gives
+# 1, 10, 11, … 2, 20 with MT ahead of X — jumbled in both the numeric and the
+# non-numeric part.
+#
+# It lives here, beside the schema, rather than in `build/variants.py` where it
+# began. The `allowed` set below is derived from it, so the vocabulary and the
+# order cannot drift — which retired the test that used to check they had not.
+# It also lets `unexpected_mirror_entries` report a shard named for no
+# chromosome without a validator importing from the build layer.
+CHROMOSOMES: Final[tuple[str, ...]] = (*(str(n) for n in range(1, 23)), "X", "Y", "MT")
+_CHROMOSOME_SET: Final[frozenset[str]] = frozenset(CHROMOSOMES)
+
 VARIANTS = TableSchema(
     name="variants",
     columns=(
         Column("vrs_id", pl.String),
         Column("assembly", pl.String, allowed=frozenset({"GRCh38"})),
-        Column(
-            "chrom",
-            pl.String,
-            allowed=frozenset({str(n) for n in range(1, 23)} | {"X", "Y", "MT"}),
-        ),
+        Column("chrom", pl.String, allowed=_CHROMOSOME_SET),
         Column("pos", pl.Int64, minimum=1),
         Column("ref", pl.String),
         Column("alt", pl.String),
@@ -493,6 +494,25 @@ def unexpected_mirror_entries(root: Path) -> list[ValidationIssue]:
                             f"shard files must end .tsv; '{shard.name}' does not",
                         )
                     )
+                # A variant shard's filename is its whole addressing scheme: it
+                # names the published `variants/<chrom>.json.gz` and a consumer
+                # turns a chromosome into a URL by that rule alone. Nothing else
+                # checked it — `validate_table` checks the `chrom` column, and
+                # the sweep above checks only the extension — so `chr12.tsv`
+                # validated at 0 errors and then raised inside the build, giving
+                # a curator a traceback where a report belongs. The vocabulary is
+                # the schema's own, derived from `CHROMOSOMES` above, so this
+                # cannot disagree with the column it addresses.
+                elif entry.name == SHARDED_TABLES["variants"] and shard.stem not in _CHROMOSOME_SET:
+                    issues.append(
+                        ValidationIssue(
+                            "TBL011",
+                            Severity.ERROR,
+                            str(shard),
+                            f"a variant shard is named for the chromosome it holds, and "
+                            f"'{shard.stem}' is not one of {list(CHROMOSOMES)}",
+                        )
+                    )
         # A shard directory replaced by a regular file is checked before the
         # unexpected-file case: the two name sets are disjoint, so testing
         # membership of `expected_files` first would report `mirrors/variants`
@@ -512,8 +532,7 @@ def unexpected_mirror_entries(root: Path) -> list[ValidationIssue]:
                     "TBL009",
                     Severity.ERROR,
                     str(entry),
-                    f"unexpected file under mirrors/; expected one of "
-                    f"{sorted(expected_files)}",
+                    f"unexpected file under mirrors/; expected one of {sorted(expected_files)}",
                 )
             )
     return issues
