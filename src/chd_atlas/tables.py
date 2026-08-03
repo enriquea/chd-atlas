@@ -336,6 +336,55 @@ CLINGEN_VALIDITY = TableSchema(
     sort_key=("gene", "disease", "moi"),
 )
 
+# GenCC's own vocabulary (the harmonised `classification_title` column of its
+# submissions-export TSV), stored verbatim -- same rationale as
+# `_CLINGEN_CLASSIFICATIONS`. Measured 2026-08-03 against the real export
+# (30,410 rows): {'Definitive', 'Disputed Evidence', 'Limited', 'Moderate',
+# 'No Known Disease Relationship', 'Refuted Evidence', 'Strong', 'Supportive'}.
+# 'Supportive' is a real GenCC term, not a plan guess -- it is a mapping
+# exception for submitters (e.g. Orphanet) that do not grade evidence on
+# ClinGen's ladder; `vocab.GENCC_CLASSIFICATIONS` maps it to `None`.
+_GENCC_CLASSIFICATIONS: Final[frozenset[str]] = frozenset(
+    {
+        "Definitive",
+        "Strong",
+        "Moderate",
+        "Limited",
+        "Disputed Evidence",
+        "Refuted Evidence",
+        "No Known Disease Relationship",
+        "Supportive",
+    }
+)
+
+GENCC_SUBMISSIONS = TableSchema(
+    name="gencc_submissions",
+    columns=(
+        Column("gene", pl.String, pattern=HGNC_PATTERN),
+        Column("gene_symbol", pl.String),
+        Column("disease", pl.String, pattern=MONDO_PATTERN),
+        Column("disease_label", pl.String),
+        Column("moi", pl.String),
+        Column("classification", pl.String, allowed=_GENCC_CLASSIFICATIONS),
+        Column("submitter", pl.String),
+        Column("submitted_on", pl.String, nullable=True),
+        Column("report_url", pl.String, nullable=True),
+    ),
+    # The submitter, not just the triple -- see `scripts/convert_gencc.py` for
+    # why: GenCC publishes every submitter's verdict with none adjudicated, so
+    # two submitters disagreeing about one gene-disease-moi is the normal case.
+    #
+    # Measured 2026-08-03 against the real export (30,410 rows, ?format=new):
+    # (gene, disease, moi, submitter) collides on 133 groups (134 extra rows)
+    # even after adding submitter -- almost all are the same submitter
+    # resubmitting the same gene/disease/moi under a new `sgc_id` without
+    # superseding the old one (GenCC's own data-quality artifact, not
+    # something this atlas introduces). The converter resolves each collision
+    # to the most recently submitted row before this file is written, so the
+    # committed mirror is unique on this key at 30,276/30,276.
+    sort_key=("gene", "disease", "moi", "submitter"),
+)
+
 # The chromosomes, in karyotype order. Ordered because the published variant
 # index drives a chromosome picker, and sorting shard names as strings gives
 # 1, 10, 11, … 2, 20 with MT ahead of X — jumbled in both the numeric and the
@@ -472,6 +521,7 @@ TABLE_SCHEMAS: Final[dict[str, TableSchema]] = {
         PROTEOMICS,
         PHOSPHO,
         CLINGEN_VALIDITY,
+        GENCC_SUBMISSIONS,
     )
 }
 
@@ -487,6 +537,7 @@ FLAT_TABLES: Final[dict[str, str]] = {
     "genes": "genes.tsv",
     "ptm_sites": "ptm_sites.tsv",
     "clingen_validity": "clingen_gene_validity.tsv",
+    "gencc_submissions": "gencc_submissions.tsv",
 }
 
 

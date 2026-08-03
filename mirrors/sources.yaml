@@ -14,6 +14,24 @@ sources:
     # -- https://clinicalgenome.org/docs/terms-of-use/
     licence: CC0-1.0
     redistribution: permitted
+  - id: gencc
+    name: Gene Curation Coalition (GenCC) submissions export
+    # The export carries no release/version tag of its own -- `sgc_id` and
+    # `version_number` identify one submission, not one release of the file.
+    # `retrieved_on` is the only version identifier this authority offers, the
+    # same situation as `clingen` above.
+    version: "retrieved 2026-08-03"
+    retrieved_on: 2026-08-03
+    url: https://search.thegencc.org/download
+    # "The GenCC data are available free of restriction under a CC0 1.0
+    # Universal (CC0 1.0) Public Domain Dedication." GenCC additionally
+    # "requests that you give attribution to GenCC and the contributing
+    # sources whenever possible and appropriate" -- a request, not a licence
+    # condition: CC0 waives all rights, so nothing here is legally required.
+    # Same classification as the `clingen` and `hgnc` entries below, both
+    # also CC0. -- https://thegencc.org/terms
+    licence: CC0-1.0
+    redistribution: permitted
   - id: hgnc
     name: HUGO Gene Nomenclature Committee
     # The REST service has no release identifier; `https://rest.genenames.org/info`

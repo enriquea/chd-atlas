@@ -8,6 +8,7 @@ import pytest
 from chd_atlas.tables import (
     CHROMOSOMES,
     CLINGEN_VALIDITY,
+    GENCC_SUBMISSIONS,
     TABLE_SCHEMAS,
     Column,
     TableSchema,
@@ -109,6 +110,7 @@ def test_registry_covers_every_mirror_table() -> None:
         "proteomics",
         "phospho",
         "clingen_validity",
+        "gencc_submissions",
     }
 
 
@@ -129,6 +131,24 @@ def test_clingen_validity_is_keyed_on_the_triple_not_the_pair() -> None:
     # crosswalk between framework versions, so a classification without the
     # framework that produced it is an unqualified claim.
     assert sop.nullable is False
+
+
+def test_gencc_keys_on_the_submitter_because_it_publishes_no_verdict() -> None:
+    """GenCC aggregates; it does not adjudicate.
+
+    Its own terms: "The GenCC does not independently verify the submitted
+    information." Two submitters may disagree about the same gene-disease pair
+    and GenCC publishes both. Omitting `submitter` from the key would make those
+    rows compare equal and silently keep whichever sorted last.
+
+    `Supportive` is in the allowed set but is NOT a rung on the evidence ladder:
+    it is a mapping-exception bucket for submitters that do not grade evidence.
+    `vocab.GENCC_CLASSIFICATIONS` (Task 5) maps it to None.
+    """
+    assert GENCC_SUBMISSIONS.sort_key == ("gene", "disease", "moi", "submitter")
+    classification = next(c for c in GENCC_SUBMISSIONS.columns if c.name == "classification")
+    assert classification.allowed is not None
+    assert "Supportive" in classification.allowed
 
 
 def test_phospho_protein_normalized_is_mandatory_and_non_nullable() -> None:
