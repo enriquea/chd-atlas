@@ -26,6 +26,7 @@ from chd_atlas.fs import list_dir
 from chd_atlas.identifiers import (
     HGNC_PATTERN,
     MODIFICATION_PATTERN,
+    MONDO_PATTERN,
     SEQUENCE_ONTOLOGY_PATTERN,
     UNIPROT_PATTERN,
 )
@@ -294,6 +295,47 @@ PTM_SITES = TableSchema(
     sort_key=("protein", "position", "mod_type"),
 )
 
+# ClinGen's own vocabulary, stored verbatim. Mapping onto `Classification`
+# happens once in `vocab.CLINGEN_CLASSIFICATIONS`, so the mirror stays a
+# faithful copy of what the authority published and a term ClinGen adds later
+# fails loudly here rather than being silently coerced downstream.
+_CLINGEN_CLASSIFICATIONS: Final[frozenset[str]] = frozenset(
+    {
+        "Definitive",
+        "Strong",
+        "Moderate",
+        "Limited",
+        "Disputed",
+        "Refuted",
+        "No Known Disease Relationship",
+    }
+)
+# Measured 2026-08-03 against the ClinGen bulk CSV's own MOI column: {'AD',
+# 'AR', 'MT', 'SD', 'UD', 'XL'}. ClinGen publishes "UD", not "Undetermined
+# MOI" -- the latter never appears in the file.
+_CLINGEN_MOI: Final[frozenset[str]] = frozenset({"AD", "AR", "XL", "MT", "SD", "UD"})
+
+CLINGEN_VALIDITY = TableSchema(
+    name="clingen_validity",
+    columns=(
+        Column("gene", pl.String, pattern=HGNC_PATTERN),
+        Column("gene_symbol", pl.String),
+        Column("disease", pl.String, pattern=MONDO_PATTERN),
+        Column("disease_label", pl.String),
+        Column("moi", pl.String, allowed=_CLINGEN_MOI),
+        Column("sop", pl.String),
+        Column("classification", pl.String, allowed=_CLINGEN_CLASSIFICATIONS),
+        Column("classification_date", pl.String),
+        Column("gcep", pl.String),
+        Column("report_url", pl.String),
+    ),
+    # The triple, not the pair. Measured 2026-08-03 against the ClinGen bulk
+    # CSV (3,653 rows): (gene, disease, moi) is unique at 3,653/3,653;
+    # (gene, disease) at 3,594 -- 59 pairs are curated twice under different
+    # MOI with different classifications.
+    sort_key=("gene", "disease", "moi"),
+)
+
 # The chromosomes, in karyotype order. Ordered because the published variant
 # index drives a chromosome picker, and sorting shard names as strings gives
 # 1, 10, 11, … 2, 20 with MT ahead of X — jumbled in both the numeric and the
@@ -421,7 +463,16 @@ PHOSPHO = TableSchema(
 
 TABLE_SCHEMAS: Final[dict[str, TableSchema]] = {
     schema.name: schema
-    for schema in (GENES, PTM_SITES, VARIANTS, EXPRESSION, PROFILES, PROTEOMICS, PHOSPHO)
+    for schema in (
+        GENES,
+        PTM_SITES,
+        VARIANTS,
+        EXPRESSION,
+        PROFILES,
+        PROTEOMICS,
+        PHOSPHO,
+        CLINGEN_VALIDITY,
+    )
 }
 
 # Which directory layout each schema lives under, relative to ``mirrors/``.
@@ -435,6 +486,7 @@ SHARDED_TABLES: Final[dict[str, str]] = {
 FLAT_TABLES: Final[dict[str, str]] = {
     "genes": "genes.tsv",
     "ptm_sites": "ptm_sites.tsv",
+    "clingen_validity": "clingen_gene_validity.tsv",
 }
 
 

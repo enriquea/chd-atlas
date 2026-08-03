@@ -7,6 +7,7 @@ import pytest
 
 from chd_atlas.tables import (
     CHROMOSOMES,
+    CLINGEN_VALIDITY,
     TABLE_SCHEMAS,
     Column,
     TableSchema,
@@ -107,7 +108,27 @@ def test_registry_covers_every_mirror_table() -> None:
         "profiles",
         "proteomics",
         "phospho",
+        "clingen_validity",
     }
+
+
+def test_clingen_validity_is_keyed_on_the_triple_not_the_pair() -> None:
+    """(gene, disease, moi) is the key; (gene, disease) is not.
+
+    Measured 2026-08-03 against the ClinGen bulk CSV: the triple is unique at
+    3,653/3,653 rows, while (gene, disease) collapses 59 of them -- pairs curated
+    twice under different modes of inheritance with different classifications.
+    Sorting on the pair would make those rows compare equal and let a real
+    ordering violation pass; more importantly it documents which columns a
+    consumer must key on to avoid dropping one of each duplicate.
+    """
+    assert CLINGEN_VALIDITY.sort_key == ("gene", "disease", "moi")
+    assert "sop" in CLINGEN_VALIDITY.column_names
+    sop = next(c for c in CLINGEN_VALIDITY.columns if c.name == "sop")
+    # Not nullable: 22% of the file predates SOP8 and ClinGen publishes no
+    # crosswalk between framework versions, so a classification without the
+    # framework that produced it is an unqualified claim.
+    assert sop.nullable is False
 
 
 def test_phospho_protein_normalized_is_mandatory_and_non_nullable() -> None:
