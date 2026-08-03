@@ -168,8 +168,8 @@ def scope_candidates(
 
     Returns at most two issues, one per net, each carrying its own count and
     its own candidates in sorted order -- one issue per candidate would bury
-    every real error behind the other ~90 net-1 hits measured on the
-    committed mirror, and the report would stop being a digest.
+    every real error behind the 268 net-1 hits measured above, and the
+    report would stop being a digest.
 
     WARNING, not ERROR, and deliberately so: `ValidationReport.ok` ignores
     warnings, so an unreviewed new entity never blocks a deploy on its own.
