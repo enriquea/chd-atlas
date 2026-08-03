@@ -2,6 +2,18 @@
 # and the licence that governs republishing it. Verified against each authority
 # on the `retrieved_on` date recorded below.
 sources:
+  - id: clingen
+    name: Clinical Genome Resource (ClinGen) Gene-Disease Validity
+    # The bulk CSV carries no version tag. Its banner stamps the date the file
+    # was generated, which is the only version identifier the authority offers.
+    version: "FILE CREATED: 2026-08-03"
+    retrieved_on: 2026-08-03
+    url: https://search.clinicalgenome.org/kb/gene-validity
+    # "All curated content published by ClinGen is available free of restriction
+    # under the CC0 1.0 Universal (CC0 1.0) Public Domain Dedication."
+    # -- https://clinicalgenome.org/docs/terms-of-use/
+    licence: CC0-1.0
+    redistribution: permitted
   - id: hgnc
     name: HUGO Gene Nomenclature Committee
     # The REST service has no release identifier; `https://rest.genenames.org/info`
