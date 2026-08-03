@@ -192,7 +192,7 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
         pytest.param(_corpus_load_fails, {"REF000"}, {"CORPUS001"}, id="corpus-failed"),
         pytest.param(
             _source_registry_load_fails,
-            {"SRC000", "ONT000"},
+            {"SRC000", "ONT000", "SCP000"},
             {"SRC001"},
             id="source-registry-failed",
         ),
@@ -220,6 +220,18 @@ def test_every_skip_warning_arrives_with_the_error_that_caused_it(
     SRC000 and ONT000 share one guard — a source registry that did not load —
     so no repository state triggers either alone; they are pinned as the pair
     they are. REF000 is isolable, and the third state covers all three at once.
+
+    SCP000 also appears in the "source-registry-failed" case, but not because
+    it shares SRC000/ONT000's guard: `_source_registry_load_fails` builds a
+    `curation/` directory with no `mirrors/` at all, so the validity-mirror
+    read (`_mirrored_validity`) independently returns None. It is a fixture
+    coincidence, not a shared cause — `causing_errors` still names only SRC001,
+    and this case's `report.ok is False` holds because of SRC001 regardless of
+    SCP000. (This does leave open whether SCP000 could ever arrive with *no*
+    error at all — corpus and every other mirror valid, only the two validity
+    mirrors missing — which would need its own guard the way `_known_genes`
+    returning None earns TBL008; no such guard exists yet, and this test does
+    not claim one does.)
     """
     setup(tmp_path)
 
