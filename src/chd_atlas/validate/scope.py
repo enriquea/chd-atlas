@@ -24,10 +24,28 @@ authority either way, obsolete upstream or not.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
+from typing import Final
 
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.models.scope import ScopeEntry
+
+# Deliberately wide. Measured 2026-08-03 against the committed ClinGen mirror:
+# of 13 flagship CHD genes' Definitive/Strong disease labels, 12 of 13 --
+# Holt-Oram syndrome (TBX5), CHARGE syndrome (CHD7), Kabuki syndrome 1 and 2,
+# NOTCH1-related AOS spectrum disorder, cutis laxa AD 1 (ELN),
+# blepharocheilodontic syndrome 2 (CTNND1), lymphatic malformation 1 (FLT4),
+# Noonan syndrome, Mowat-Wilson syndrome, Cornelia de Lange syndrome -- fail
+# every keyword here. This pattern alone cannot find them; see
+# `scope_candidates`'s docstring for what covers that gap and what still does
+# not.
+_CARDIAC_KEYWORDS: Final = re.compile(
+    r"heart|cardi|septal|aort|fallot|ventricul|atrial|truncus|valve|"
+    r"hypoplastic left|heterotax|situs|coarctation|ductus|pulmonary atresia|"
+    r"conotruncal|vascular ring",
+    re.IGNORECASE,
+)
 
 
 def validate_scope_terms(
@@ -90,4 +108,114 @@ def validate_scope_terms(
                     f"but the mirror calls it '{authority_label}'",
                 )
             )
+    return issues
+
+
+def _describe(term: str, mirrored: Mapping[str, str]) -> str:
+    label = mirrored.get(term)
+    return f"{term} ({label})" if label else term
+
+
+def scope_candidates(
+    scope_terms: set[str],
+    mirrored: Mapping[str, str],
+    diseases_by_gene: Mapping[str, set[str]],
+    in_scope_genes: set[str],
+    location: str,
+) -> list[ValidationIssue]:
+    """Report disease terms that look like CHD but are not on the scope list.
+
+    Reported only -- never auto-admitted. `curation/chd_scope.yaml` is a
+    curator's editorial claim (see `models/scope.py`); this function exists so
+    scope drift becomes a reviewed queue instead of silent staleness, not so
+    it can decide scope on anyone's behalf.
+
+    Two independent nets, because one alone is measurably blind to the class
+    of entity this check exists to catch. A label-keyword net cannot surface
+    a syndromic CHD entity, because a syndrome's own name usually carries no
+    cardiac word at all -- see `_CARDIAC_KEYWORDS` above for the 2026-08-03
+    measurement that motivated adding the second net.
+
+    Net 1 ("label keyword") matches every `mirrored` label not already in
+    `scope_terms` against `_CARDIAC_KEYWORDS`. It errs wide on purpose: a
+    false positive costs a curator one rejection, a false negative costs a
+    gene that is never reviewed at all. Measured 2026-08-03 by unioning
+    `mirrors/clingen_gene_validity.tsv` and `mirrors/gencc_submissions.tsv`
+    into one `disease -> disease_label` mapping (8,154 distinct terms) and
+    applying this pattern against everything not among the 68 admitted scope
+    terms: 268 candidates. The exact count depends on how the caller
+    deduplicates the two mirrors, which is this function's caller's job, not
+    this function's -- but it is hundreds either way, which is why the return
+    is a digest and not one issue per hit.
+
+    Net 2 ("gene bridge") looks instead at genes already admitted: for every
+    gene in `in_scope_genes`, every *other* disease term it is curated under
+    (via `diseases_by_gene`) that is not already in `scope_terms`. This is the
+    drift case that actually occurs in practice -- an already-admitted gene
+    gains a new curation. Measured example: GATA6 is Definitive for
+    GATA6-related CHD (in scope) and Limited for dilated cardiomyopathy (not);
+    the latter surfaces here and would be correctly rejected on review.
+
+    Neither net discovers a *new* syndromic entity whose label carries no
+    cardiac term and whose gene is not already in scope -- that is this
+    function's blind spot, and it is a real one, not a hedge. Holt-Oram
+    syndrome is the worked example: before TBX5 was ever admitted, "Holt-Oram
+    syndrome" would have passed net 1 silently (the label matches no keyword
+    in `_CARDIAC_KEYWORDS`) and net 2 silently (TBX5 was not yet an in-scope
+    gene for anything to bridge from). Nothing in this module closes that gap;
+    it is why the scope list itself, not this check, is what a curator must
+    still read the literature to grow.
+
+    Returns at most two issues, one per net, each carrying its own count and
+    its own candidates in sorted order -- one issue per candidate would bury
+    every real error behind the other ~90 net-1 hits measured on the
+    committed mirror, and the report would stop being a digest.
+
+    WARNING, not ERROR, and deliberately so: `ValidationReport.ok` ignores
+    warnings, so an unreviewed new entity never blocks a deploy on its own.
+    This is a *gap* warning in the sense `REF013` establishes -- the check
+    ran and found real, reportable data that a human still has to act on --
+    not a *skip* warning like SCP000, where a check could not run at all.
+    `validate/runner.py` documents why the two must not be conflated: a skip
+    warning is never allowed to arrive alone, but a gap warning is expected to
+    arrive alone by design, because the corpus it describes is still sound and
+    publishable exactly as curated.
+    """
+    net1 = sorted(
+        term
+        for term, label in mirrored.items()
+        if term not in scope_terms and _CARDIAC_KEYWORDS.search(label)
+    )
+    net2 = sorted(
+        {
+            disease
+            for gene in in_scope_genes
+            for disease in diseases_by_gene.get(gene, set())
+            if disease not in scope_terms
+        }
+    )
+
+    issues: list[ValidationIssue] = []
+    if net1:
+        issues.append(
+            ValidationIssue(
+                "SCP003",
+                Severity.WARNING,
+                location,
+                f"{len(net1)} disease term(s) not in scope have a cardiac-sounding "
+                f"label (net 1, label keyword): "
+                f"{', '.join(_describe(term, mirrored) for term in net1)}",
+            )
+        )
+    if net2:
+        issues.append(
+            ValidationIssue(
+                "SCP003",
+                Severity.WARNING,
+                location,
+                f"{len(net2)} disease term(s) not in scope are curated for a gene "
+                f"already in scope (net 2, gene bridge): "
+                f"{', '.join(_describe(term, mirrored) for term in net2)}",
+            )
+        )
     return issues
