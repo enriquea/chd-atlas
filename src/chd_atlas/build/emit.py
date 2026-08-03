@@ -157,6 +157,29 @@ class Emitter:
     def write_json_gz(self, relative: str, payload: Json) -> None:
         self._write(relative, compress(encode_json(payload)))
 
+    def write_text(self, relative: str, text: str) -> None:
+        """Write pre-rendered text — `index.html`, not a JSON payload.
+
+        `write_json` would type-check on a bare `str` today: `Json`'s union
+        includes `str` directly, so `write_json("index.html", "<!doctype ...")`
+        compiles and then calls `encode_json` on it, which runs the string
+        through `json.dumps` and writes it back out quoted and escaped —
+        `"<!doctype ..."` as a JSON *string literal*, not the page. That is a
+        category error `mypy` cannot catch, because the mistake is which
+        encoder to call, not a type mismatch. This method is the correct one
+        for text that is not a JSON payload at all.
+
+        Everything downstream of `encode_json` still applies: going through
+        `_write` is what puts the file into `checksums` and therefore into the
+        manifest, and what the sealed, duplicate-path and case-fold guards
+        cover — an HTML page is as capable of colliding on a case-insensitive
+        filesystem, or of being written after the manifest, as any JSON shard.
+        `encode_json`'s own guarantees (`sort_keys`, `allow_nan=False`, …) are
+        about serialising a *payload*, so they have nothing to say about a
+        caller that already rendered its own text.
+        """
+        self._write(relative, text.encode("utf-8"))
+
     def seal(self) -> None:
         """Refuse every write from here on, because the build has been published.
 

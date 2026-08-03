@@ -20,6 +20,7 @@ REPO = Path(__file__).parent.parent.parent
 # its artifact out of the site and out of the assertion in the same edit.
 PUBLISHED = (
     "manifest.json",
+    "index.html",
     "genes/index.json",
     "publications.json",
     "featured.json",

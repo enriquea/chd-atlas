@@ -50,7 +50,21 @@ from chd_atlas.corpus import Corpus
 # breaking change and so MAJOR rather than MINOR, even though the release's
 # other change — the gene bundle's new `validity` object, carrying every
 # mirrored record and its provenance — is purely additive on its own.
-SCHEMA_VERSION: Final = "2.0"
+#
+# 2.1 added `status`, so a programmatic consumer can read the atlas's own
+# readiness without scraping `index.html`'s prose for it. Nothing existing
+# changed shape or left, so this is MINOR despite following a MAJOR release —
+# each release's letter is decided against what it changes, never against the
+# rung before it.
+SCHEMA_VERSION: Final = "2.1"
+
+# What `status` publishes today. A literal rather than something derived from
+# the corpus, unlike every field in `counts`: there is no measurement of "is
+# this atlas ready for clinical use" to compute, only a decision to record, and
+# recording it as a constant is what stops a future release forgetting to flip
+# it — the two-word status and the paragraph on `index.html` explaining what it
+# concretely means are edited in the same commit, or neither is trustworthy.
+STATUS: Final = "in-development"
 
 
 def source_commit(root: Path) -> str | None:
@@ -141,6 +155,7 @@ def write_manifest(corpus: Corpus, emitter: Emitter, commit: str | None) -> None
         {
             "schema_version": SCHEMA_VERSION,
             "source_commit": commit,
+            "status": STATUS,
             "counts": {
                 "assertions": len(corpus.assertions),
                 "datasets": len(corpus.datasets),

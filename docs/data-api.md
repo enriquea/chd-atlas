@@ -44,14 +44,15 @@ What the build produced, and a checksum for every file in it.
 {
   "counts": {
     "assertions": 1, "datasets": 0, "featured": 1,
-    "functional": 0, "phenotypes": 2, "publications": 1
+    "functional": 0, "phenotypes": 3, "publications": 1
   },
   "files": {
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.0",
-  "source_commit": "<40-hex commit sha, or null outside a git checkout>"
+  "schema_version": "2.1",
+  "source_commit": "<40-hex commit sha, or null outside a git checkout>",
+  "status": "in-development"
 }
 ```
 
@@ -78,7 +79,27 @@ wrong by the next one.
   curated assertion — the atlas no longer authors a gene-disease validity call
   of its own — and added the gene bundle's `validity` object in their place.
   The removal is what makes it major: a 1.x reader looking for a
-  classification on the assertion now finds none.
+  classification on the assertion now finds none. `2.1` added `status`,
+  purely additively.
+- `status` is the atlas's own readiness, so a program can read it without
+  scraping `index.html`'s prose. Today it is always `"in-development"` — one
+  curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
+  many more genes than that. This is a research resource, not a clinical
+  decision-support tool; see `index.html` at the site root for the statement
+  in full, and the note on [contested genes](#contested-genes-the-one-consumer-obligation)
+  below for what the mirrored validity fields do and do not assert.
+
+## The site root: `index.html`
+
+The one page a person opens directly rather than fetches as JSON. It states
+what the atlas is, the same development-status and research-use statement
+`status` above is the machine-readable half of, and the real counts behind it
+— curated assertions, genes with mirrored ClinGen/GenCC validity, and the
+rest of `counts` — read from the same build that produced this document's
+other examples rather than written by hand. It links to `manifest.json`,
+`genes/index.json`, `sources.json` and the repository. Self-contained: no
+external request, no build timestamp, byte-identical between two builds of one
+commit like everything else here.
 
 ## `genes/index.json`
 

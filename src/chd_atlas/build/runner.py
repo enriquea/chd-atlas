@@ -25,6 +25,7 @@ from pathlib import Path
 
 from chd_atlas.build.bundles import build_genes
 from chd_atlas.build.emit import Emitter
+from chd_atlas.build.landing import build_landing
 from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
@@ -177,13 +178,18 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         raise ValueError("a validity mirror could not be read; the gate should have refused first")
     validity = gene_validity(clingen, gencc, in_scope=scope_terms)
 
+    # Computed once and reused by both callers below: `build_genes` needs the
+    # symbol alone, and so does `build_landing`, which is not a second read of
+    # the mirror either — both project the same `genes` registry the same way.
+    symbols = {gene: labels.symbol for gene, labels in genes.items()}
+
     emitter = Emitter(root=out)
     omics = build_omics(root, emitter)
     variants = build_variants(root, emitter)
     build_genes(
         corpus,
         emitter,
-        symbols={gene: labels.symbol for gene, labels in genes.items()},
+        symbols=symbols,
         omics=omics,
         variants=variants,
         validity=validity,
@@ -196,6 +202,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     registry, _ = load_sources(root)
     build_sources(registry, emitter)
     build_search(corpus, emitter, genes=genes)
+    build_landing(corpus, symbols=symbols, validity=validity, emitter=emitter)
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))
     return dict(emitter.checksums)

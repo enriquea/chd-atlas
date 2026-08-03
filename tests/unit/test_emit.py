@@ -136,6 +136,28 @@ def test_emitter_writes_json_and_records_its_checksum(tmp_path: Path) -> None:
     assert emitter.checksums["genes/index.json"] == checksum(written)
 
 
+def test_write_text_writes_utf8_bytes_verbatim_and_is_not_json_encoded(tmp_path: Path) -> None:
+    """`write_text` for a page, not a payload — the method `index.html` needs.
+
+    `write_json` would type-check on the same string: `Json`'s union includes
+    `str` directly, so nothing stops a caller reaching for the wrong method.
+    Calling it on this text would run it through `encode_json` and publish
+    `"<!doctype html>...\\n"` — a JSON string literal, quoted and escaped, not
+    the page a browser can render. Asserted against the raw bytes on disk
+    rather than against `emitter.checksums`, because the checksum would verify
+    either way; only reading the file back shows whether the markup survived.
+    """
+    emitter = Emitter(root=tmp_path)
+    page = "<!doctype html>\n<html><body>Folie à deux</body></html>\n"
+
+    emitter.write_text("index.html", page)
+
+    written = (tmp_path / "index.html").read_bytes()
+    assert written == page.encode("utf-8")
+    assert not written.startswith(b'"')
+    assert emitter.checksums == {"index.html": checksum(written)}
+
+
 def test_emitter_checksums_the_bytes_actually_served(tmp_path: Path) -> None:
     """For a .gz file that is the compressed bytes, not the JSON inside.
 
