@@ -405,7 +405,7 @@ The landing page's manuscripts, in curator-chosen `order`.
     {
       "order": 1,
       "topic": "…",
-      "blurb": "The founding demonstration that TBX5 haploinsufficiency causes …",
+      "blurb": "One of two back-to-back 1997 reports identifying TBX5 mutations …",
       "publication": { "id": "PMID:8988165", "title": "…", "journal": "Nature genetics", "…": "…" }
     }
   ]
