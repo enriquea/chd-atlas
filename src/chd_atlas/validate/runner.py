@@ -276,6 +276,22 @@ def validate_repository(root: Path) -> ValidationReport:
         scope_location = str(root / "curation" / "chd_scope.yaml")
         mirrored = _mirrored_validity(root)
         if mirrored is None:
+            # SCP000 alone is a WARNING, and `ValidationReport.ok` ignores
+            # warnings — so without an accompanying ERROR, a repository missing
+            # both validity mirrors would validate "clean" while every scope
+            # check silently could not run, and `build_site` would publish it
+            # anyway. Same shape as `TBL008` for a missing gene registry: name
+            # the cause as an error, located at the mirrors directory because
+            # two files are implicated and neither alone explains it.
+            issues.append(
+                ValidationIssue(
+                    "TBL012",
+                    Severity.ERROR,
+                    str(root / "mirrors"),
+                    "the validity mirrors are missing or unreadable, so no gene "
+                    "can be placed in scope",
+                )
+            )
             issues.extend(validate_scope_terms(corpus.chd_scope, None, scope_location))
         else:
             labels, genes_by_disease, diseases_by_gene = mirrored

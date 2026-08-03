@@ -6,6 +6,8 @@ import pytest
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.validate.runner import ValidationReport, validate_repository
 
+REPO_ROOT = Path(__file__).parent.parent.parent
+
 ASSERTION_YAML = """\
 assertions:
   - id: CHDA:AST:0000001
@@ -52,6 +54,22 @@ def _source_registry_load_fails(root: Path) -> None:
 
 def _both_loads_fail(root: Path) -> None:
     """Neither the corpus nor the source registry is present."""
+
+
+def _validity_mirrors_missing(root: Path) -> None:
+    """A corpus, gene registry, ID registry and source registry that all load
+    cleanly, but neither validity mirror is present.
+
+    Everything else is made to load cleanly on purpose, so that TBL012 is the
+    *only* error in the report — unlike the "source-registry-failed" case
+    below, where SCP000 rides alongside SRC001 by fixture coincidence, not
+    because TBL012 caused it. This isolates SCP000's own causing error.
+    """
+    (root / "curation").mkdir()
+    (root / "curation" / ".id_registry.yaml").write_text("{}\n")
+    (root / "mirrors").mkdir()
+    (root / "mirrors" / "genes.tsv").write_text("hgnc_id\n")
+    (root / "mirrors" / "sources.yaml").write_text(VALID_SOURCES_YAML)
 
 
 def test_report_counts_errors_and_warnings_separately() -> None:
@@ -202,6 +220,12 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
             {"CORPUS001", "SRC001"},
             id="both-failed",
         ),
+        pytest.param(
+            _validity_mirrors_missing,
+            {"SCP000"},
+            {"TBL012"},
+            id="validity-mirrors-missing",
+        ),
     ],
 )
 def test_every_skip_warning_arrives_with_the_error_that_caused_it(
@@ -225,13 +249,19 @@ def test_every_skip_warning_arrives_with_the_error_that_caused_it(
     it shares SRC000/ONT000's guard: `_source_registry_load_fails` builds a
     `curation/` directory with no `mirrors/` at all, so the validity-mirror
     read (`_mirrored_validity`) independently returns None. It is a fixture
-    coincidence, not a shared cause — `causing_errors` still names only SRC001,
-    and this case's `report.ok is False` holds because of SRC001 regardless of
-    SCP000. (This does leave open whether SCP000 could ever arrive with *no*
-    error at all — corpus and every other mirror valid, only the two validity
-    mirrors missing — which would need its own guard the way `_known_genes`
-    returning None earns TBL008; no such guard exists yet, and this test does
-    not claim one does.)
+    coincidence, not a shared cause — `causing_errors` still names only SRC001
+    there, and that case's `report.ok is False` holds because of SRC001
+    regardless of SCP000.
+
+    "validity-mirrors-missing" is what actually isolates SCP000's own cause:
+    every other check is made to load cleanly (gene registry, ID registry,
+    source registry all present and valid) and only the two validity mirrors
+    are absent, so TBL012 is the *only* error in that report. Before TBL012
+    existed, this exact state reported SCP000 as its only warning and
+    `report.ok` was True — a corpus whose scope could not be checked at all,
+    validating clean. Measured directly: with the TBL012 emission removed from
+    `validate_repository`, this case's `report.ok is False` assertion fails
+    (`assert True is False`).
     """
     setup(tmp_path)
 
@@ -314,3 +344,36 @@ def test_ontology_checks_are_skipped_when_a_pinned_release_fails(tmp_path: Path)
     assert "ONT004" in codes
     assert "ONT000" in codes
     assert "ONT003" not in codes
+
+
+def test_scope_checks_run_against_the_real_repository() -> None:
+    """The committed repository is in scope and reports no scope error.
+
+    A smoke test in the sense CLAUDE.md permits: it is the only thing that
+    exercises the wiring from `validate_repository` down through the mirror
+    read into `validate_scope_terms`, `scope_candidates` and
+    `validate_curation_is_in_scope`.
+
+    Asserting only `report.error_count == 0` is not enough here -- that
+    passes identically whether the scope checks ran or were never called.
+    Measured directly: with the scope-check call site in `validate_repository`
+    reverted entirely, `.venv/bin/python -m pytest` on a naive version of this
+    test asserting only `report.error_count == 0` still passed (1 passed) --
+    it cannot tell a live wire from a dead one. So this test also asserts that
+    a scope check actually produced output.
+
+    SCP003 (a mirrored cardiac-looking disease term that is not on the scope
+    list) is emitted whenever such a term exists, and 268 (net 1, label
+    keyword) plus 223 (net 2, gene bridge) were measured on 2026-08-03 against
+    the committed 68-term `curation/chd_scope.yaml` and the committed
+    ClinGen/GenCC mirrors, so it fires today. If the scope list ever grows to
+    cover every candidate, replace the `"SCP003" in codes` assertion with one
+    that the mirror-reading helper (`validate/runner.py::_mirrored_validity`)
+    returned a non-empty result -- do not delete the guard, or this test
+    degrades back into the worthless version described above.
+    """
+    report = validate_repository(REPO_ROOT)
+
+    codes = {issue.code for issue in report.issues}
+    assert "SCP003" in codes, "scope checks did not run"
+    assert report.error_count == 0, report.render()
