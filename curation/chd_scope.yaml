@@ -397,7 +397,20 @@ diseases:
   - id: MONDO:0003803
     label: aortic valve disorder
     reason: >-
-      Aortic valve disorder: a malformation of the aortic valve.
+      Not congenital-specific on its own terms: MONDO defines this as a location
+      grouping ("a disease involving the aortic valve"), with xrefs to both
+      rheumatic (ICD9:395) and non-rheumatic/calcific (ICD9:424.1) aortic valve
+      disease and 16 descendants spanning calcification, insufficiency and
+      stenosis alongside MONDO's own congenital-qualified children -- the
+      ontology's own signal that this parent is not congenital by itself. Its
+      sole route into scope is PDIA2 (HGNC:14180), whose GenCC row is PanelApp
+      Australia's Mendeliome-panel submission for phenotype "Bicuspid aortic
+      valve" -- genuinely congenital -- which GenCC coarsens up to this grouping
+      term. The admission is of that underlying submission, not of the
+      grouping's full extent, which also covers acquired disease this atlas's
+      RULE excludes. A future mirror refresh could bring a genuinely
+      acquired-disease submission in under this same term; re-review before
+      admitting any further gene through it.
     admitted_by: Enrique Audain
     admitted_on: 2026-08-03
   - id: MONDO:0007194

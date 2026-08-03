@@ -13,12 +13,23 @@ the page renders with no network request beyond the one that fetched it.
 
 Deterministic for the reason every other builder here is. No build timestamp;
 every number on the page is read from the `Corpus` and the `GeneValidity`
-mapping `build_site` already assembled for `build_genes`, never hardcoded, so
-the page cannot state a count that drifts from what the same build actually
-published. `tests/unit/test_build_landing.py` recomputes the same numbers from
-the same fixture and compares them against the rendered text rather than
+mapping `build_site` already assembled for `build_genes`, never hardcoded.
+That guarantees each figure matches what this module was *handed* — it does
+not, on its own, guarantee that figure matches what another builder chose to
+*publish* from the same input. `len(validity)` is every gene either mirror
+curates, full stop; `build_genes` narrows that to genes carrying at least one
+curated assertion before anything reaches `genes/index.json` (`derive.py`'s
+`gene_facts` docstring: "a gene with nothing asserted has no confidence to
+display"). The two counts genuinely diverge — 154 mirrored genes against one
+published gene in the committed corpus — so this page computes its published-
+gene figure the same way `gene_facts` does, from the distinct genes named by
+`corpus.assertions`, rather than from `len(validity)`. The mirrored-validity
+count is kept, but labelled and placed so it cannot be read as coverage this
+site browses. `tests/unit/test_build_landing.py` recomputes the same numbers
+from the same fixture and compares them against the rendered text rather than
 against a literal, for exactly that reason — a hardcoded expectation in the
-test would only prove the two hardcodings agree with each other.
+test would only prove the two hardcodings agree with each other — and checks
+the published-gene figure against a real build's `genes/index.json` besides.
 
 Every value that reaches the page from curated or mirrored text — a gene
 symbol, an HGNC id — goes through `html.escape`. Nothing curated here is
@@ -74,6 +85,12 @@ def _render(
     corpus: Corpus, symbols: Mapping[str, str], validity: Mapping[str, GeneValidity]
 ) -> str:
     assertion_count = len(corpus.assertions)
+    # The same population `gene_facts` keys `genes/index.json` on: distinct
+    # genes named by a curated assertion. Deliberately not `len(validity)`,
+    # which counts every gene either mirror curates whether or not it is
+    # curated here — that count belongs to "Where this data comes from", not
+    # to what this build publishes.
+    published_gene_count = len({assertion.gene for assertion in corpus.assertions})
     mirrored_gene_count = len(validity)
     asserted = _asserted_genes(corpus, symbols)
 
@@ -148,12 +165,6 @@ def _render(
     <p>This atlas is under active development. It is
       <strong>not a clinical decision-support tool</strong> and must not be used to make
       or guide a diagnostic, treatment or any other clinical decision.</p>
-    <p>Today it holds {_plural(assertion_count, "curated gene-disease assertion")} —
-      hand-reviewed against the primary literature — set beside mirrored ClinGen and
-      GenCC validity classifications for {mirrored_gene_count} genes. That gap is the
-      point of saying so plainly: almost every gene this site describes carries an
-      upstream expert panel's or submitter's classification and nothing this atlas has
-      independently curated. Curated assertion so far: {asserted}.</p>
   </section>
 
   <h2>What this is</h2>
@@ -166,8 +177,8 @@ def _render(
   <dl>
     <dt>Curated gene-disease assertions</dt>
     <dd>{assertion_count}</dd>
-    <dt>Genes with mirrored ClinGen/GenCC validity</dt>
-    <dd>{mirrored_gene_count}</dd>
+    <dt>Genes published</dt>
+    <dd>{published_gene_count}</dd>
     <dt>Functional evidence records</dt>
     <dd>{len(corpus.functional)}</dd>
     <dt>Publications cited</dt>
@@ -179,6 +190,7 @@ def _render(
     <dt>Omics datasets</dt>
     <dd>{len(corpus.datasets)}</dd>
   </dl>
+  <p>{_plural(assertion_count, "curated gene-disease assertion")} so far: {asserted}.</p>
 
   <h2>Where this data comes from</h2>
   <p>Gene-disease validity classifications are mirrored from <strong>ClinGen</strong> and
@@ -187,6 +199,10 @@ def _render(
     of its own — every classification on this site is an upstream panel's or submitter's,
     republished with its provenance intact. <a href="sources.json">sources.json</a> carries
     the licence and attribution terms each of these is mirrored under.</p>
+  <dl>
+    <dt>Genes in scope with mirrored ClinGen/GenCC validity (browsable once curated)</dt>
+    <dd>{mirrored_gene_count}</dd>
+  </dl>
 
   <h2>Browse the data</h2>
   <ul class="links">

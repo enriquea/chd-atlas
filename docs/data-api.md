@@ -113,17 +113,17 @@ the evidence itself.
     {
       "assertion_count": 1,
       "bundle": "genes/HGNC_11604.json",
-      "confidence_by_lesion_group": {},
+      "confidence_by_lesion_group": { "septal": "definitive" },
       "conflicting_lesion_groups": [],
       "evidence_counts": { "genetic_case": 1 },
       "functional_count": 0,
       "gene": "HGNC:11604",
       "has_conflicting_evidence": false,
       "has_source_discordance": false,
-      "headline_confidence": null,
+      "headline_confidence": "definitive",
       "lesion_groups": ["septal"],
       "symbol": "TBX5",
-      "validity_state": "uncurated",
+      "validity_state": "expert_curated",
       "variant_count": 0
     }
   ]
@@ -137,16 +137,27 @@ the evidence itself.
   so it is always a non-empty string you can render and search.
 - `headline_confidence` and the rest of this row come from the mirrored
   ClinGen/GenCC validity records for the gene, never from a curated assertion —
-  this atlas mirrors gene-disease validity, it does not author it.
-  `headline_confidence` is `null` for a gene no authority has assessed, which is
-  what the example above shows. It is never `"no_known_association"` for that
-  case: that classification is itself an assessed verdict ("a panel looked and
-  found nothing"), and asserting it for a gene nobody has assessed would state a
+  this atlas mirrors gene-disease validity, it does not author it. The example
+  above is TBX5's real row: an in-scope ClinGen Congenital Heart Disease Gene
+  Curation Expert Panel record makes it `"expert_curated"` with a `"definitive"`
+  headline. `headline_confidence` is `null` for a gene no authority has
+  assessed. It is never `"no_known_association"` for that case: that
+  classification is itself an assessed verdict ("a panel looked and found
+  nothing"), and asserting it for a gene nobody has assessed would state a
   conclusion no authority reached.
 - `validity_state` says how well curated the gene is: `"expert_curated"` (an
   in-scope ClinGen record exists), `"submitter_curated"` (only GenCC has
-  assessed it) or `"uncurated"` (neither mirror has). `headline_confidence`
-  being `null` and `validity_state` being `"uncurated"` always agree.
+  assessed it) or `"uncurated"` (neither mirror has). `headline_confidence` is
+  `null` **iff** the gene is `"uncurated"` *or* every in-scope record maps to
+  no rung on this atlas's scale — the two are not the same condition, and
+  `validity_state` is how a consumer tells them apart. Six genes in the
+  committed mirrors (HGNC:24595, HGNC:4317, HGNC:6188, HGNC:7881, HGNC:9380,
+  HGNC:9381) publish `null` while `"submitter_curated"`: each carries only an
+  Orphanet `Supportive` submission, which `vocab.GENCC_CLASSIFICATIONS` maps
+  to `None` because the submitter asserted an association without grading its
+  evidence, not because nobody looked. Do not infer "no authority has assessed
+  this gene" from `headline_confidence: null` alone — check `validity_state`
+  for that.
 - `has_source_discordance` is `true` when one mirrored source contests the gene
   while the *other* supports it. It is narrower than `has_conflicting_evidence`,
   which also fires when a single source is internally split across diseases or
@@ -394,7 +405,7 @@ The landing page's manuscripts, in curator-chosen `order`.
     {
       "order": 1,
       "topic": "…",
-      "blurb": "The founding demonstration that TBX5 haploinsufficiency causes …",
+      "blurb": "One of two back-to-back 1997 reports identifying TBX5 mutations …",
       "publication": { "id": "PMID:8988165", "title": "…", "journal": "Nature genetics", "…": "…" }
     }
   ]
@@ -520,23 +531,38 @@ and the refutation is invisible in that field alone.
 **`headline_confidence` is `null` for a gene no authority has assessed, and
 must never be rendered as `"no_known_association"`.** The two are not
 interchangeable: `no_known_association` is itself an assessed verdict — a
-panel looked and found nothing — while `null` means no panel looked at all.
-Coercing an uncurated gene's `null` to `"no_known_association"` would fabricate
-a conclusion nobody reached. This atlas publishes no gene-disease validity
-classification of its own; every value `headline_confidence` can take,
-including the absence of one, is mirrored and attributed from ClinGen or
-GenCC — see the bundle's `validity` object, documented under
-[`genes/<slug>.json`](#genesslugjson), for the records behind it and
-`sources.json` for the licence terms those two mirrors are republished under.
+panel looked and found nothing. `null` is not that specific claim, but it is
+not always "no panel looked" either: a GenCC submitter can assert an
+association under a term this atlas maps to no rung at all (`Supportive`,
+which declines to grade the evidence) and still publish `headline_confidence:
+null` — six genes in the committed mirrors do exactly this, each via a single
+Orphanet `Supportive` submission (see `validity_state` above). `null` means
+either nobody has assessed the gene, or nobody who did assessed it on a scale
+this atlas can rank; check `validity_state` to tell the two apart. Coercing
+either case's `null` to `"no_known_association"` would fabricate a conclusion
+nobody reached. This atlas publishes no gene-disease validity classification
+of its own; every value `headline_confidence` can take, including the absence
+of one, is mirrored and attributed from ClinGen or GenCC — see the bundle's
+`validity` object, documented under [`genes/<slug>.json`](#genesslugjson), for
+the records behind it and `sources.json` for the licence terms those two
+mirrors are republished under.
 
 `has_conflicting_evidence` is the other half of that pair. It appears in both
 the browse row and the bundle, and is always written alongside
 `headline_confidence`. `has_source_discordance` is a narrower relative: it is
 `true` only when the contesting and the supporting classification come from
-*different* mirrored sources. A single source split against itself — which
-happens: ninety genes in the committed ClinGen mirror carry both a supportive
-and a contesting call, across two diseases or two GCEPs — sets
-`has_conflicting_evidence` without setting this one.
+*different* mirrored sources. A single source split against itself would set
+`has_conflicting_evidence` without setting this one — that is why the two
+fields are not redundant — but that split does not currently occur among the
+154 genes these mirrors curate within CHD scope. Measured against a real
+build: exactly one gene sets `has_conflicting_evidence` — LEFTY2 (HGNC:3122),
+where ClinGen's own `Disputed` call sits alongside GenCC's supportive one —
+and it is the same gene that sets `has_source_discordance`. The divergence
+this field exists to catch is real but currently unrealised in published
+data: ninety genes in the full, pre-scope ClinGen mirror carry both a
+supportive and a contesting call, but none of the diseases those ninety
+concern is in CHD scope (`build/validity.py`'s `_has_source_discordance`
+docstring has the measurement).
 
 **A consumer must pair `headline_confidence` with `has_conflicting_evidence`
 and present a contested gene distinctly** — a badge, a different colour, an

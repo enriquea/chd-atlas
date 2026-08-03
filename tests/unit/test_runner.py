@@ -1,3 +1,4 @@
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -375,3 +376,58 @@ def test_scope_checks_run_against_the_real_repository() -> None:
     codes = {issue.code for issue in report.issues}
     assert "SCP003" in codes, "scope checks did not run"
     assert report.error_count == 0, report.render()
+
+
+def test_a_validity_mirror_missing_a_selected_column_is_reported_not_raised(
+    tmp_path: Path,
+) -> None:
+    """Reported by Copilot on the promotion PR, reproduced here.
+
+    `_mirrored_validity` guarded only `"disease" not in frame.columns`, then
+    unconditionally did `frame.select(["disease", "disease_label", "gene"])`.
+    An upstream rename dropping `disease_label` or `gene` -- not `disease`
+    itself -- left `"disease" not in frame.columns` false, so the guard passed
+    and `frame.select` raised `polars.exceptions.ColumnNotFoundError`,
+    unhandled, straight out of `validate_repository`. That breaks the one
+    guarantee this module exists to keep (`CLAUDE.md`: "validators report; the
+    build refuses") -- one malformed mirror must cost one issue, not the
+    whole run, and `validate_table` already reports exactly this as TBL001
+    over the same file, so nothing is lost by skipping the mirror here rather
+    than crashing on it.
+
+    Watched failing first: with the fix in `_mirrored_validity` reverted to
+    checking only `"disease" not in frame.columns`, this test raised
+    `polars.exceptions.ColumnNotFoundError: unable to find column
+    "disease_label"` instead of returning a report -- confirmed both via this
+    test and via `chd-atlas validate` against a scratch copy of the real
+    repository with the same column dropped.
+
+    A copy of the real, valid committed corpus rather than a minimal fixture,
+    so `disease_label` is the *only* thing wrong with it and every other
+    check -- including the second mirror, GenCC, read successfully -- still
+    runs, isolating this guard's own effect from `TBL012`'s ("both mirrors
+    unreadable") different failure mode.
+    """
+    source = tmp_path / "repo"
+    for name in ("curation", "mirrors"):
+        shutil.copytree(REPO_ROOT / name, source / name)
+    (source / "ontologies").symlink_to(REPO_ROOT / "ontologies")
+
+    clingen = source / "mirrors" / "clingen_gene_validity.tsv"
+    header, *rows = clingen.read_text(encoding="utf-8").splitlines()
+    columns = header.split("\t")
+    label_index = columns.index("disease_label")
+    del columns[label_index]
+    lines = ["\t".join(columns)]
+    for row in rows:
+        cells = row.split("\t")
+        del cells[label_index]
+        lines.append("\t".join(cells))
+    clingen.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    report = validate_repository(source)
+
+    codes = [issue.code for issue in report.issues]
+    assert "TBL001" in codes
+    assert "TBL012" not in codes, "GenCC alone should still populate the mirrored-validity map"
+    assert report.ok is False

@@ -186,7 +186,14 @@ def _has_source_discordance(records: tuple[ValidityRecord, ...]) -> bool:
     and a contesting call" either -- 90 genes in the committed ClinGen mirror do
     exactly that across two diseases or two GCEPs (measured 2026-08-03), and
     that is ClinGen being internally split, not ClinGen disagreeing with
-    anyone. Only a record with a mapped `classification` takes a side: GenCC's
+    anyone. (None of those 90 splits survives the CHD-scope filter this
+    module applies before a gene is even keyed -- 13 of the 90 have some
+    in-scope ClinGen record, but never both sides of the split within scope,
+    so this is a definitional justification, not a case seen in published
+    data; measured 2026-08-04 against `gene_validity`'s real output, where
+    exactly one gene sets `has_conflicting_evidence` -- LEFTY2, HGNC:3122, via
+    a *cross-source* split -- and it also sets `has_source_discordance`.) Only
+    a record with a mapped `classification` takes a side: GenCC's
     `Supportive` maps to `None` and is a submitter declining to grade evidence,
     not evidence *for* the gene, and `NO_KNOWN_ASSOCIATION` is a stated absence
     of association, not support for one.
