@@ -43,6 +43,9 @@ EXHAUSTIVE: dict[str, str] = {
     "## `featured.json`": "featured",
     "## `phenotypes.json`": "phenotype",
     "## `search/index.json.gz`": "search_record",
+    "### The bundle's `validity` object: mirrored, attributed, never authored here": (
+        "validity_record"
+    ),
 }
 
 
@@ -88,6 +91,12 @@ def _published(site: Path, kind: str) -> dict[str, Any]:
         return dict(load("phenotypes.json")["phenotypes"][0])
     if kind == "search_record":
         return dict(load("search/index.json.gz")["records"][0])
+    if kind == "validity_record":
+        # TBX5 (HGNC:11604) is the committed corpus's one asserted gene, and its
+        # first record is ClinGen's -- `build.validity._sort_key` sorts
+        # `(source, disease, moi, submitter)`, and "clingen" precedes "gencc"
+        # lexically.
+        return dict(load("genes/HGNC_11604.json")["validity"]["records"][0])
     raise AssertionError(f"unknown kind {kind}")
 
 

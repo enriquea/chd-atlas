@@ -42,7 +42,15 @@ from chd_atlas.corpus import Corpus
 # 1.1 added `genes` to every omics shard row (issue #3) and
 # `conflicting_lesion_groups` to every gene index row (issue #4). Both are
 # additive, so 1.0 readers are unaffected.
-SCHEMA_VERSION: Final = "1.1"
+#
+# 2.0 removed `classification` and `source_tier` from the curated assertion and
+# moved gene-disease validity to mirrored, attributed records (design decision
+# D12: the atlas no longer authors a validity call of its own). A 1.x reader
+# looking for a classification on the assertion finds none, which is a
+# breaking change and so MAJOR rather than MINOR, even though the release's
+# other change — the gene bundle's new `validity` object, carrying every
+# mirrored record and its provenance — is purely additive on its own.
+SCHEMA_VERSION: Final = "2.0"
 
 
 def source_commit(root: Path) -> str | None:

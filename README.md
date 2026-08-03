@@ -18,8 +18,9 @@ lists — every served file except itself, which cannot contain its own checksum
 
 `sources.json` records what the atlas mirrors and on whose terms — phenotype
 labels come from the Human Phenotype Ontology, whose licence requires
-attribution, and the `LICENSE` in this repository covers the code rather than
-mirrored third-party content.
+attribution; gene-disease validity is mirrored from ClinGen and GenCC, which
+this atlas attributes but does not curate itself. The `LICENSE` in this
+repository covers the code rather than mirrored third-party content.
 
 The shape of each file is documented in [docs/data-api.md](docs/data-api.md).
 Consumers should read that before writing against the output — in particular the

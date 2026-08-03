@@ -50,7 +50,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "1.1",
+  "schema_version": "2.0",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>"
 }
 ```
@@ -74,7 +74,11 @@ wrong by the next one.
   nothing is removed or repurposed, so a consumer written against an earlier
   version keeps working; **major** rises when a field changes shape or leaves.
   `1.1` added `genes` to omics shard rows and `conflicting_lesion_groups` to
-  gene index rows.
+  gene index rows. `2.0` removed `classification` and `source_tier` from the
+  curated assertion — the atlas no longer authors a gene-disease validity call
+  of its own — and added the gene bundle's `validity` object in their place.
+  The removal is what makes it major: a 1.x reader looking for a
+  classification on the assertion now finds none.
 
 ## `genes/index.json`
 
@@ -155,11 +159,12 @@ One gene's whole detail page, in one fetch.
 {
   "gene": "HGNC:11604",
   "symbol": "TBX5",
-  "headline_confidence": null,
-  "validity_state": "uncurated",
+  "headline_confidence": "definitive",
+  "validity_state": "expert_curated",
   "has_conflicting_evidence": false,
   "has_source_discordance": false,
   "lesion_groups": ["septal"],
+  "validity": { "state": "expert_curated", "has_source_discordance": false, "records": [ … ] },
   "publications": ["PMID:8988165"],
   "assertions": [ { "id": "CHDA:AST:0000001", "lesion_groups": ["septal"], "evidence": [ … ] } ],
   "functional": [],
@@ -190,6 +195,75 @@ One gene's whole detail page, in one fetch.
 - `publications` lists the PMIDs the gene's assertion evidence cites, in lexical
   order. It does not include PMIDs cited only by its functional records.
 - `assertions` and `functional` are ordered by id.
+
+### The bundle's `validity` object: mirrored, attributed, never authored here
+
+**This atlas publishes no gene-disease validity classification of its own.**
+`headline_confidence`, `validity_state`, `has_conflicting_evidence` and
+`has_source_discordance` at the top of the bundle come entirely from ClinGen
+and GenCC, mirrored and attributed rather than asserted by a curator — see
+[Contested genes](#contested-genes-the-one-consumer-obligation) for how to
+read them safely. The bundle's `validity` object is where the mirrored records
+behind those fields live:
+
+- `state` repeats `validity_state`. `has_source_discordance` repeats the
+  top-level field of the same name. Both are published twice on purpose: the
+  flat fields are what the browse row (`genes/index.json`) and the bundle
+  publish identically, and this object is the self-contained provenance
+  record for a consumer that wants only "who curated this gene, and what did
+  each of them say" without cross-referencing the fields beside it.
+- `records` is one entry per in-scope mirrored classification, ClinGen's and
+  GenCC's alike, in no particular order a consumer should rely on beyond what
+  is published. Every record carries the same key set regardless of source:
+
+  ```json
+  {
+    "source": "clingen",
+    "classification_term": "Definitive",
+    "classification": "definitive",
+    "disease": "MONDO:0007732",
+    "disease_label": "Holt-Oram syndrome",
+    "moi": "AD",
+    "sop": "SOP11",
+    "classification_date": "2025-03-25T16:00:00.000Z",
+    "gcep": "Syndromic Disorders Gene Curation Expert Panel",
+    "report_url": "https://search.clinicalgenome.org/kb/gene-validity/CGGV:assertion_24e6c85a-33cf-4248-be1f-6431c7c6b1e5-2025-03-25T160000.000Z",
+    "submitter": null
+  }
+  ```
+
+  - `classification_term` is the authority's own word, verbatim — "Definitive",
+    "Disputed Evidence", "Supportive". `classification` maps that term onto
+    this atlas's `Classification` scale (the same values `headline_confidence`
+    publishes), or `null` where the term is not a rung on it at all — GenCC's
+    `Supportive`, a submitter asserting an association without grading its
+    strength. A consumer that wants to render exactly what the authority said
+    reads `classification_term`; one that wants to filter or rank reads
+    `classification` and must handle `null`.
+  - `sop`, `classification_date` and `gcep` are populated only on a ClinGen
+    record; `submitter` only on a GenCC record. The field a record's own
+    source does not carry is published as `null` rather than omitted, so
+    every object in `records` has the same shape and a consumer never has to
+    check `source` before it can look a key up.
+  - `sop` is published because ClinGen's committed mirror spans SOP4 through
+    SOP12 with no crosswalk between framework versions published anywhere. A
+    classification attributed to ClinGen without its SOP version is an
+    unqualified claim — the same rule under a different framework applies
+    equally to a rung on the classification ladder itself.
+  - `moi` and `disease`/`disease_label` are the authority's own mode of
+    inheritance and disease term for that specific record — ClinGen and GenCC
+    do not always agree on either, which is part of why two records for one
+    gene can differ.
+- `state` is one of three values, the same ones `validity_state` publishes:
+  `"expert_curated"` (at least one in-scope ClinGen record exists),
+  `"submitter_curated"` (only GenCC has assessed the gene) or `"uncurated"`
+  (neither mirror has). An uncurated gene publishes `records: []` and
+  `has_source_discordance: false` — the explicit empty shape, not an absent
+  `validity` key, so a consumer can tell "no authority has assessed this
+  gene" from "the field is missing" without guessing.
+
+`sources.json` (below) carries the licence terms this atlas mirrors ClinGen
+and GenCC under, the same way it does for HPO.
 
 ## `omics/<modality>/<accession>.json`
 
@@ -372,6 +446,14 @@ mirrored third-party content, whose terms are the ones recorded here.
 `version` is the upstream release identifier and `retrieved_on` the date it was
 taken, so a claim can be traced to the exact release it rests on.
 
+The registry also carries `clingen` and `gencc` — the two sources every
+mirrored record in a gene bundle's `validity.records` is attributed to.
+Both are recorded `"redistribution": "permitted"` (CC0-1.0), unlike HPO's
+`"permitted_with_attribution"`: neither authority's licence requires an
+attribution notice to redistribute their content, though GenCC's terms
+*request* one. This file is where that distinction is recorded, rather than
+assumed from the presence of a `validity` object.
+
 ## `search/index.json.gz`
 
 A flat array of records over genes, publications and phenotypes. Deliberately
@@ -413,6 +495,18 @@ outranks `refuted`. ClinGen treats disputed and refuted as a **separate axis**
 rather than weaker rungs of the same ladder, so a gene whose mirrored records
 carry both a definitive and a refuted classification resolves to `definitive`
 and the refutation is invisible in that field alone.
+
+**`headline_confidence` is `null` for a gene no authority has assessed, and
+must never be rendered as `"no_known_association"`.** The two are not
+interchangeable: `no_known_association` is itself an assessed verdict — a
+panel looked and found nothing — while `null` means no panel looked at all.
+Coercing an uncurated gene's `null` to `"no_known_association"` would fabricate
+a conclusion nobody reached. This atlas publishes no gene-disease validity
+classification of its own; every value `headline_confidence` can take,
+including the absence of one, is mirrored and attributed from ClinGen or
+GenCC — see the bundle's `validity` object, documented under
+[`genes/<slug>.json`](#genesslugjson), for the records behind it and
+`sources.json` for the licence terms those two mirrors are republished under.
 
 `has_conflicting_evidence` is the other half of that pair. It appears in both
 the browse row and the bundle, and is always written alongside
