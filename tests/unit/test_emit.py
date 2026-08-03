@@ -80,6 +80,15 @@ def test_compression_embeds_no_timestamp(monkeypatch: pytest.MonkeyPatch) -> Non
     assert first == second
     assert gzip.decompress(first) == b"payload"
 
+    # The equality above proves the header carries *a* fixed value, not that it
+    # carries zero: `mtime=1` satisfies it just as well. Measured by mutation on
+    # 2026-08-03 — flipping `mtime=0` to `mtime=1` in `compress` survived the
+    # whole suite, changing the MTIME field and therefore every published `.gz`
+    # checksum with nothing red. Bytes 4-7 of a gzip header are that field, so
+    # pinning them is what makes the documented invariant checkable rather than
+    # merely stated.
+    assert first[4:8] == b"\x00\x00\x00\x00"
+
 
 def test_compression_level_is_pinned() -> None:
     """Changing the level re-checksums every `.gz` in the atlas at once.

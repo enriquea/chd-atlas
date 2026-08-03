@@ -136,12 +136,19 @@ def test_the_seed_gene_and_its_manuscript_render_from_the_payloads_alone(site: P
     for resolvable entries and a string otherwise, so a consumer reading
     `entry.publication.title` got `undefined` with nothing raised — in the one
     payload the landing page renders without a further fetch.
+
+    `headline_confidence` and `validity_state` read `"definitive"` and
+    `"expert_curated"` here, not `null`/`"uncurated"`: the committed ClinGen
+    mirror curates TBX5 Definitive for Holt-Oram syndrome
+    (`MONDO:0007732`), `build_site` reads that mirror, and a gene the mirror
+    plainly classifies must not publish as unassessed.
     """
     entry = next(
         item for item in _read(site, "genes/index.json")["genes"] if item["gene"] == "HGNC:11604"
     )
     assert entry["symbol"] == "TBX5"
     assert entry["headline_confidence"] == "definitive"
+    assert entry["validity_state"] == "expert_curated"
     assert entry["has_conflicting_evidence"] is False
 
     bundle = _read(site, entry["bundle"])
@@ -158,3 +165,30 @@ def test_the_seed_gene_and_its_manuscript_render_from_the_payloads_alone(site: P
         "publication",
         "phenotype",
     }
+
+
+def test_tbx5_publishes_its_mirrored_validity_with_the_provenance_behind_it(
+    site: Path,
+) -> None:
+    """The gene bundle's `validity` block, checked against the real mirrors.
+
+    Not a fixture: `mirrors/clingen_gene_validity.tsv` curates TBX5 Definitive
+    for Holt-Oram syndrome under SOP11, so the bundle's first record must carry
+    that, and it must carry it *with its SOP version* — an attributed
+    classification with no SOP is an unqualified claim, since the mirror spans
+    SOP4 through SOP12 with no published crosswalk between them.
+
+    `has_source_discordance` is asserted with `is`, not `==`: `{"f": 0} ==
+    {"f": False}` is `True` in Python, so an equality alone would silently
+    accept an `int` where the published contract is a `bool`.
+    """
+    bundle = _read(site, "genes/HGNC_11604.json")
+    validity = bundle["validity"]
+
+    assert validity["state"] == "expert_curated"
+    assert validity["has_source_discordance"] is False
+
+    clingen = validity["records"][0]
+    assert clingen["source"] == "clingen"
+    for field in ("source", "classification_term", "disease", "sop", "report_url"):
+        assert clingen[field], f"{field} is empty on TBX5's ClinGen record"

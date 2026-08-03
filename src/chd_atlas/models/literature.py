@@ -64,11 +64,22 @@ class FeaturedFile(BaseModel):
 
 
 class PhenotypeTerm(BaseModel):
+    """One HPO term the atlas cites, cardiac or not.
+
+    `lesion_group` is `None` for a term that is not itself a cardiac lesion --
+    an extracardiac feature registered here only so `validate_labels` can check
+    its transcription, the same guarantee every cardiac term already gets.
+    `None` here is why `validate/referential.py`'s REF010 does not flag such a
+    term when an assertion cites it under `extracardiac_features`: that check
+    reads `is not None`, so only a term that *is* a cardiac lesion group can
+    make an assertion look internally inconsistent.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     id: PhenotypeId
     label: str = Field(min_length=1)
-    lesion_group: LesionGroup
+    lesion_group: LesionGroup | None = None
     synonyms: list[str] = Field(default_factory=list)
 
 

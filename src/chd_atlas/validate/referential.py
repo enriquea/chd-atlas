@@ -94,8 +94,11 @@ def validate_references(corpus: Corpus, known_genes: set[str] | None) -> list[Va
                     f"lesion groups {unjustified} are not justified by any declared phenotype",
                 )
 
-        # curation/phenotypes.yaml is the atlas's own register of cardiac lesions, so a
-        # term listed there cannot also be what makes the assertion syndromic.
+        # curation/phenotypes.yaml also registers extracardiac terms, purely so
+        # their labels get checked (`PhenotypeTerm.lesion_group` is `None` for
+        # those), so `lesion_group_of.get(feature)` is `None` for a genuinely
+        # extracardiac term and only non-`None` for a term that is *also* a
+        # cardiac lesion -- one that cannot be what makes the assertion syndromic.
         for feature in assertion.extracardiac_features:
             feature_group = lesion_group_of.get(feature)
             if feature_group is not None:

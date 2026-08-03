@@ -15,13 +15,11 @@ from chd_atlas.identifiers import (
     Pmid,
 )
 from chd_atlas.vocab import (
-    Classification,
     EvidenceClass,
     EvidenceStrength,
     Inheritance,
     LesionGroup,
     Mechanism,
-    SourceTier,
     SyndromicStatus,
 )
 
@@ -85,19 +83,34 @@ class Evidence(BaseModel):
         return self
 
 
-class GeneDiseaseAssertion(BaseModel):
+class LesionAssertion(BaseModel):
+    """A curator's claim that a gene belongs to one or more CHD lesion groups.
+
+    Renamed from `GeneDiseaseAssertion` when validity classifications moved to
+    the mirrors. The old name invited the old conflation: this record no
+    longer says whether the gene causes disease -- an expert panel says that,
+    and `build/validity.py` publishes what they said. What is left is the part
+    the curator is the authority for, and it is the part no validity resource
+    publishes. Measured 2026-08-03: 86 of the 99 ClinGen Congenital Heart
+    Disease GCEP curations use the single undifferentiated term
+    `MONDO:0005453`, so a consumer cannot ask any authority which genes cause
+    conotruncal defects.
+
+    The YAML top-level key stays `assertions:` (see `AssertionFile` below) --
+    renaming it would churn every curation file and fixture to express a
+    distinction the class name already carries.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     id: AssertionId
     gene: HgncId
     phenotypes: list[PhenotypeId] = Field(min_length=1)
     lesion_groups: list[LesionGroup] = Field(min_length=1)
-    classification: Classification
     inheritance: list[Inheritance] = Field(min_length=1)
     mechanism: Mechanism
     syndromic: SyndromicStatus
     evidence: list[Evidence] = Field(min_length=1)
-    source_tier: SourceTier
     curator: str = Field(min_length=1)
     curated_on: date
     last_reviewed: date
@@ -105,19 +118,19 @@ class GeneDiseaseAssertion(BaseModel):
     notes: str | None = None
 
     @model_validator(mode="after")
-    def extracardiac_requires_syndromic(self) -> GeneDiseaseAssertion:
+    def extracardiac_requires_syndromic(self) -> LesionAssertion:
         if self.extracardiac_features and self.syndromic is SyndromicStatus.ISOLATED:
             raise ValueError("'extracardiac_features' cannot be set when syndromic is 'isolated'")
         return self
 
     @model_validator(mode="after")
-    def syndromic_lists_extracardiac_features(self) -> GeneDiseaseAssertion:
+    def syndromic_lists_extracardiac_features(self) -> LesionAssertion:
         if self.syndromic is SyndromicStatus.SYNDROMIC and not self.extracardiac_features:
             raise ValueError("syndromic assertions must list at least one extracardiac feature")
         return self
 
     @model_validator(mode="after")
-    def review_not_before_curation(self) -> GeneDiseaseAssertion:
+    def review_not_before_curation(self) -> LesionAssertion:
         if self.last_reviewed < self.curated_on:
             raise ValueError("'last_reviewed' cannot precede 'curated_on'")
         return self
@@ -128,4 +141,4 @@ class AssertionFile(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    assertions: list[GeneDiseaseAssertion] = Field(min_length=1)
+    assertions: list[LesionAssertion] = Field(min_length=1)

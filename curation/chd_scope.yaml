@@ -1,0 +1,420 @@
+# What counts as congenital heart disease for this atlas.
+#
+# RULE (decided 2026-08-03): a term is in scope if it names a congenital structural
+# malformation of the heart, or names a syndrome whose definition includes one.
+# Cardiomyopathy, arrhythmia, channelopathy, aortopathy and acquired cardiac disease
+# are out, however many genes they carry.
+#
+# A gene enters the atlas only if some mirrored row names a term on this list.
+# Neither mechanical rule works: filtering by expert panel drops TBX5, NOTCH1 and CHD7,
+# and no MONDO is_a closure means CHD (see src/chd_atlas/models/scope.py). Labels are
+# transcribed from the mirrors and checked by SCP002.
+diseases:
+  - id: MONDO:0000119
+    label: congenital heart defects, multiple types
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0004933
+    label: hypoplastic left heart syndrome
+    reason: >-
+      Hypoplastic left heart syndrome: a left-sided obstructive malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0005453
+    label: congenital heart disease
+    reason: >-
+      The root CHD entity, and the term 86 of the 99 Congenital Heart Disease GCEP curations use.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0006664
+    label: atrial septal defect
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0007173
+    label: atrial septal defect 7
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0007318
+    label: Alagille syndrome
+    reason: >-
+      Alagille syndrome: peripheral pulmonic stenosis and TOF are among the cardinal criteria.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0007732
+    label: Holt-Oram syndrome
+    reason: >-
+      Holt-Oram syndrome: cardiac septation defects are a defining feature. Outside the MONDO CHD branch and curated by the Syndromic Disorders GCEP, so no mechanical rule would admit it.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0007843
+    label: Kabuki syndrome 1
+    reason: >-
+      Kabuki syndrome 1: coarctation and left-sided obstructive lesions are a major feature. Curated by the SCID-CID GCEP.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0008504
+    label: supravalvular aortic stenosis
+    reason: >-
+      Supravalvular aortic stenosis: a congenital outflow malformation, and the ELN cardiac phenotype.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0008542
+    label: tetralogy of fallot
+    reason: >-
+      Tetralogy of Fallot: a conotruncal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0008832
+    label: right atrial isomerism
+    reason: >-
+      Right atrial isomerism: a laterality defect defined by cardiac morphology.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0008913
+    label: cardiac valvular defect, developmental
+    reason: >-
+      A developmental defect of the cardiac valves.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0008965
+    label: CHARGE syndrome
+    reason: >-
+      CHARGE syndrome: the H is heart defects, a cardinal diagnostic criterion. Curated by the Hearing Loss GCEP.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0009162
+    label: Ellis-van Creveld syndrome
+    reason: >-
+      Ellis-van Creveld syndrome: a common atrium or ASD occurs in roughly 60% and is a cardinal feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0009341
+    label: Mowat-Wilson syndrome
+    reason: >-
+      Mowat-Wilson syndrome: CHD, predominantly septal and PDA, occurs in roughly half.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0010465
+    label: Kabuki syndrome 2
+    reason: >-
+      Kabuki syndrome 2: as Kabuki 1, allelic at KDM6A.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0010607
+    label: heterotaxy, visceral, 1, X-linked
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0010711
+    label: TARP syndrome
+    reason: >-
+      TARP syndrome: the A is atrial septal defect, named in the acronym.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0010753
+    label: cardiac valvular dysplasia, X-linked
+    reason: >-
+      A developmental defect of the cardiac valves.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0011546
+    label: heterotaxy, visceral, 2, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0011650
+    label: atrioventricular septal defect, susceptibility to, 2
+    reason: >-
+      Atrioventricular septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0011938
+    label: atrial septal defect 2
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0012654
+    label: atrial septal defect 4
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013011
+    label: atrial septal defect 5
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013123
+    label: atrial septal defect 6
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013403
+    label: heterotaxy, visceral, 4, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013463
+    label: congenital heart defects, multiple types, 6
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013567
+    label: atrial septal defect 3
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013746
+    label: ventricular septal defect 1
+    reason: >-
+      Ventricular septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013748
+    label: ventricular septal defect 2
+    reason: >-
+      Ventricular septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013750
+    label: atrial septal defect 8
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013769
+    label: atrioventricular septal defect 5
+    reason: >-
+      Atrioventricular septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013770
+    label: atrial septal defect 9
+    reason: >-
+      Atrial septal defect: a septal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013887
+    label: heterotaxy, visceral, 6, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0014000
+    label: congenital heart defects, multiple types, 2
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0014344
+    label: congenital heart defects, multiple types, 4
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0014762
+    label: heterotaxy, visceral, 7, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0014878
+    label: patent ductus arteriosus 2
+    reason: >-
+      Patent ductus arteriosus: a congenital structural lesion.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0014967
+    label: heterotaxy, visceral, 8, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0016460
+    label: polyvalvular heart disease syndrome
+    reason: >-
+      Malformation of multiple cardiac valves.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0016581
+    label: conotruncal heart malformations
+    reason: >-
+      Conotruncal malformations as a lesion class.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0018072
+    label: persistent truncus arteriosus
+    reason: >-
+      Persistent truncus arteriosus: a conotruncal malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0018677
+    label: visceral heterotaxy
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0019512
+    label: congenital heart malformation
+    reason: >-
+      A congenital structural malformation of the heart by definition.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0024266
+    label: patent ductus arteriosus 3
+    reason: >-
+      Patent ductus arteriosus: a congenital structural lesion.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0030070
+    label: heterotaxy, visceral, 9, autosomal, with male infertility
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0030475
+    label: heterotaxy, visceral, 11, autosomal, with male infertility
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0032913
+    label: congenital heart defects, multiple types, 7
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0060663
+    label: congenital heart defects, multiple types, 5
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0100009
+    label: structural congenital heart disease, multiple types - GATA4
+    reason: >-
+      GATA4's structural CHD entity, curated by the Congenital Heart Disease GCEP.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0100540
+    label: GATA6-related congenital heart disease with or without pancreatic agenesis or neonatal diabetes
+    reason: >-
+      GATA6-related congenital heart disease.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0100557
+    label: RBFOX2-related congenital heart disorder
+    reason: >-
+      RBFOX2-related congenital heart disorder.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0100614
+    label: syndromic congenital heart disease
+    reason: >-
+      Syndromic CHD as an entity in its own right.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0700112
+    label: heterotaxy, visceral, 5, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0800441
+    label: NKX2.5-related congenital, conduction and myopathic heart disease
+    reason: >-
+      NKX2-5-related congenital, conduction and myopathic disease: septal defects are the congenital arm.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0800442
+    label: MYH-6 related congenital heart defects
+    reason: >-
+      MYH6-related congenital heart defects.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0800458
+    label: NR2F2 related multiple congenital anomalies/dysmorphic syndrome
+    reason: >-
+      NR2F2-related multiple congenital anomalies: curated by the Congenital Heart Disease GCEP.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0800476
+    label: HAND2 related congenital heart defect
+    reason: >-
+      HAND2-related congenital heart defect.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0859213
+    label: congenital heart defects, multiple types, 8, with or without heterotaxy
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0859532
+    label: congenital heart defects, multiple types, 9
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0859572
+    label: cardiac valvular dysplasia 2
+    reason: >-
+      A developmental defect of the cardiac valves.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:1010098
+    label: TFAP2B-related congenital heart disease spectrum disorder
+    reason: >-
+      TFAP2B-related CHD spectrum (Char syndrome): patent ductus arteriosus is definitional.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:1010144
+    label: PLD1-related congenital heart disease
+    reason: >-
+      PLD1-related congenital heart disease.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:1060197
+    label: congenital heart disease with heterotaxy syndrome
+    reason: >-
+      CHD with heterotaxy, named as such.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0003803
+    label: aortic valve disorder
+    reason: >-
+      Aortic valve disorder: a malformation of the aortic valve.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0007194
+    label: familial bicuspid aortic valve
+    reason: >-
+      Familial bicuspid aortic valve: a congenital malformation of the aortic valve, and NOTCH1's CHD entity. Admitted because excluding it dropped NOTCH1, a major left-sided obstructive CHD gene.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0013902
+    label: aortic valve disease 2
+    reason: >-
+      Aortic valve disease 2: a congenital aortic valve malformation.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03
+  - id: MONDO:0032783
+    label: aortic valve disease 3
+    reason: >-
+      Aortic valve disease 3: a congenital aortic valve malformation, and the entity the Congenital Heart Disease GCEP itself curates ROBO4 under.
+    admitted_by: Enrique Audain
+    admitted_on: 2026-08-03

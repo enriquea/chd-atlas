@@ -27,6 +27,11 @@ from chd_atlas.validate.referential import (
     validate_ptm_evidence_is_reachable,
     validate_references,
 )
+from chd_atlas.validate.scope import (
+    scope_candidates,
+    validate_curation_is_in_scope,
+    validate_scope_terms,
+)
 from chd_atlas.validate.sort_order import validate_sort_order
 from chd_atlas.validate.sources import load_sources, validate_source_references
 
@@ -119,6 +124,55 @@ def _known_genes(root: Path) -> set[str] | None:
     if frame is None or "hgnc_id" not in frame.columns:
         return None
     return {value for value in frame["hgnc_id"].to_list() if value is not None}
+
+
+def _mirrored_validity(
+    root: Path,
+) -> tuple[dict[str, str], dict[str, set[str]], dict[str, set[str]]] | None:
+    """Disease labels and gene/disease cross-links, from every validity mirror.
+
+    Returns three mappings the scope validators need, built once from both
+    mirror tables so each validator stays a pure check over already-loaded
+    data:
+
+    - a MONDO term -> the label its authority (ClinGen or GenCC) published
+    - a MONDO term -> every HGNC id curated under it
+    - an HGNC id -> every MONDO term it is curated under
+
+    None is deliberately distinct from an empty result, for exactly the reason
+    `_known_genes` returns None: checking every scope term against an empty
+    mapping would report SCP001 once per term — 68 failures naming the
+    symptom, none naming the cause — so a mirror that could not be read at all
+    is reported once, as SCP000, and nothing else runs. Unlike `_known_genes`,
+    which needs one file, this needs *neither* mirror to be readable before
+    giving up — one working mirror still gives real, if partial, coverage.
+    """
+    labels: dict[str, str] = {}
+    genes_by_disease: dict[str, set[str]] = {}
+    diseases_by_gene: dict[str, set[str]] = {}
+    read_any = False
+    # GenCC first, so ClinGen's label overwrites it below: ClinGen is the
+    # primary source for gene-disease validity and GenCC harmonises rather
+    # than authors, so preferring GenCC's label would attribute it to the
+    # resource that did not write it.
+    for schema_name, filename in (
+        ("gencc_submissions", "gencc_submissions.tsv"),
+        ("clingen_validity", "clingen_gene_validity.tsv"),
+    ):
+        path = root / "mirrors" / filename
+        frame, _ = read_table(path, TABLE_SCHEMAS[schema_name])
+        if frame is None or "disease" not in frame.columns:
+            continue
+        read_any = True
+        for disease, label, gene in frame.select(["disease", "disease_label", "gene"]).iter_rows():
+            if disease is None:
+                continue
+            if label is not None:
+                labels[str(disease)] = str(label)
+            if gene is not None:
+                genes_by_disease.setdefault(str(disease), set()).add(str(gene))
+                diseases_by_gene.setdefault(str(gene), set()).add(str(disease))
+    return (labels, genes_by_disease, diseases_by_gene) if read_any else None
 
 
 def _relative_to_root(issues: list[ValidationIssue], root: Path) -> list[ValidationIssue]:
@@ -216,6 +270,51 @@ def validate_repository(root: Path) -> ValidationReport:
         # reads the gene registry, so on a corpus that failed to load it would
         # report a missing accession for every gene at once.
         issues.extend(validate_ptm_evidence_is_reachable(root, corpus))
+
+        # Same branch, same reasoning again: a corpus that failed to load empties
+        # `corpus.chd_scope`, and every scope term would then look absent.
+        scope_location = str(root / "curation" / "chd_scope.yaml")
+        mirrored = _mirrored_validity(root)
+        if mirrored is None:
+            # SCP000 alone is a WARNING, and `ValidationReport.ok` ignores
+            # warnings — so without an accompanying ERROR, a repository missing
+            # both validity mirrors would validate "clean" while every scope
+            # check silently could not run, and `build_site` would publish it
+            # anyway. Same shape as `TBL008` for a missing gene registry: name
+            # the cause as an error, located at the mirrors directory because
+            # two files are implicated and neither alone explains it.
+            issues.append(
+                ValidationIssue(
+                    "TBL012",
+                    Severity.ERROR,
+                    str(root / "mirrors"),
+                    "the validity mirrors are missing or unreadable, so no gene "
+                    "can be placed in scope",
+                )
+            )
+            issues.extend(validate_scope_terms(corpus.chd_scope, None, scope_location))
+        else:
+            labels, genes_by_disease, diseases_by_gene = mirrored
+            issues.extend(validate_scope_terms(corpus.chd_scope, labels, scope_location))
+            scope_terms = {str(entry.id) for entry in corpus.chd_scope}
+            in_scope_genes = {
+                gene for term in scope_terms for gene in genes_by_disease.get(term, set())
+            }
+            issues.extend(
+                scope_candidates(
+                    scope_terms, labels, diseases_by_gene, in_scope_genes, scope_location
+                )
+            )
+            # `Corpus` does not record which file each assertion was loaded from
+            # (see `corpus.py::Corpus`), so every curated gene is attributed to
+            # the assertions directory rather than a specific file within it —
+            # coarser than a curator fixing SCP004 would want, but not a
+            # precision this module has and is pretending not to.
+            curated_genes = {
+                str(assertion.gene): str(root / "curation" / "assertions")
+                for assertion in corpus.assertions
+            }
+            issues.extend(validate_curation_is_in_scope(curated_genes, in_scope_genes))
 
     # Same reasoning as the referential skip above: on a failed registry load
     # `registry` is empty, so every source every mirror table uses would report
