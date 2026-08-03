@@ -697,13 +697,26 @@ def test_vectorized_checks_report_one_offender_of_each_kind_at_distinct_rows(
     or reporting an `arg_true()` index instead of a row position -- would
     either misreport the row number or drop the offender entirely, and a
     fixture where every offender sat on row 2 would leave exactly that bug
-    invisible. Row order here is asserted too: `validate_table` iterates
-    columns in schema order and, per column, TBL003 before TBL010 before
-    TBL004 before TBL005 before TBL006 -- so despite `score`'s row (5) sorting
-    before `tier`'s (4), TBL004 is reported before TBL010, because `tier`
-    comes before `score` in the schema. Measured by running this exact
-    fixture, not inferred: guessing this order from the source got it wrong
-    once already while drafting this test.
+    invisible. Row order here is asserted too, and on two different axes that
+    must not be conflated:
+
+    - *Within* one column, `validate_table` runs whichever of its checks that
+      column's schema entry declares, always in the order TBL003, then
+      TBL010, then TBL004, then TBL005, then TBL006. No column in this
+      fixture reaches more than two of them (`gene`: TBL003, TBL005; `tier`:
+      TBL004; `score`: TBL010; `n`: TBL006), so this axis alone does not
+      explain the asserted order below -- it only ever arbitrates two checks
+      landing on the *same* column.
+    - *Across* columns, the outer loop visits `schema.columns` in schema
+      order -- gene, tier, score, n -- before row numbers enter into it at
+      all, so an offender is grouped with its column rather than sorted by
+      which row it sits on. That is the axis this fixture actually exercises:
+      `gene`'s TBL005 (row 6) is reported ahead of `tier`'s TBL004 (row 4) and
+      `score`'s TBL010 (row 5) -- both on numerically *earlier* rows -- solely
+      because `gene` is the first column in the schema.
+
+    Measured by running this exact fixture, not inferred: guessing this order
+    from the source got it wrong once already while drafting this test.
 
     Also the equivalence proof for the offender case: `validate_table`
     (vectorized) and `_slow_validate_table` (the original per-row Python

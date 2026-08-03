@@ -161,7 +161,13 @@ def _mirrored_validity(
     ):
         path = root / "mirrors" / filename
         frame, _ = read_table(path, TABLE_SCHEMAS[schema_name])
-        if frame is None or "disease" not in frame.columns:
+        # All three columns this loop selects, not only `disease`: an upstream
+        # rename can drop `disease_label` or `gene` just as easily, and
+        # `frame.select` raises `ColumnNotFoundError` on any one of them
+        # missing — `validate_table` (called separately, over the same file)
+        # already reports that as TBL001, so nothing is lost by skipping the
+        # mirror here rather than crashing the whole validation run on it.
+        if frame is None or not {"disease", "disease_label", "gene"}.issubset(frame.columns):
             continue
         read_any = True
         for disease, label, gene in frame.select(["disease", "disease_label", "gene"]).iter_rows():
