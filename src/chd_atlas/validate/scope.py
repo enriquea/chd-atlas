@@ -219,3 +219,42 @@ def scope_candidates(
             )
         )
     return issues
+
+
+def validate_curation_is_in_scope(
+    curated_genes: Mapping[str, str],
+    in_scope_genes: set[str],
+) -> list[ValidationIssue]:
+    """Refuse a curated gene that no scope term admits.
+
+    `curated_genes` maps an HGNC id to the file that curates it -- an
+    assertion's file, typically, built by the caller from the corpus rather
+    than read here, matching this module's other two checks.
+
+    This is the silent-evidence-loss guard for the scope backbone: without
+    it, a curator can write a complete, referentially sound assertion about a
+    gene `curation/chd_scope.yaml` never admitted, and it reaches no
+    published page while `chd-atlas validate` reports 0 errors and every
+    checksum verifies -- this project's characteristic failure, described in
+    `CLAUDE.md` and reproduced in exactly this shape by the phospho-join and
+    empty-omics-shard defects that motivated writing that description down.
+
+    ERROR, not WARNING, unlike SCP003's unreviewed candidate. SCP003 warns
+    about a term nobody has judged yet; this is curator judgement that
+    already exists -- the assertion was written, reviewed, and committed --
+    and would be silently discarded by the build rather than merely
+    unreviewed. The message tells the curator the two ways to resolve it:
+    admit the gene's disease term into scope, or remove the record, because
+    only a human can decide which of those is correct.
+    """
+    return [
+        ValidationIssue(
+            "SCP004",
+            Severity.ERROR,
+            curated_genes[gene],
+            f"gene {gene} is curated but no scope term admits it; admit its "
+            f"disease term in curation/chd_scope.yaml, or remove the record",
+        )
+        for gene in sorted(curated_genes)
+        if gene not in in_scope_genes
+    ]

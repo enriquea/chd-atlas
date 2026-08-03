@@ -9,7 +9,11 @@ from datetime import date
 
 from chd_atlas.issues import Severity
 from chd_atlas.models.scope import ScopeEntry
-from chd_atlas.validate.scope import scope_candidates, validate_scope_terms
+from chd_atlas.validate.scope import (
+    scope_candidates,
+    validate_curation_is_in_scope,
+    validate_scope_terms,
+)
 
 _LOCATION = "curation/chd_scope.yaml"
 
@@ -168,5 +172,27 @@ def test_nothing_to_report_is_an_empty_list() -> None:
         in_scope_genes=in_scope_genes,
         location=_LOCATION,
     )
+
+    assert issues == []
+
+
+# --- validate_curation_is_in_scope ----------------------------------------
+
+
+def test_an_out_of_scope_curated_gene_is_reported_at_its_file() -> None:
+    curated_genes = {"HGNC:11604": "curation/assertions/TBX5.yaml"}
+
+    issues = validate_curation_is_in_scope(curated_genes, in_scope_genes=set())
+
+    assert [i.code for i in issues] == ["SCP004"]
+    assert issues[0].severity is Severity.ERROR
+    assert issues[0].location == "curation/assertions/TBX5.yaml"
+    assert "HGNC:11604" in issues[0].message
+
+
+def test_an_in_scope_curated_gene_is_accepted() -> None:
+    curated_genes = {"HGNC:11604": "curation/assertions/TBX5.yaml"}
+
+    issues = validate_curation_is_in_scope(curated_genes, in_scope_genes={"HGNC:11604"})
 
     assert issues == []
