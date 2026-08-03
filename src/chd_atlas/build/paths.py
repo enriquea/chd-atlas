@@ -104,3 +104,10 @@ DATASETS: Final = "datasets.json"
 # labels and synonyms verbatim — so the attribution has to travel with the data,
 # not sit only in a README a JSON consumer never opens.
 SOURCES: Final = "sources.json"
+
+# The site's front door, not identifier-based like `gene_bundle_path` — there is
+# exactly one, so nothing here builds it from a value. Named as a constant
+# anyway, for the same reason as the four above: `build/landing.py` writes it
+# and `tests/unit/test_build_landing.py` has to name the same file without
+# either one hardcoding a string the other could drift from.
+LANDING: Final = "index.html"

@@ -25,6 +25,7 @@ from pathlib import Path
 
 from chd_atlas.build.bundles import build_genes
 from chd_atlas.build.emit import Emitter
+from chd_atlas.build.landing import build_landing
 from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
@@ -101,18 +102,27 @@ def _gene_registry(root: Path) -> dict[str, GeneLabels]:
     registry: dict[str, GeneLabels] = {}
     for row in frame.to_dicts():
         gene = _cell(row.get("hgnc_id"))
-        symbol = _cell(row.get("symbol"))
-        # Both are non-nullable in the schema, so a blank here is a bypassed
-        # TBL003. A row with no id has nothing to key on and no row to correct it
-        # against; a row with no symbol would label the gene with the string
-        # "None" in the browse row and the page heading alike. Dropping the row
-        # instead lets `build_genes` and `search.py` fall back to the HGNC id,
-        # which renders and searches.
-        if gene is None or symbol is None:
+        # Both `hgnc_id` and `symbol` are non-nullable in the schema, so a blank
+        # here is a bypassed TBL003. The two blanks are not the same failure,
+        # though. A row with no id has nothing to key the registry on and no
+        # row to correct it against, so it is dropped — there is no gene here to
+        # attach `name` or `aliases` to. A row with no symbol is still a real,
+        # validated gene: `name` and `aliases` are perfectly good and reached
+        # this reader having passed every check that applies to them, so
+        # dropping the row along with the blank symbol would discard both for
+        # no reason a curator chose. The symbol falls back to the HGNC id
+        # instead — the same fallback `build_genes` and `search.py` already
+        # apply to a gene missing from this registry entirely — so the row, its
+        # name and its aliases all still reach `genes/index.json` and the
+        # search index, rather than the gene silently losing everything but its
+        # id. Found by adversarial review after release: the previous version
+        # of this guard dropped the row and, with it, a name and aliases that
+        # had already been validated and were fit to publish.
+        if gene is None:
             continue
         raw = row.get("aliases")
         registry[gene] = GeneLabels(
-            symbol=symbol,
+            symbol=_cell(row.get("symbol")) or gene,
             name=_cell(row.get("name")),
             aliases=tuple(part.strip() for part in str(raw).split("|") if part.strip())
             if raw
@@ -177,13 +187,18 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         raise ValueError("a validity mirror could not be read; the gate should have refused first")
     validity = gene_validity(clingen, gencc, in_scope=scope_terms)
 
+    # Computed once and reused by both callers below: `build_genes` needs the
+    # symbol alone, and so does `build_landing`, which is not a second read of
+    # the mirror either — both project the same `genes` registry the same way.
+    symbols = {gene: labels.symbol for gene, labels in genes.items()}
+
     emitter = Emitter(root=out)
     omics = build_omics(root, emitter)
     variants = build_variants(root, emitter)
     build_genes(
         corpus,
         emitter,
-        symbols={gene: labels.symbol for gene, labels in genes.items()},
+        symbols=symbols,
         omics=omics,
         variants=variants,
         validity=validity,
@@ -196,6 +211,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     registry, _ = load_sources(root)
     build_sources(registry, emitter)
     build_search(corpus, emitter, genes=genes)
+    build_landing(corpus, symbols=symbols, validity=validity, emitter=emitter)
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))
     return dict(emitter.checksums)

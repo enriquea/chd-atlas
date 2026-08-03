@@ -20,6 +20,7 @@ REPO = Path(__file__).parent.parent.parent
 # its artifact out of the site and out of the assertion in the same edit.
 PUBLISHED = (
     "manifest.json",
+    "index.html",
     "genes/index.json",
     "publications.json",
     "featured.json",
@@ -63,26 +64,38 @@ def _search_records(out: Path) -> list[dict[str, Any]]:
     return records
 
 
-def test_the_registry_reader_cleans_the_alias_cell_and_skips_an_unlabelled_row(
+def test_the_registry_reader_cleans_the_alias_cell_and_falls_a_blank_symbol_back_to_the_hgnc_id(
     tmp_path: Path,
 ) -> None:
-    """The two ways a mirror cell reaches the site as something a curator did not write.
+    """Every way a mirror cell reaches this reader other than as a curator wrote it.
 
-    Read directly rather than through `build_site`, because both inputs are what
-    the gate exists to prevent and one of them the gate does not catch.
+    Read directly rather than through `build_site`, because both inputs here are
+    what the gate exists to prevent and one of them the gate does not catch.
 
-    Whitespace and empty segments are reachable on a fully green build: nothing
-    validates the contents of the `aliases` cell, so `T-box 5|  TBX5B  ||Chr12`
-    is a legal mirror row, and unstripped it publishes a search term with
-    leading spaces plus an empty term that every "contains" query matches.
+    Whitespace and empty alias segments are reachable on a fully green build:
+    nothing validates the contents of the `aliases` cell, so
+    `T-box 5|  TBX5B  ||Chr12` is a legal mirror row, and unstripped it
+    publishes a search term with leading spaces plus an empty term that every
+    "contains" query matches.
 
-    A null `symbol` is not reachable behind `build_site` — it is non-nullable, so
-    TBL003 refuses the build first — and the row is skipped rather than
-    published because `str(None)` is the string "None", which `build_genes` would
-    render as the gene's symbol in the browse row and as the page heading. The
-    gene keeps its HGNC id as its label instead, which is what `search.py`'s own
-    fallback does with the same reasoning. Same class as A12's null protein
-    matching an unrelated gene.
+    A blank `symbol` is not reachable behind `build_site` either way — `symbol`
+    is non-nullable, so TBL003 refuses the build first — but a single space in
+    the cell is: `read_table` maps only the true empty string to null, so
+    `HGNC:9999\t \t...` is a legal mirror row TBL003 does not catch, and
+    `HGNC:4173\t\t...` (truly empty) reaches here identically once `_cell`
+    strips it. This is the regression the fix corrects: the previous guard read
+    `if gene is None or symbol is None: continue` and dropped both rows
+    outright, discarding a validated `name` along with the blank symbol —
+    watched failing here before the fix, with `registry` holding only
+    `HGNC:11604` where it now holds all three keyed rows. The symbol now falls
+    back to the HGNC id instead, the same fallback `build_genes` and
+    `search.py` already apply to a gene missing from this registry entirely, so
+    the row's `name` and `aliases` reach the site rather than being discarded
+    with it.
+
+    A row with no `hgnc_id` at all is the one case still, correctly, dropped:
+    there is no gene to key it on and no row to correct it against, so `name`
+    and `aliases` have nowhere to attach either.
     """
     mirror = tmp_path / "mirrors"
     mirror.mkdir()
@@ -91,16 +104,24 @@ def test_the_registry_reader_cleans_the_alias_cell_and_skips_an_unlabelled_row(
         "HGNC:11604\tTBX5\tT-box transcription factor 5\tT-box 5|  TBX5B  ||Chr12\t\t\t\t\t\n"
         "HGNC:4173\t\tGATA binding protein 4\t\t\t\t\t\t\n"
         # A single space, which TBL003 does not catch: `read_table` maps only the
-        # empty string to null. Published, it is a browse row and a search result
-        # that render as nothing.
-        "HGNC:9999\t \tSome gene\t\t\t\t\t\t\n"
+        # empty string to null.
+        "HGNC:9999\t \tSome other gene\t\t\t\t\t\t\n"
+        "\tNONAME\tUnkeyed row\t\t\t\t\t\t\n"
     )
 
     registry = _gene_registry(tmp_path)
 
-    assert list(registry) == ["HGNC:11604"]
+    assert list(registry) == ["HGNC:11604", "HGNC:4173", "HGNC:9999"]
     assert registry["HGNC:11604"].aliases == ("T-box 5", "TBX5B", "Chr12")
     assert registry["HGNC:11604"].name == "T-box transcription factor 5"
+    assert registry["HGNC:11604"].symbol == "TBX5"
+
+    # The regression this commit fixes: a blank symbol must not discard the
+    # name beside it, whichever of the two blank shapes it arrives as.
+    assert registry["HGNC:4173"].symbol == "HGNC:4173"
+    assert registry["HGNC:4173"].name == "GATA binding protein 4"
+    assert registry["HGNC:9999"].symbol == "HGNC:9999"
+    assert registry["HGNC:9999"].name == "Some other gene"
 
 
 def test_the_build_publishes_every_artifact_and_a_manifest_that_verifies(

@@ -38,6 +38,7 @@ DOC = REPO / "docs" / "data-api.md"
 # `heading` locates the fenced block; `select` pulls the object out of the built
 # site that the block is an example of.
 EXHAUSTIVE: dict[str, str] = {
+    "## `manifest.json`": "manifest",
     "## `genes/index.json`": "index_row",
     "## `publications.json`": "publication",
     "## `featured.json`": "featured",
@@ -81,6 +82,8 @@ def _published(site: Path, kind: str) -> dict[str, Any]:
         raw = (site / rel).read_bytes()
         return json.loads(gzip.decompress(raw) if rel.endswith(".gz") else raw)
 
+    if kind == "manifest":
+        return dict(load("manifest.json"))
     if kind == "index_row":
         return dict(load("genes/index.json")["genes"][0])
     if kind == "publication":
