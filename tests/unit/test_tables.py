@@ -141,14 +141,50 @@ def test_gencc_keys_on_the_submitter_because_it_publishes_no_verdict() -> None:
     and GenCC publishes both. Omitting `submitter` from the key would make those
     rows compare equal and silently keep whichever sorted last.
 
+    `submitter` alone is still not enough. Measured 2026-08-03 against the real
+    export (30,410 rows, ?format=new): (gene, disease, moi, submitter) collides
+    on 133 groups (134 extra rows), and 70 of those 133 carry more than one
+    distinct `classification_title` -- a submitter disagreeing with *itself*,
+    e.g. Ambry Genetics submitting both `Limited` and `Strong` for HGNC:20226 /
+    MONDO:0859332 / Autosomal recessive (see
+    `test_a_submitter_can_disagree_with_itself_and_the_mirror_keeps_both`
+    below). `version_number` is identical within every one of the 133 groups,
+    so GenCC marks neither row as superseding the other -- there is no field in
+    the export that says which is current. Picking one would synthesise a
+    verdict GenCC itself does not assert, so the mirror keys on GenCC's own row
+    id (`sgc_id`, unique across all 30,410 rows) instead of resolving the
+    collision.
+
     `Supportive` is in the allowed set but is NOT a rung on the evidence ladder:
     it is a mapping-exception bucket for submitters that do not grade evidence.
     `vocab.GENCC_CLASSIFICATIONS` (Task 5) maps it to None.
     """
-    assert GENCC_SUBMISSIONS.sort_key == ("gene", "disease", "moi", "submitter")
+    assert GENCC_SUBMISSIONS.sort_key == ("gene", "disease", "moi", "submitter", "sgc_id")
     classification = next(c for c in GENCC_SUBMISSIONS.columns if c.name == "classification")
     assert classification.allowed is not None
     assert "Supportive" in classification.allowed
+
+
+def test_a_submitter_can_disagree_with_itself_and_the_mirror_keeps_both() -> None:
+    """The guard against "tidying up" the 133 real duplicate-looking groups.
+
+    Ambry Genetics submitted both `Limited` (SGC-102815) and `Strong`
+    (SGC-104042) for KIF26A / cortical dysplasia (HGNC:20226 / MONDO:0859332)
+    under the same mode of inheritance -- measured directly in the committed
+    snapshot, not synthesised for this test. A future edit that deduplicates
+    `mirrors/gencc_submissions.tsv` on (gene, disease, moi, submitter) -- the
+    key GenCC's own `version_number` does not distinguish within -- would
+    collapse this to one classification and silently drop the disagreement
+    this table exists to surface.
+    """
+    path = Path(__file__).parent.parent.parent / "mirrors" / "gencc_submissions.tsv"
+    frame = pl.read_csv(path, separator="\t")
+    rows = frame.filter(
+        (pl.col("gene") == "HGNC:20226") & (pl.col("disease") == "MONDO:0859332")
+    ).filter(pl.col("submitter") == "Ambry Genetics")
+
+    assert set(rows["sgc_id"].to_list()) == {"SGC-102815", "SGC-104042"}
+    assert set(rows["classification"].to_list()) == {"Limited", "Strong"}
 
 
 def test_phospho_protein_normalized_is_mandatory_and_non_nullable() -> None:

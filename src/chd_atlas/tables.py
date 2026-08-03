@@ -360,6 +360,10 @@ _GENCC_CLASSIFICATIONS: Final[frozenset[str]] = frozenset(
 GENCC_SUBMISSIONS = TableSchema(
     name="gencc_submissions",
     columns=(
+        # GenCC's own row id, e.g. "SGC-102815". Measured 2026-08-03 against
+        # the real export: matches `^SGC-\d+$` and is unique on 30,410/30,410
+        # rows -- it is GenCC's primary key, not a value this atlas invents.
+        Column("sgc_id", pl.String, pattern=r"^SGC-\d+$"),
         Column("gene", pl.String, pattern=HGNC_PATTERN),
         Column("gene_symbol", pl.String),
         Column("disease", pl.String, pattern=MONDO_PATTERN),
@@ -370,19 +374,33 @@ GENCC_SUBMISSIONS = TableSchema(
         Column("submitted_on", pl.String, nullable=True),
         Column("report_url", pl.String, nullable=True),
     ),
-    # The submitter, not just the triple -- see `scripts/convert_gencc.py` for
-    # why: GenCC publishes every submitter's verdict with none adjudicated, so
-    # two submitters disagreeing about one gene-disease-moi is the normal case.
+    # The submitter, and then its own row id -- see
+    # `scripts/convert_gencc.py` for why: GenCC publishes every submitter's
+    # verdict with none adjudicated, so two submitters disagreeing about one
+    # gene-disease-moi is the normal case, and `submitter` alone is still not
+    # enough to key on.
     #
     # Measured 2026-08-03 against the real export (30,410 rows, ?format=new):
-    # (gene, disease, moi, submitter) collides on 133 groups (134 extra rows)
-    # even after adding submitter -- almost all are the same submitter
-    # resubmitting the same gene/disease/moi under a new `sgc_id` without
-    # superseding the old one (GenCC's own data-quality artifact, not
-    # something this atlas introduces). The converter resolves each collision
-    # to the most recently submitted row before this file is written, so the
-    # committed mirror is unique on this key at 30,276/30,276.
-    sort_key=("gene", "disease", "moi", "submitter"),
+    # (gene, disease, moi, submitter) collides on 133 groups (134 extra
+    # rows), and 70 of those 133 groups carry more than one distinct
+    # `classification_title` -- e.g. Ambry Genetics submitting both `Limited`
+    # (SGC-102815) and `Strong` (SGC-104042) for HGNC:20226 / MONDO:0859332 /
+    # Autosomal recessive. `version_number` is identical within all 133
+    # groups, so GenCC marks neither row as superseding the other, and the
+    # `submitted_as_date` in the disagreeing cases differs by as little as
+    # one second -- a batch-load artifact, not a real submission gap. There
+    # is no field in this export that says which of two same-submitter,
+    # same-gene-disease-moi rows is the "current" one. Picking a winner would
+    # synthesise a verdict GenCC itself does not assert -- the plan's design
+    # decision D12 ("the atlas publishes no validity classification of its
+    # own") is written about the derive layer built on top of this mirror,
+    # not this table directly, but the same reasoning applies one layer
+    # earlier: a submitter disagreeing with itself is still discordance, and
+    # GenCC publishes both rows, so this table does too. `sgc_id` is GenCC's
+    # own row id and is unique across the whole export, so appending it to
+    # the key is the only column that actually makes every real GenCC row
+    # distinguishable without dropping any of them.
+    sort_key=("gene", "disease", "moi", "submitter", "sgc_id"),
 )
 
 # The chromosomes, in karyotype order. Ordered because the published variant
