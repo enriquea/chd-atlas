@@ -6,24 +6,21 @@ assertions:
       - HP:0001629
     lesion_groups:
       - septal
-    # ClinGen's Syndromic Disorders GCEP classifies TBX5 (HGNC:11604) for
-    # Holt-Oram syndrome (MONDO:0007732) as Definitive under SOP11, with an
-    # autosomal dominant inheritance pattern.
-    classification: definitive
     inheritance:
       - AD
     mechanism: haploinsufficiency
-    # `both` rather than `syndromic`: this is a gene-level assertion, and TBX5 is
-    # reported both in Holt-Oram syndrome and in isolated septal defects. No
-    # extracardiac feature list applies cleanly across that span.
-    syndromic: both
-    source_tier: third_party_literature
+    syndromic: syndromic
+    extracardiac_features:
+      - HP:0009601
     curator: Enrique Audain
     curated_on: 2026-07-31
     last_reviewed: 2026-07-31
     notes: >-
-      Seed record establishing the schema against a well-attested association.
-      Replace source_tier and curator once first-party curation is added.
+      This record carries lesion and evidence only, per D12: gene-disease
+      validity is mirrored, not curated here. ClinGen's Syndromic Disorders
+      Gene Curation Expert Panel classifies TBX5 (HGNC:11604) as Definitive for
+      Holt-Oram syndrome (MONDO:0007732) under SOP11, dated 2025-03-25 --
+      https://search.clinicalgenome.org/kb/gene-validity/CGGV:assertion_24e6c85a-33cf-4248-be1f-6431c7c6b1e5-2025-03-25T160000.000Z
     evidence:
       - publication: PMID:8988165
         evidence_class: genetic_case

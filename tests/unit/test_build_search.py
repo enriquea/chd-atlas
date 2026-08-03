@@ -10,7 +10,7 @@ import pytest
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.search import GeneLabels, build_search
 from chd_atlas.corpus import Corpus
-from chd_atlas.models.assertion import GeneDiseaseAssertion
+from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.models.functional import FunctionalEvidence
 from chd_atlas.models.literature import PhenotypeTerm, Publication
 
@@ -23,14 +23,13 @@ NKX2_5 = "HGNC:2488"
 SIX_GENES = ("HGNC:7881", "HGNC:6188", GATA4, NKX2_5, "HGNC:12873", TBX5)
 
 
-def _assertion(gene: str = TBX5, identifier: str = "CHDA:AST:0000001") -> GeneDiseaseAssertion:
-    return GeneDiseaseAssertion.model_validate(
+def _assertion(gene: str = TBX5, identifier: str = "CHDA:AST:0000001") -> LesionAssertion:
+    return LesionAssertion.model_validate(
         {
             "id": identifier,
             "gene": gene,
             "phenotypes": ["HP:0001631"],
             "lesion_groups": ["septal"],
-            "classification": "definitive",
             "inheritance": ["AD"],
             "mechanism": "haploinsufficiency",
             "syndromic": "isolated",
@@ -43,7 +42,6 @@ def _assertion(gene: str = TBX5, identifier: str = "CHDA:AST:0000001") -> GeneDi
                     "strength": "strong",
                 }
             ],
-            "source_tier": "own_curation",
             "curator": "c",
             "curated_on": date(2026, 7, 1),
             "last_reviewed": date(2026, 7, 1),

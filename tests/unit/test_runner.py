@@ -14,11 +14,9 @@ assertions:
     gene: HGNC:11604
     phenotypes: [HP:0001631]
     lesion_groups: [septal]
-    classification: definitive
     inheritance: [AD]
     mechanism: haploinsufficiency
     syndromic: both
-    source_tier: own_curation
     curator: 0000-0002-1825-0097
     curated_on: 2026-07-01
     last_reviewed: 2026-07-15

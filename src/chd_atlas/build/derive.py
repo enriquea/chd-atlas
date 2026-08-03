@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.corpus import Corpus
-from chd_atlas.models.assertion import GeneDiseaseAssertion
+from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.vocab import (
     Classification,
     EvidenceClass,
@@ -108,7 +108,7 @@ def gene_facts(corpus: Corpus, validity: dict[str, GeneValidity]) -> dict[str, G
     author it. A gene absent from `validity` gets `uncurated()`: no authority has
     assessed it, which is a fact worth publishing rather than an absent key.
     """
-    by_gene: dict[str, list[GeneDiseaseAssertion]] = {}
+    by_gene: dict[str, list[LesionAssertion]] = {}
     for assertion in corpus.assertions:
         by_gene.setdefault(assertion.gene, []).append(assertion)
 

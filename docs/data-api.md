@@ -161,7 +161,7 @@ One gene's whole detail page, in one fetch.
   "has_source_discordance": false,
   "lesion_groups": ["septal"],
   "publications": ["PMID:8988165"],
-  "assertions": [ { "id": "CHDA:AST:0000001", "classification": "definitive", "evidence": [ … ] } ],
+  "assertions": [ { "id": "CHDA:AST:0000001", "lesion_groups": ["septal"], "evidence": [ … ] } ],
   "functional": [],
   "variants": [],
   "omics": {}
@@ -170,10 +170,13 @@ One gene's whole detail page, in one fetch.
 
 - `assertions` carry their full `evidence` array, including each item's
   `locator`, `strength` and `summary` — the record a curator is judged on.
-  Assertion fields: `classification`, `curated_on`, `curator`, `evidence`,
-  `extracardiac_features`, `gene`, `id`, `inheritance`, `last_reviewed`,
-  `lesion_groups`, `mechanism`, `notes`, `phenotypes`, `source_tier`,
-  `syndromic`.
+  Assertion fields: `curated_on`, `curator`, `evidence`, `extracardiac_features`,
+  `gene`, `id`, `inheritance`, `last_reviewed`, `lesion_groups`, `mechanism`,
+  `notes`, `phenotypes`, `syndromic`. **No `classification` or `source_tier`**:
+  the atlas mirrors gene-disease validity rather than curating its own, so an
+  assertion says only what the curator is the authority for -- which lesions a
+  gene is claimed for, and on what evidence. `headline_confidence` above is
+  where the mirrored classification lives.
 - `functional` holds **every** functional record about the gene, not only those
   an assertion cites.
 - `omics` and `variants` are always present and may be empty. Read them without
@@ -319,7 +322,10 @@ renders without a second fetch. It is never a bare string.
 
 `lesion_group` is the facet the gene index's `lesion_groups` and
 `confidence_by_lesion_group` key on, which is what lets a phenotype filter drive
-a gene list.
+a gene list. It is `null` for a term that is not itself a cardiac lesion — an
+extracardiac feature (e.g. a limb malformation cited by a syndromic assertion)
+registered here only so its label is checked against the pinned HPO release,
+the same guarantee every cardiac term gets.
 
 ## `datasets.json`
 

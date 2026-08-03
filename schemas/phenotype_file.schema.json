@@ -17,6 +17,7 @@
     },
     "PhenotypeTerm": {
       "additionalProperties": false,
+      "description": "One HPO term the atlas cites, cardiac or not.\n\n`lesion_group` is `None` for a term that is not itself a cardiac lesion --\nan extracardiac feature registered here only so `validate_labels` can check\nits transcription, the same guarantee every cardiac term already gets.\n`None` here is why `validate/referential.py`'s REF010 does not flag such a\nterm when an assertion cites it under `extracardiac_features`: that check\nreads `is not None`, so only a term that *is* a cardiac lesion group can\nmake an assertion look internally inconsistent.",
       "properties": {
         "id": {
           "pattern": "^(HP|MONDO):\\d{7}$",
@@ -29,7 +30,15 @@
           "type": "string"
         },
         "lesion_group": {
-          "$ref": "#/$defs/LesionGroup"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LesionGroup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "synonyms": {
           "items": {
@@ -41,8 +50,7 @@
       },
       "required": [
         "id",
-        "label",
-        "lesion_group"
+        "label"
       ],
       "title": "PhenotypeTerm",
       "type": "object"

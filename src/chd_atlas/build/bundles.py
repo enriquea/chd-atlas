@@ -41,11 +41,11 @@ from chd_atlas.build.paths import gene_bundle_path
 from chd_atlas.build.validity import GeneValidity
 from chd_atlas.corpus import Corpus
 from chd_atlas.identifiers import HgncId
-from chd_atlas.models.assertion import GeneDiseaseAssertion
+from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.models.functional import FunctionalEvidence
 
 
-def _records_by_gene[RecordT: (GeneDiseaseAssertion, FunctionalEvidence)](
+def _records_by_gene[RecordT: (LesionAssertion, FunctionalEvidence)](
     records: Iterable[RecordT],
 ) -> dict[str, list[dict[str, Json]]]:
     """Group one kind of curated record by gene, ordered by id, JSON-ready.
@@ -60,7 +60,7 @@ def _records_by_gene[RecordT: (GeneDiseaseAssertion, FunctionalEvidence)](
     second file would reorder a bundle that is otherwise unchanged.
 
     `mode="json"` so every value is a JSON primitive by construction.
-    `GeneDiseaseAssertion` carries two `date` fields, which `json.dumps` refuses
+    `LesionAssertion` carries two `date` fields, which `json.dumps` refuses
     outright — without this the build dies part-way through, with `dist/` already
     half written. `FunctionalEvidence` carries none today and would serialise
     either way, which is exactly why the conversion is applied to both rather

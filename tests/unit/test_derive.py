@@ -5,7 +5,7 @@ from pathlib import Path
 from chd_atlas.build.derive import gene_facts
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.corpus import Corpus
-from chd_atlas.models.assertion import Evidence, GeneDiseaseAssertion, SupplementaryLocator
+from chd_atlas.models.assertion import Evidence, LesionAssertion, SupplementaryLocator
 from chd_atlas.models.functional import FunctionalEvidence
 from chd_atlas.vocab import (
     Classification,
@@ -28,24 +28,22 @@ def _evidence(**overrides: object) -> Evidence:
     return Evidence.model_validate(payload)
 
 
-def _assertion(**overrides: object) -> GeneDiseaseAssertion:
+def _assertion(**overrides: object) -> LesionAssertion:
     payload: dict[str, object] = {
         "id": "CHDA:AST:0000001",
         "gene": "HGNC:11604",
         "phenotypes": ["HP:0001631"],
         "lesion_groups": ["septal"],
-        "classification": "definitive",
         "inheritance": ["AD"],
         "mechanism": "haploinsufficiency",
         "syndromic": "both",
         "evidence": [_evidence()],
-        "source_tier": "own_curation",
         "curator": "c",
         "curated_on": date(2026, 7, 1),
         "last_reviewed": date(2026, 7, 1),
     }
     payload.update(overrides)
-    return GeneDiseaseAssertion.model_validate(payload)
+    return LesionAssertion.model_validate(payload)
 
 
 def _functional(**overrides: object) -> FunctionalEvidence:
@@ -111,25 +109,6 @@ def test_headline_confidence_is_the_strongest_mirrored_classification() -> None:
     }
 
     facts = gene_facts(_corpus(), validity)
-
-    assert facts["HGNC:11604"].headline_confidence == Classification.DEFINITIVE
-
-
-def test_headline_confidence_comes_from_the_mirror_not_the_curated_record() -> None:
-    """The curated assertion's own `classification` must never leak into it.
-
-    The assertion below is curated `refuted`; the mirror says `definitive`. A
-    derivation that still reads `assertion.classification` anywhere publishes
-    `refuted` here — this only passes if the mirror is the sole source.
-    """
-    corpus = _corpus(assertions=(_assertion(classification="refuted"),))
-    validity = {
-        "HGNC:11604": _gene_validity(
-            records=(_validity_record(classification=Classification.DEFINITIVE),)
-        )
-    }
-
-    facts = gene_facts(corpus, validity)
 
     assert facts["HGNC:11604"].headline_confidence == Classification.DEFINITIVE
 

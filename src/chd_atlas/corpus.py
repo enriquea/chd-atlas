@@ -11,7 +11,7 @@ from ruamel.yaml.error import YAMLError
 
 from chd_atlas.fs import list_dir
 from chd_atlas.issues import Severity, ValidationIssue
-from chd_atlas.models.assertion import AssertionFile, GeneDiseaseAssertion
+from chd_atlas.models.assertion import AssertionFile, LesionAssertion
 from chd_atlas.models.dataset import Dataset
 from chd_atlas.models.functional import FunctionalEvidence, FunctionalFile
 from chd_atlas.models.literature import (
@@ -30,7 +30,7 @@ class Corpus:
     """Every interpretive record loaded from ``curation/``."""
 
     root: Path
-    assertions: tuple[GeneDiseaseAssertion, ...] = ()
+    assertions: tuple[LesionAssertion, ...] = ()
     functional: tuple[FunctionalEvidence, ...] = ()
     publications: tuple[Publication, ...] = ()
     featured: tuple[FeaturedManuscript, ...] = ()
@@ -178,7 +178,7 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         acc.error("CORPUS001", curation, "curation directory not found")
         return Corpus(root=root), acc.issues
 
-    assertions: list[GeneDiseaseAssertion] = []
+    assertions: list[LesionAssertion] = []
     for path in _record_files(curation / "assertions"):
         parsed = _parse(AssertionFile, path, acc)
         if parsed is not None:

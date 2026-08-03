@@ -9,11 +9,9 @@ assertions:
     gene: HGNC:11604
     phenotypes: [HP:0001631]
     lesion_groups: [septal]
-    classification: definitive
     inheritance: [AD]
     mechanism: haploinsufficiency
     syndromic: both
-    source_tier: own_curation
     curator: 0000-0002-1825-0097
     curated_on: 2026-07-01
     last_reviewed: 2026-07-15
@@ -55,7 +53,7 @@ def test_loads_assertions_and_publications(tmp_path: Path) -> None:
 
 def test_schema_violation_becomes_an_issue_rather_than_an_exception(tmp_path: Path) -> None:
     _write_minimal_corpus(tmp_path)
-    broken = ASSERTION_YAML.replace("classification: definitive", "classification: very_sure")
+    broken = ASSERTION_YAML.replace("mechanism: haploinsufficiency", "mechanism: very_sure")
     (tmp_path / "curation" / "assertions" / "TBX5.yaml").write_text(broken)
 
     corpus, issues = load_curation(tmp_path)
@@ -63,13 +61,13 @@ def test_schema_violation_becomes_an_issue_rather_than_an_exception(tmp_path: Pa
     assert corpus.assertions == ()
     assert len(issues) == 1
     assert issues[0].code == "SCHEMA001"
-    assert "classification" in issues[0].location
+    assert "mechanism" in issues[0].location
 
 
 def test_reports_every_schema_violation_not_just_the_first(tmp_path: Path) -> None:
     _write_minimal_corpus(tmp_path)
-    broken = ASSERTION_YAML.replace("classification: definitive", "classification: very_sure")
-    broken = broken.replace("mechanism: haploinsufficiency", "mechanism: magic")
+    broken = ASSERTION_YAML.replace("mechanism: haploinsufficiency", "mechanism: magic")
+    broken = broken.replace("syndromic: both", "syndromic: sometimes")
     (tmp_path / "curation" / "assertions" / "TBX5.yaml").write_text(broken)
 
     _, issues = load_curation(tmp_path)

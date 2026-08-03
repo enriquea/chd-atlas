@@ -1,19 +1,5 @@
 {
   "$defs": {
-    "Classification": {
-      "description": "ClinGen-style gene-disease validity classification.",
-      "enum": [
-        "definitive",
-        "strong",
-        "moderate",
-        "limited",
-        "disputed",
-        "refuted",
-        "no_known_association"
-      ],
-      "title": "Classification",
-      "type": "string"
-    },
     "Evidence": {
       "additionalProperties": false,
       "properties": {
@@ -112,12 +98,45 @@
       "title": "EvidenceStrength",
       "type": "string"
     },
-    "GeneDiseaseAssertion": {
+    "InTextLocator": {
       "additionalProperties": false,
+      "description": "Points at a figure, table or section in the article body.",
       "properties": {
-        "classification": {
-          "$ref": "#/$defs/Classification"
+        "element": {
+          "minLength": 1,
+          "title": "Element",
+          "type": "string"
         },
+        "kind": {
+          "const": "in_text",
+          "default": "in_text",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "element"
+      ],
+      "title": "InTextLocator",
+      "type": "object"
+    },
+    "Inheritance": {
+      "enum": [
+        "AD",
+        "AR",
+        "XL",
+        "de_novo",
+        "somatic",
+        "oligogenic",
+        "unknown"
+      ],
+      "title": "Inheritance",
+      "type": "string"
+    },
+    "LesionAssertion": {
+      "additionalProperties": false,
+      "description": "A curator's claim that a gene belongs to one or more CHD lesion groups.\n\nRenamed from `GeneDiseaseAssertion` when validity classifications moved to\nthe mirrors. The old name invited the old conflation: this record no\nlonger says whether the gene causes disease -- an expert panel says that,\nand `build/validity.py` publishes what they said. What is left is the part\nthe curator is the authority for, and it is the part no validity resource\npublishes. Measured 2026-08-03: 86 of the 99 ClinGen Congenital Heart\nDisease GCEP curations use the single undifferentiated term\n`MONDO:0005453`, so a consumer cannot ask any authority which genes cause\nconotruncal defects.\n\nThe YAML top-level key stays `assertions:` (see `AssertionFile` below) --\nrenaming it would churn every curation file and fixture to express a\ndistinction the class name already carries.",
+      "properties": {
         "curated_on": {
           "format": "date",
           "title": "Curated On",
@@ -199,9 +218,6 @@
           "title": "Phenotypes",
           "type": "array"
         },
-        "source_tier": {
-          "$ref": "#/$defs/SourceTier"
-        },
         "syndromic": {
           "$ref": "#/$defs/SyndromicStatus"
         }
@@ -211,53 +227,16 @@
         "gene",
         "phenotypes",
         "lesion_groups",
-        "classification",
         "inheritance",
         "mechanism",
         "syndromic",
         "evidence",
-        "source_tier",
         "curator",
         "curated_on",
         "last_reviewed"
       ],
-      "title": "GeneDiseaseAssertion",
+      "title": "LesionAssertion",
       "type": "object"
-    },
-    "InTextLocator": {
-      "additionalProperties": false,
-      "description": "Points at a figure, table or section in the article body.",
-      "properties": {
-        "element": {
-          "minLength": 1,
-          "title": "Element",
-          "type": "string"
-        },
-        "kind": {
-          "const": "in_text",
-          "default": "in_text",
-          "title": "Kind",
-          "type": "string"
-        }
-      },
-      "required": [
-        "element"
-      ],
-      "title": "InTextLocator",
-      "type": "object"
-    },
-    "Inheritance": {
-      "enum": [
-        "AD",
-        "AR",
-        "XL",
-        "de_novo",
-        "somatic",
-        "oligogenic",
-        "unknown"
-      ],
-      "title": "Inheritance",
-      "type": "string"
     },
     "LesionGroup": {
       "enum": [
@@ -283,15 +262,6 @@
         "unknown"
       ],
       "title": "Mechanism",
-      "type": "string"
-    },
-    "SourceTier": {
-      "enum": [
-        "own_curation",
-        "third_party_literature",
-        "database_mirror"
-      ],
-      "title": "SourceTier",
       "type": "string"
     },
     "SupplementaryLocator": {
@@ -356,7 +326,7 @@
   "properties": {
     "assertions": {
       "items": {
-        "$ref": "#/$defs/GeneDiseaseAssertion"
+        "$ref": "#/$defs/LesionAssertion"
       },
       "minItems": 1,
       "title": "Assertions",
