@@ -22,6 +22,7 @@ from chd_atlas.models.literature import (
     Publication,
     PublicationFile,
 )
+from chd_atlas.models.scope import ChdScopeFile, ScopeEntry
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class Corpus:
     featured: tuple[FeaturedManuscript, ...] = ()
     phenotypes: tuple[PhenotypeTerm, ...] = ()
     datasets: tuple[Dataset, ...] = ()
+    chd_scope: tuple[ScopeEntry, ...] = ()
 
 
 @dataclass
@@ -121,6 +123,7 @@ def unexpected_curation_entries(root: Path) -> list[ValidationIssue]:
 
     expected_files = {
         ".id_registry.yaml",
+        "chd_scope.yaml",
         "featured.yaml",
         "phenotypes.yaml",
         "publications.yaml",
@@ -214,6 +217,13 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         if parsed_phenotypes is not None:
             phenotypes = tuple(parsed_phenotypes.phenotypes)
 
+    chd_scope: tuple[ScopeEntry, ...] = ()
+    chd_scope_path = curation / "chd_scope.yaml"
+    if chd_scope_path.is_file():
+        parsed_chd_scope = _parse(ChdScopeFile, chd_scope_path, acc)
+        if parsed_chd_scope is not None:
+            chd_scope = tuple(parsed_chd_scope.diseases)
+
     corpus = Corpus(
         root=root,
         assertions=tuple(assertions),
@@ -222,5 +232,6 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         featured=featured,
         phenotypes=phenotypes,
         datasets=tuple(datasets),
+        chd_scope=chd_scope,
     )
     return corpus, acc.issues
