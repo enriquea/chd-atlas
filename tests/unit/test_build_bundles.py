@@ -191,6 +191,7 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         "validity_state",
         "has_conflicting_evidence",
         "has_source_discordance",
+        "validity",
         "lesion_groups",
         "publications",
         "assertions",
@@ -198,6 +199,93 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         "variants",
         "omics",
     }
+
+
+def test_a_gene_with_no_mirrored_validity_publishes_the_uncurated_shape(
+    tmp_path: Path,
+) -> None:
+    """`validity={}` is the same fallback `gene_facts` documents for this gene.
+
+    The bundle's `validity` block must read exactly what `build.validity.
+    uncurated()` returns -- an explicit `"uncurated"`/empty-records shape --
+    rather than an absent key or some other guess at what "nothing curated
+    this" should look like.
+    """
+    emitter = Emitter(root=tmp_path)
+
+    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
+
+    assert _read(tmp_path, "genes/HGNC_11604.json")["validity"] == {
+        "state": "uncurated",
+        "has_source_discordance": False,
+        "records": [],
+    }
+
+
+def test_every_validity_record_carries_the_same_key_set_regardless_of_source(
+    tmp_path: Path,
+) -> None:
+    """A ClinGen record and a GenCC record publish identical keys.
+
+    `sop`, `classification_date` and `gcep` are ClinGen-only and `submitter` is
+    GenCC-only on `ValidityRecord` (see its docstring); the field a record's own
+    source does not carry must still appear, as `null`, rather than being
+    missing from that record's object. Publishing a mix of shapes is a trap for
+    a consumer that reads `record["sop"]` off every entry of the array — it
+    would have to check `source` first, which the published contract does not
+    require.
+    """
+    validity = {
+        TBX5: _gene_validity(
+            records=(
+                _validity_record(source=ValiditySource.CLINGEN, sop="SOP11", gcep="G"),
+                _validity_record(
+                    source=ValiditySource.GENCC,
+                    classification=Classification.MODERATE,
+                    submitter="Ambry Genetics",
+                ),
+            )
+        )
+    }
+    emitter = Emitter(root=tmp_path)
+
+    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity)
+
+    records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
+    clingen = next(r for r in records if r["source"] == "clingen")
+    gencc = next(r for r in records if r["source"] == "gencc")
+    assert set(clingen) == set(gencc)
+    assert clingen["sop"] == "SOP11"
+    assert clingen["submitter"] is None
+    assert gencc["submitter"] == "Ambry Genetics"
+    assert gencc["sop"] is None
+
+
+def test_the_bundle_does_not_resort_the_records_validity_py_already_ordered(
+    tmp_path: Path,
+) -> None:
+    """`records` is published in whatever order `GeneValidity.records` holds.
+
+    Handed GenCC-then-ClinGen here — the reverse of the `(source, disease, moi,
+    submitter)` order `build.validity.gene_validity` itself sorts by — so a
+    `bundles.py` that quietly re-sorted, or rebuilt the tuple through a `dict`
+    or a `set` on the way to JSON, would publish ClinGen first and this would
+    fail. Not re-sorting is the only way it passes.
+    """
+    validity = {
+        TBX5: _gene_validity(
+            records=(
+                _validity_record(source=ValiditySource.GENCC, submitter="Zeta"),
+                _validity_record(source=ValiditySource.CLINGEN),
+            )
+        )
+    }
+    emitter = Emitter(root=tmp_path)
+
+    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity)
+
+    records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
+    assert [r["source"] for r in records] == ["gencc", "clingen"]
 
 
 def test_every_bundle_path_the_index_advertises_was_written(tmp_path: Path) -> None:

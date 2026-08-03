@@ -29,6 +29,7 @@ from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
 from chd_atlas.build.search import GeneLabels, build_search
+from chd_atlas.build.validity import gene_validity
 from chd_atlas.build.variants import build_variants
 from chd_atlas.corpus import load_curation
 from chd_atlas.tables import TABLE_SCHEMAS, read_table
@@ -157,6 +158,25 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     corpus, _ = load_curation(root)
     genes = _gene_registry(root)
 
+    # Unreachable behind the gate above in the same way `_gene_registry`'s
+    # empty-mirror fallback is: TBL012 is an error, so `validate_repository`
+    # already refused a repository whose validity mirrors do not read, and this
+    # line never runs on one that reaches here. Read again anyway and `raise`
+    # rather than assume it: `-O` strips `assert`, and this project keeps a
+    # guard on every bypassed gate (`Emitter.seal`, `encode_json`'s
+    # `allow_nan=False`) rather than trusting "the gate already checked this" to
+    # stay true as the two modules evolve apart.
+    scope_terms = {str(entry.id) for entry in corpus.chd_scope}
+    clingen, _ = read_table(
+        root / "mirrors" / "clingen_gene_validity.tsv", TABLE_SCHEMAS["clingen_validity"]
+    )
+    gencc, _ = read_table(
+        root / "mirrors" / "gencc_submissions.tsv", TABLE_SCHEMAS["gencc_submissions"]
+    )
+    if clingen is None or gencc is None:
+        raise ValueError("a validity mirror could not be read; the gate should have refused first")
+    validity = gene_validity(clingen, gencc, in_scope=scope_terms)
+
     emitter = Emitter(root=out)
     omics = build_omics(root, emitter)
     variants = build_variants(root, emitter)
@@ -166,12 +186,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         symbols={gene: labels.symbol for gene, labels in genes.items()},
         omics=omics,
         variants=variants,
-        # Not yet wired to `build.validity.gene_validity()`: this build does not
-        # read the ClinGen/GenCC mirrors or `chd_scope.yaml` at all today, so
-        # there is no validity to hand it. Every gene therefore reads
-        # `uncurated()` -- `headline_confidence: null`, `validity_state:
-        # "uncurated"` -- until the mirrors are threaded through here.
-        validity={},
+        validity=validity,
     )
     build_literature(corpus, emitter)
     # Read again rather than threaded down from the gate: `validate_repository`
