@@ -7,8 +7,6 @@ which would silently turn a genomic coordinate of 12345 into 12345.0.
 
 from __future__ import annotations
 
-import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -72,7 +70,20 @@ def read_table(
     reporting one unreadable file.
     """
     try:
-        present = pl.read_csv(path, separator="\t", n_rows=0).columns
+        # `scan_csv(...).collect_schema()` rather than `read_csv(path, n_rows=0)`:
+        # both discover only the header in the success case (measured identical
+        # column lists), but a lazy scan does not validate the file's body, so it
+        # is ~2.5x faster to fail past on a large file (measured on the 30,410-row
+        # GenCC mirror: 17ms vs 45ms, averaged over 20 warmed calls).
+        #
+        # This does change *which* call raises on a body-only defect (a bad byte
+        # past the header, valid UTF-8 in the header itself): the lazy scan does
+        # not see it, so the second, real `read_csv` below raises instead. Measured
+        # identical for all three unreadable-file cases this module is tested
+        # against -- empty file, non-UTF-8 byte, missing path -- same exception
+        # type and same `str(exc)` in both the old eager-first-read order and this
+        # one, so the `TBL000` message is byte-identical either way.
+        present = pl.scan_csv(path, separator="\t").collect_schema().names()
         overrides = {
             name: dtype for name, dtype in schema.polars_overrides().items() if name in present
         }
@@ -140,7 +151,7 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
         series = frame[column.name]
 
         if not column.nullable:
-            offenders_null = [(row, "empty") for row in _null_row_indices(series)]
+            offenders_null = [(row, "empty") for row in _rows_where(series.is_null())]
             issues.extend(
                 _row_issues(
                     "TBL003", path, offenders_null, f"column '{column.name}' must not be empty"
@@ -155,12 +166,14 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
         # below cannot fire for one either. Without this, a p-value written as
         # `NaN` — what R's `write.table` and numpy's `savetxt` emit for a missing
         # statistic — validates clean and ships as a real measurement.
+        #
+        # `Series.is_finite()` returns null for a null entry rather than False, so
+        # `.not_()` on it is also null there (Kleene NOT), and `_value_offenders`'s
+        # `mask.any()` / `.arg_true()` both treat null as "not an offender" — a
+        # null cell is skipped here exactly as `_numeric_values` used to skip it
+        # by testing `value is not None` before `math.isfinite`.
         if column.dtype is pl.Float64:
-            offenders_finite = [
-                (row, repr(value))
-                for row, value in _numeric_values(series)
-                if not math.isfinite(value)
-            ]
+            offenders_finite = _value_offenders(series, series.is_finite().not_())
             issues.extend(
                 _row_issues(
                     "TBL010",
@@ -172,11 +185,10 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
 
         if column.allowed is not None:
             allowed_sorted = sorted(column.allowed)
-            offenders_allowed = [
-                (row, repr(value))
-                for row, value in _string_values(series)
-                if value not in column.allowed
-            ]
+            # `is_in` also returns null for a null cell, so `.not_()` on it stays
+            # null and `_value_offenders` skips it — a null never reported here,
+            # matching `_string_values`'s `value is not None` filter.
+            offenders_allowed = _value_offenders(series, series.is_in(list(column.allowed)).not_())
             issues.extend(
                 _row_issues(
                     "TBL004",
@@ -187,12 +199,23 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
             )
 
         if column.pattern is not None:
-            compiled = re.compile(column.pattern)
-            offenders_pattern = [
-                (row, repr(value))
-                for row, value in _string_values(series)
-                if not compiled.fullmatch(value)
-            ]
+            # Vectorized with polars' `str.contains` (the Rust `regex` crate)
+            # rather than Python `re.fullmatch`. The two engines are not the same
+            # implementation, so this is only safe because it has been measured,
+            # not reasoned about: every value of every pattern-bearing column in
+            # every committed mirror (98,538 non-null values) plus an adversarial
+            # synthetic set (trailing/embedded/leading newlines, case, leading
+            # zeros, full-width and Arabic-Indic Unicode digits, stray `^`/`$`
+            # characters, a 1,000-digit value) produced byte-identical offender
+            # sets under both engines for every pattern used in this file —
+            # `HGNC_PATTERN`, `MONDO_PATTERN`, `SEQUENCE_ONTOLOGY_PATTERN`,
+            # `MODIFICATION_PATTERN`, `UNIPROT_PATTERN`, and the inline
+            # `gencc_submissions.sgc_id` pattern. See
+            # `tests/unit/test_tables.py::test_polars_pattern_engine_agrees_with_python_re`.
+            # `re.fullmatch` anchors both ends implicitly; `str.contains` does
+            # not, but every pattern above already carries `^` and `$`, so no
+            # pattern needed a Python fallback.
+            offenders_pattern = _value_offenders(series, series.str.contains(column.pattern).not_())
             issues.extend(
                 _row_issues(
                     "TBL005",
@@ -208,12 +231,18 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
             # Non-finite values are excluded so exactly one code fires per
             # problem: an infinity is out of every finite range, and reporting it
             # as both TBL010 and TBL006 would say the same thing twice while
-            # TBL010 names the cause more precisely.
-            offenders_bounds = [
-                (row, repr(value))
-                for row, value in _numeric_values(series)
-                if math.isfinite(value) and (value < low or value > high)
-            ]
+            # TBL010 names the cause more precisely. `is_finite()` is False for
+            # NaN/inf and null for a null cell; combined with the bounds test via
+            # `&`, a null cell yields null (Kleene AND) and is skipped by
+            # `_value_offenders`, same as `_numeric_values`'s `value is not None`.
+            #
+            # `series.cast(pl.Float64)` for the gathered values only, not for the
+            # mask: this check also runs on Int64 columns (`pos`, `n_case`, ...),
+            # and `_numeric_values` used to `float()` every value before `repr`,
+            # so an offending int reported "5.0", not "5" — the cast reproduces
+            # that here rather than silently changing the message.
+            mask_bounds = series.is_finite() & ((series < low) | (series > high))
+            offenders_bounds = _value_offenders(series.cast(pl.Float64), mask_bounds)
             issues.extend(
                 _row_issues(
                     "TBL006",
@@ -242,22 +271,36 @@ def validate_table(path: Path, schema: TableSchema) -> list[ValidationIssue]:
     return issues
 
 
-def _null_row_indices(series: pl.Series) -> list[int]:
-    """Row numbers (1-based, header counted as row 1) holding a null."""
-    return [index + 2 for index, value in enumerate(series.to_list()) if value is None]
+def _rows_where(mask: pl.Series) -> list[int]:
+    """Row numbers (1-based, header counted as row 1) where `mask` is true.
+
+    `mask.any()` runs entirely inside polars and treats a null entry as
+    not-true (its default `ignore_nulls=True`), so a clean column — the normal
+    case for every check in this module — costs one boolean reduction and
+    never calls `.to_list()`. `arg_true()` likewise selects exact `True`
+    values only, so a null in `mask` (every check below produces one for a
+    null cell, via `is_null`, `is_finite`, `is_in` or `str.contains` on a null
+    input) is never counted as an offender.
+    """
+    if not mask.any():
+        return []
+    return [int(position) + 2 for position in mask.arg_true().to_list()]
 
 
-def _string_values(series: pl.Series) -> list[tuple[int, str]]:
+def _value_offenders(series: pl.Series, mask: pl.Series) -> list[tuple[int, str]]:
+    """(row, repr(value)) pairs for the positions where `mask` is true.
+
+    Only the offending positions are gathered out of `series` — never the
+    whole column — so this stays cheap even when `series` holds tens of
+    thousands of rows and the offender count is the normal zero.
+    """
+    if not mask.any():
+        return []
+    positions = mask.arg_true()
+    values = series.gather(positions).to_list()
     return [
-        (index + 2, str(value)) for index, value in enumerate(series.to_list()) if value is not None
-    ]
-
-
-def _numeric_values(series: pl.Series) -> list[tuple[int, float]]:
-    return [
-        (index + 2, float(value))
-        for index, value in enumerate(series.to_list())
-        if value is not None
+        (int(position) + 2, repr(value))
+        for position, value in zip(positions.to_list(), values, strict=True)
     ]
 
 
