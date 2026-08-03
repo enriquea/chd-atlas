@@ -9,9 +9,11 @@ import pytest
 from chd_atlas.build.bundles import build_genes
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.omics import ModalitySummary
+from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import Evidence, GeneDiseaseAssertion, SupplementaryLocator
 from chd_atlas.models.functional import FunctionalEvidence
+from chd_atlas.vocab import Classification, ValiditySource, ValidityState
 
 # Two HGNC ids whose lexical order is the reverse of their symbols': "HGNC:11604"
 # sorts before "HGNC:4173", while "GATA4" sorts before "TBX5". Exactly one test
@@ -93,6 +95,30 @@ def _variant(**overrides: object) -> dict[str, Any]:
     return payload
 
 
+def _validity_record(**overrides: object) -> ValidityRecord:
+    payload: dict[str, object] = {
+        "source": ValiditySource.CLINGEN,
+        "classification_term": "Definitive",
+        "classification": Classification.DEFINITIVE,
+        "disease": "MONDO:0007732",
+        "disease_label": "Holt-Oram syndrome",
+        "moi": "AD",
+        "report_url": None,
+    }
+    payload.update(overrides)
+    return ValidityRecord(**payload)  # type: ignore[arg-type]
+
+
+def _gene_validity(**overrides: object) -> GeneValidity:
+    payload: dict[str, object] = {
+        "state": ValidityState.EXPERT_CURATED,
+        "records": (_validity_record(),),
+        "has_source_discordance": False,
+    }
+    payload.update(overrides)
+    return GeneValidity(**payload)  # type: ignore[arg-type]
+
+
 def _read(root: Path, relative: str) -> dict[str, Any]:
     """One emitted artifact, read back from the file that was written."""
     payload: dict[str, Any] = json.loads((root / relative).read_text())
@@ -125,15 +151,18 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
     contract, not just its shape.
     """
     emitter = Emitter(root=tmp_path)
+    validity = {TBX5: _gene_validity()}
 
-    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity)
 
     assert _entries(tmp_path) == [
         {
             "gene": TBX5,
             "symbol": "TBX5",
             "headline_confidence": "definitive",
+            "validity_state": "expert_curated",
             "has_conflicting_evidence": False,
+            "has_source_discordance": False,
             "lesion_groups": ["septal"],
             "confidence_by_lesion_group": {"septal": "definitive"},
             "conflicting_lesion_groups": [],
@@ -148,19 +177,22 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
     # in Python, so a flag written as an int would publish `0` and slip through
     # that comparison while a consumer testing `=== false` reads it as unset.
     assert _entries(tmp_path)[0]["has_conflicting_evidence"] is False
+    assert _entries(tmp_path)[0]["has_source_discordance"] is False
 
 
 def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -> None:
     """A gene detail page is one fetch, so every section it renders is here."""
     emitter = Emitter(root=tmp_path)
 
-    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     assert set(_read(tmp_path, "genes/HGNC_11604.json")) == {
         "gene",
         "symbol",
         "headline_confidence",
+        "validity_state",
         "has_conflicting_evidence",
+        "has_source_discordance",
         "lesion_groups",
         "publications",
         "assertions",
@@ -187,7 +219,7 @@ def test_every_bundle_path_the_index_advertises_was_written(tmp_path: Path) -> N
     )
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     advertised = [str(entry["bundle"]) for entry in _entries(tmp_path)]
     assert len(advertised) == 2
@@ -206,26 +238,40 @@ def test_a_contested_gene_is_flagged_in_both_the_index_and_the_bundle(
     invisible in `headline_confidence` alone. The flag is the other half of that
     pair, and this module is its first consumer.
 
-    Both genes are asserted here, contested and uncontested, and both the index
-    entry and the bundle are read. A writer that hardcoded either value, or that
-    dropped the key and let a reader's `.get(..., False)` fill it in, fails on
-    one of the assertions below rather than passing on a fixture that only ever
-    shows one answer. The `headline_confidence` assertions are what make the
-    point: TBX5 still reads `definitive`, so the flag is carrying information
-    that the confidence cannot — and GATA4 reads `moderate`, so a headline
-    hardcoded to the value a contested gene happens to resolve to fails here
-    too.
+    Both genes are asserted here, contested and uncontested, with the contest
+    carried by their *mirrored* records rather than by anything the curated
+    assertion says. A writer that hardcoded either value, or that dropped the
+    key and let a reader's `.get(..., False)` fill it in, fails on one of the
+    assertions below rather than passing on a fixture that only ever shows one
+    answer. The `headline_confidence` assertions are what make the point: TBX5
+    still reads `definitive`, so the flag is carrying information that the
+    confidence cannot — and GATA4 reads `moderate`, so a headline hardcoded to
+    the value a contested gene happens to resolve to fails here too.
     """
     corpus = _corpus(
         assertions=(
-            _assertion(id="CHDA:AST:0000001", gene=TBX5, classification="definitive"),
-            _assertion(id="CHDA:AST:0000002", gene=TBX5, classification="refuted"),
-            _assertion(id="CHDA:AST:0000003", gene=GATA4, classification="moderate"),
+            _assertion(id="CHDA:AST:0000001", gene=TBX5),
+            _assertion(id="CHDA:AST:0000002", gene=GATA4),
         )
     )
+    validity = {
+        TBX5: _gene_validity(
+            records=(
+                _validity_record(
+                    source=ValiditySource.CLINGEN, classification=Classification.DEFINITIVE
+                ),
+                _validity_record(
+                    source=ValiditySource.GENCC,
+                    classification=Classification.REFUTED,
+                    submitter="s",
+                ),
+            )
+        ),
+        GATA4: _gene_validity(records=(_validity_record(classification=Classification.MODERATE),)),
+    }
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity)
 
     entries = _by_gene(tmp_path)
     assert entries[TBX5]["headline_confidence"] == "definitive"
@@ -242,29 +288,41 @@ def test_a_contested_gene_is_flagged_in_both_the_index_and_the_bundle(
 
 
 def test_confidence_is_broken_down_by_lesion_group(tmp_path: Path) -> None:
-    """The breakdown is per group, so it disagrees with the headline by design.
+    """Every declared group carries the breakdown, keyed the same way the headline is.
 
-    TBX5 here is definitive for septal disease and refuted for conotruncal. A
-    browse row that showed the headline against every group would claim the
-    refuted association is definitive.
+    ClinGen and GenCC classify a gene against a disease, never against a lesion,
+    so the mirrored classifications carry no per-group signal of their own.
+    TBX5 here declares two lesion groups across two assertions; both publish the
+    *same* collapsed value — `strongest()` of the gene's mirrored records — which
+    is `definitive` even though one of the two mirrored records is `refuted`.
     """
     corpus = _corpus(
         assertions=(
-            _assertion(
-                id="CHDA:AST:0000001", lesion_groups=["septal"], classification="definitive"
-            ),
-            _assertion(
-                id="CHDA:AST:0000002", lesion_groups=["conotruncal"], classification="refuted"
-            ),
+            _assertion(id="CHDA:AST:0000001", lesion_groups=["septal"]),
+            _assertion(id="CHDA:AST:0000002", lesion_groups=["conotruncal"]),
         )
     )
+    validity = {
+        TBX5: _gene_validity(
+            records=(
+                _validity_record(
+                    source=ValiditySource.CLINGEN, classification=Classification.DEFINITIVE
+                ),
+                _validity_record(
+                    source=ValiditySource.GENCC,
+                    classification=Classification.REFUTED,
+                    submitter="s",
+                ),
+            )
+        )
+    }
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity)
 
     entry = _entries(tmp_path)[0]
     assert entry["confidence_by_lesion_group"] == {
-        "conotruncal": "refuted",
+        "conotruncal": "definitive",
         "septal": "definitive",
     }
     # Sorted by value, and the same set of groups the breakdown keys on.
@@ -291,7 +349,7 @@ def test_evidence_counts_are_carried_per_evidence_class(tmp_path: Path) -> None:
     )
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     assert _entries(tmp_path)[0]["evidence_counts"] == {"functional_model": 1, "genetic_case": 2}
 
@@ -328,6 +386,7 @@ def test_the_browse_counts_match_the_bundle_they_link_to(tmp_path: Path) -> None
             TBX5: [_variant(vrs_id="ga4gh:VA.1"), _variant(vrs_id="ga4gh:VA.2")],
             GATA4: [_variant(vrs_id="ga4gh:VA.3", gene=GATA4)],
         },
+        validity={},
     )
 
     counted = {
@@ -365,7 +424,7 @@ def test_a_gene_absent_from_the_registry_keeps_its_hgnc_id_as_its_label(
     )
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols={TBX5: "TBX5"}, omics={}, variants={})
+    build_genes(corpus, emitter, symbols={TBX5: "TBX5"}, omics={}, variants={}, validity={})
 
     entries = _by_gene(tmp_path)
     assert entries[TBX5]["symbol"] == "TBX5"
@@ -377,7 +436,7 @@ def test_a_bundle_carries_its_assertions_in_full(tmp_path: Path) -> None:
     """Including the evidence, which is the record a curator is judged on."""
     emitter = Emitter(root=tmp_path)
 
-    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
     assertion = bundle["assertions"][0]
@@ -411,7 +470,7 @@ def test_a_bundle_carries_every_functional_record_about_the_gene(tmp_path: Path)
     )
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
     assert [record["id"] for record in bundle["functional"]] == [
@@ -441,6 +500,7 @@ def test_a_bundle_carries_the_omics_summaries_verbatim(tmp_path: Path) -> None:
         symbols=SYMBOLS,
         omics={TBX5: {"expression": _summary(median_log2fc=1.5)}},
         variants={},
+        validity={},
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["omics"] == {
@@ -468,6 +528,7 @@ def test_a_bundle_embeds_its_variants_rather_than_linking_them(tmp_path: Path) -
         symbols=SYMBOLS,
         omics={},
         variants={TBX5: [_variant(vrs_id="ga4gh:VA.2"), _variant(vrs_id="ga4gh:VA.1")]},
+        validity={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -479,7 +540,7 @@ def test_a_gene_with_no_omics_or_variants_gets_empty_containers(tmp_path: Path) 
     """A consumer should read `bundle["omics"]`, never guard for its absence."""
     emitter = Emitter(root=tmp_path)
 
-    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
     assert bundle["omics"] == {}
@@ -513,6 +574,7 @@ def test_a_bundle_holds_only_its_own_genes_evidence(tmp_path: Path) -> None:
         symbols=SYMBOLS,
         omics={TBX5: {"expression": _summary()}, GATA4: {"profiles": _summary(count=9)}},
         variants={TBX5: [_variant()], GATA4: [_variant(gene=GATA4, vrs_id="ga4gh:VA.y")]},
+        validity={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_4173.json")
@@ -546,7 +608,7 @@ def test_the_index_is_ordered_by_hgnc_id_rather_than_by_symbol(tmp_path: Path) -
     )
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5, GATA4]
     assert [entry["symbol"] for entry in _entries(tmp_path)] == ["TBX5", "GATA4"]
@@ -574,7 +636,7 @@ def test_bundle_assertions_and_functional_records_are_ordered_by_id(tmp_path: Pa
     )
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
     assert [item["id"] for item in bundle["assertions"]] == [
@@ -614,7 +676,7 @@ def test_a_bundle_lists_the_publications_its_evidence_cites(tmp_path: Path) -> N
     )
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["publications"] == [
         "PMID:11729",
@@ -658,6 +720,7 @@ def test_a_gene_with_evidence_but_no_assertion_is_not_published(tmp_path: Path) 
         symbols=SYMBOLS,
         omics={GATA4: {"expression": _summary()}},
         variants={GATA4: [_variant(gene=GATA4)]},
+        validity={},
     )
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5]
@@ -684,7 +747,7 @@ def test_a_bundle_that_cannot_be_written_leaves_no_index_at_all(tmp_path: Path) 
     emitter = Emitter(root=tmp_path, checksums={"genes/HGNC_11604.json": "sha256:0"})
 
     with pytest.raises(ValueError, match="written twice"):
-        build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={})
+        build_genes(_corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={})
 
     assert not (tmp_path / "genes" / "index.json").exists()
     assert "genes/index.json" not in emitter.checksums
@@ -699,53 +762,66 @@ def test_the_index_is_emitted_for_an_empty_corpus(tmp_path: Path) -> None:
     """
     emitter = Emitter(root=tmp_path)
 
-    build_genes(Corpus(root=Path(".")), emitter, symbols={}, omics={}, variants={})
+    build_genes(Corpus(root=Path(".")), emitter, symbols={}, omics={}, variants={}, validity={})
 
     assert _read(tmp_path, "genes/index.json") == {"genes": []}
     assert set(emitter.checksums) == {"genes/index.json"}
 
 
-def test_a_lesion_group_contested_on_its_own_is_named_beside_the_collapsed_value(
+def test_a_contested_gene_names_every_declared_lesion_group_as_conflicting(
     tmp_path: Path,
 ) -> None:
     """The gene-level pairing, one level down — issue #4.
 
-    `confidence_by_lesion_group` collapses each group with `strongest()` on the
-    same linear scale where definitive outranks refuted, so a group asserted both
-    ways publishes `definitive` and the refutation vanishes exactly as it would
-    from the headline. `has_conflicting_evidence` is computed gene-wide, so it
-    says the gene is contested without saying which group is.
+    `confidence_by_lesion_group` collapses each group with `strongest()` of the
+    gene's *mirrored* records, so a gene carrying both a definitive and a
+    refuted record publishes `definitive` for every group and the refutation
+    vanishes exactly as it would from the headline. `has_conflicting_evidence`
+    is computed gene-wide and `conflicting_lesion_groups` is its per-group
+    counterpart — but the mirrors classify per gene-disease, never per lesion,
+    so there is no finer signal left to divide the groups with: a contested
+    gene names *every* group it declares, never a subset.
 
-    Two groups, contested differently, are what make that visible: septal carries
-    both a definitive and a refuted assertion, conotruncal carries only moderate.
-    A build that named every group of a contested gene, or none, fails here — and
-    so does one that let the gene-level flag stand in for the per-group answer,
-    since both groups belong to the same contested gene.
+    TBX5 here declares two lesion groups across two assertions, septal and
+    conotruncal, while its mirrored records are definitive and refuted. A build
+    that named only one of the two groups, or that let the gene-level flag
+    stand in without naming any group, fails here.
 
-    The collapsed values are asserted alongside, because the new list is only
-    meaningful as a qualifier on them: septal must still read `definitive`, or
-    the list is describing something the map no longer says.
+    The collapsed values are asserted alongside, because the list is only
+    meaningful as a qualifier on them: both groups must still read
+    `definitive`, or the list is describing something the map no longer says.
     """
     corpus = _corpus(
         assertions=(
-            _assertion(
-                id="CHDA:AST:0000001", lesion_groups=["septal"], classification="definitive"
-            ),
-            _assertion(id="CHDA:AST:0000002", lesion_groups=["septal"], classification="refuted"),
-            _assertion(
-                id="CHDA:AST:0000003", lesion_groups=["conotruncal"], classification="moderate"
-            ),
+            _assertion(id="CHDA:AST:0000001", lesion_groups=["septal"]),
+            _assertion(id="CHDA:AST:0000002", lesion_groups=["conotruncal"]),
         )
     )
+    validity = {
+        TBX5: _gene_validity(
+            records=(
+                _validity_record(
+                    source=ValiditySource.CLINGEN, classification=Classification.DEFINITIVE
+                ),
+                _validity_record(
+                    source=ValiditySource.GENCC,
+                    classification=Classification.REFUTED,
+                    submitter="s",
+                ),
+            )
+        )
+    }
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity)
 
     entry = _entries(tmp_path)[0]
     assert entry["has_conflicting_evidence"] is True, "the gene is contested"
-    assert entry["conflicting_lesion_groups"] == ["septal"], "but only about septal disease"
+    assert entry["conflicting_lesion_groups"] == ["conotruncal", "septal"], (
+        "every declared group, not a subset of them"
+    )
     assert entry["confidence_by_lesion_group"] == {
-        "conotruncal": "moderate",
+        "conotruncal": "definitive",
         "septal": "definitive",
     }
 
@@ -762,14 +838,30 @@ def test_the_conflicting_groups_are_a_subset_of_the_groups_that_carry_confidence
     """
     corpus = _corpus(
         assertions=(
-            _assertion(id="CHDA:AST:0000001", lesion_groups=["septal"], classification="refuted"),
-            _assertion(id="CHDA:AST:0000002", lesion_groups=["septal"], classification="moderate"),
-            _assertion(id="CHDA:AST:0000003", gene=GATA4, classification="definitive"),
+            _assertion(id="CHDA:AST:0000001", gene=TBX5, lesion_groups=["septal"]),
+            _assertion(id="CHDA:AST:0000002", gene=GATA4, lesion_groups=["septal"]),
         )
     )
+    validity = {
+        TBX5: _gene_validity(
+            records=(
+                _validity_record(
+                    source=ValiditySource.CLINGEN, classification=Classification.REFUTED
+                ),
+                _validity_record(
+                    source=ValiditySource.GENCC,
+                    classification=Classification.MODERATE,
+                    submitter="s",
+                ),
+            )
+        ),
+        GATA4: _gene_validity(
+            records=(_validity_record(classification=Classification.DEFINITIVE),)
+        ),
+    }
     emitter = Emitter(root=tmp_path)
 
-    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={})
+    build_genes(corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity)
 
     for entry in _entries(tmp_path):
         named = set(entry["conflicting_lesion_groups"])

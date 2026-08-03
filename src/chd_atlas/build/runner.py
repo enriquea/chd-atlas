@@ -166,6 +166,12 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         symbols={gene: labels.symbol for gene, labels in genes.items()},
         omics=omics,
         variants=variants,
+        # Not yet wired to `build.validity.gene_validity()`: this build does not
+        # read the ClinGen/GenCC mirrors or `chd_scope.yaml` at all today, so
+        # there is no validity to hand it. Every gene therefore reads
+        # `uncurated()` -- `headline_confidence: null`, `validity_state:
+        # "uncurated"` -- until the mirrors are threaded through here.
+        validity={},
     )
     build_literature(corpus, emitter)
     # Read again rather than threaded down from the gate: `validate_repository`

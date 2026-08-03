@@ -88,15 +88,17 @@ the evidence itself.
     {
       "assertion_count": 1,
       "bundle": "genes/HGNC_11604.json",
-      "confidence_by_lesion_group": { "septal": "definitive" },
+      "confidence_by_lesion_group": {},
       "conflicting_lesion_groups": [],
       "evidence_counts": { "genetic_case": 1 },
       "functional_count": 0,
       "gene": "HGNC:11604",
       "has_conflicting_evidence": false,
-      "headline_confidence": "definitive",
+      "has_source_discordance": false,
+      "headline_confidence": null,
       "lesion_groups": ["septal"],
       "symbol": "TBX5",
+      "validity_state": "uncurated",
       "variant_count": 0
     }
   ]
@@ -108,19 +110,40 @@ the evidence itself.
 - `bundle` is the path to fetch for the detail page. Do not build it yourself.
 - `symbol` falls back to the HGNC id for a gene not yet in `mirrors/genes.tsv`,
   so it is always a non-empty string you can render and search.
-- `confidence_by_lesion_group` may disagree with `headline_confidence` by
-  design: a gene can be definitive for septal disease and refuted for
-  conotruncal.
-- `conflicting_lesion_groups` names the groups that are themselves contested,
-  and is always present though often empty. It is the per-group counterpart of
+- `headline_confidence` and the rest of this row come from the mirrored
+  ClinGen/GenCC validity records for the gene, never from a curated assertion —
+  this atlas mirrors gene-disease validity, it does not author it.
+  `headline_confidence` is `null` for a gene no authority has assessed, which is
+  what the example above shows. It is never `"no_known_association"` for that
+  case: that classification is itself an assessed verdict ("a panel looked and
+  found nothing"), and asserting it for a gene nobody has assessed would state a
+  conclusion no authority reached.
+- `validity_state` says how well curated the gene is: `"expert_curated"` (an
+  in-scope ClinGen record exists), `"submitter_curated"` (only GenCC has
+  assessed it) or `"uncurated"` (neither mirror has). `headline_confidence`
+  being `null` and `validity_state` being `"uncurated"` always agree.
+- `has_source_discordance` is `true` when one mirrored source contests the gene
+  while the *other* supports it. It is narrower than `has_conflicting_evidence`,
+  which also fires when a single source is internally split across diseases or
+  panels — see [Contested genes](#contested-genes-the-one-consumer-obligation).
+- `confidence_by_lesion_group` applies the gene's mirrored `headline_confidence`
+  to every lesion group its curated assertions declare — ClinGen and GenCC
+  classify a gene against a disease, never against a specific lesion, so there
+  is no finer-grained signal to divide the groups with. It is empty exactly
+  when `headline_confidence` is `null`.
+- `conflicting_lesion_groups` names every group in `confidence_by_lesion_group`
+  when the gene is contested, and none when it is not — the same "no per-group
+  signal" reasoning applies, so this can never name a proper subset of the
+  gene's declared groups. It is the per-group counterpart of
   `has_conflicting_evidence` — see [Contested genes](#contested-genes-the-one-consumer-obligation),
   which is the one obligation this API places on a consumer.
-- **These two per-group fields appear here and nowhere else.** The gene bundle
-  carries `has_conflicting_evidence` but neither of them, so a detail page that
-  needs group-level confidence must carry it over from the browse row it was
-  opened from. It cannot be derived from the bundle: that would mean
-  reimplementing the classification ranking and the contested test, neither of
-  which is published.
+- **The two lesion-group fields appear here and nowhere else.** The gene bundle
+  carries `headline_confidence`, `validity_state`, `has_conflicting_evidence` and
+  `has_source_discordance`, but neither of them, so a detail page that needs
+  group-level confidence must carry it over from the browse row it was opened
+  from. It cannot be derived from the bundle: that would mean reimplementing
+  the classification ranking and the contested test, neither of which is
+  published.
 - The three counts describe what the bundle contains, so a browse row never
   promises more than the page delivers.
 
@@ -132,8 +155,10 @@ One gene's whole detail page, in one fetch.
 {
   "gene": "HGNC:11604",
   "symbol": "TBX5",
-  "headline_confidence": "definitive",
+  "headline_confidence": null,
+  "validity_state": "uncurated",
   "has_conflicting_evidence": false,
+  "has_source_discordance": false,
   "lesion_groups": ["septal"],
   "publications": ["PMID:8988165"],
   "assertions": [ { "id": "CHDA:AST:0000001", "classification": "definitive", "evidence": [ … ] } ],
@@ -376,62 +401,75 @@ fraction of a frame.
 
 ## Contested genes: the one consumer obligation
 
-`headline_confidence` is the strongest classification asserted for a gene on a
-single linear scale, where `definitive` outranks `refuted`. ClinGen treats
-disputed and refuted as a **separate axis** rather than weaker rungs of the same
-ladder, so a gene carrying both a definitive and a refuted assertion resolves to
-`definitive` and the refutation is invisible in that field alone.
+`headline_confidence` is the strongest classification the mirrored ClinGen and
+GenCC records assert for a gene, on a single linear scale where `definitive`
+outranks `refuted`. ClinGen treats disputed and refuted as a **separate axis**
+rather than weaker rungs of the same ladder, so a gene whose mirrored records
+carry both a definitive and a refuted classification resolves to `definitive`
+and the refutation is invisible in that field alone.
 
 `has_conflicting_evidence` is the other half of that pair. It appears in both
 the browse row and the bundle, and is always written alongside
-`headline_confidence`.
+`headline_confidence`. `has_source_discordance` is a narrower relative: it is
+`true` only when the contesting and the supporting classification come from
+*different* mirrored sources. A single source split against itself — which
+happens: ninety genes in the committed ClinGen mirror carry both a supportive
+and a contesting call, across two diseases or two GCEPs — sets
+`has_conflicting_evidence` without setting this one.
 
-**A consumer must pair the two and present a contested gene distinctly** — a
-badge, a different colour, an explicit note. Rendering `headline_confidence`
-alone would tell a reader that a gene the field disputes is settled science,
-which is the one failure this resource exists to prevent.
+**A consumer must pair `headline_confidence` with `has_conflicting_evidence`
+and present a contested gene distinctly** — a badge, a different colour, an
+explicit note. Rendering `headline_confidence` alone would tell a reader that a
+gene the field disputes is settled science, which is the one failure this
+resource exists to prevent.
 
-`confidence_by_lesion_group` is the finer-grained view, and it collapses the same
-way: each group's value is `strongest()` over that group's classifications, so a
-group that is both `definitive` and `refuted` resolves to `definitive` exactly as
-the headline does.
+`confidence_by_lesion_group` is **not** a finer-grained view of the same
+question. ClinGen and GenCC classify a gene against a disease, never against a
+specific lesion, so the mirrored records carry no per-group information at
+all — every lesion group a curated assertion names for the gene publishes the
+*identical* `strongest()` of the gene's mirrored records. It differs from
+`headline_confidence` only in shape, as a map over the gene's declared groups
+for a consumer already filtering by lesion, never in value.
 
-**`conflicting_lesion_groups` is its flag**, and the same obligation applies one
-level down. It lists the groups that are themselves contested:
+**`conflicting_lesion_groups` is `has_conflicting_evidence`'s per-group
+counterpart**, and for the same reason it cannot single out which of a
+contested gene's groups is the disputed one: it lists *every* group in
+`confidence_by_lesion_group` when the gene is contested, and none when it is
+not.
 
 ```json
 {
   "has_conflicting_evidence": true,
-  "confidence_by_lesion_group": { "septal": "definitive", "conotruncal": "moderate" },
-  "conflicting_lesion_groups": ["septal"]
+  "confidence_by_lesion_group": { "conotruncal": "definitive", "septal": "definitive" },
+  "conflicting_lesion_groups": ["conotruncal", "septal"]
 }
 ```
 
-Read together, those say: the gene is contested, and specifically about septal
-disease — the conotruncal association is not in dispute. `has_conflicting_evidence`
-alone cannot make that distinction, since it is computed over the gene's whole
-classification set.
+Read together, those say: the gene is contested, and every lesion group it is
+curated for inherits that contest equally. There is no mirrored signal that
+could clear one group while leaving another disputed.
 
 **Where these two fields live.** `confidence_by_lesion_group` and
 `conflicting_lesion_groups` appear in `genes/index.json` and **nowhere else**.
-The gene bundle carries `has_conflicting_evidence` but neither of them, so a
-detail page needing group-level confidence must carry it over from the browse
-row it was opened from. It cannot be recovered from the bundle: that would mean
-reimplementing the classification ranking and the contested test against the
-embedded assertions, and neither rule is published.
+The gene bundle carries `headline_confidence`, `validity_state`,
+`has_conflicting_evidence` and `has_source_discordance`, but neither of these
+two, so a detail page needing group-level confidence must carry it over from
+the browse row it was opened from. It cannot be recovered from the bundle:
+that would mean reimplementing the classification ranking and the contested
+test against the mirrored records, and neither rule is published.
 
-**The three states the pair can express**, which is why both are needed:
+**The two states the pair can express:**
 
 | `has_conflicting_evidence` | `conflicting_lesion_groups` | what it means |
 | --- | --- | --- |
 | `false` | `[]` | nothing about this gene is disputed |
-| `true` | `["septal"]` | septal disease itself is disputed — supportive and contesting assertions about the same group |
-| `true` | `[]` | no single group is internally disputed; the gene carries opposing validity across *different* groups — definitive for one lesion, refuted for another |
+| `true` | every group in `confidence_by_lesion_group` | the gene is disputed, and the dispute applies equally to every lesion group it is curated for |
 
-That last row is not a contradiction, and it is the case the
-`confidence_by_lesion_group` bullet above calls "by design". Present it as
-*lesion-specific validity*, not as a dispute: showing such a gene with the same
-badge as a genuinely contested one would overstate the disagreement.
+A gene disputed about only *some* of its lesion groups is not a state this API
+can express: the mirrors classify by disease, not by lesion, so there is
+nothing in the source data to divide the groups on. `conflicting_lesion_groups`
+is therefore always either every group the gene declares or none of them —
+never a proper subset.
 
 The list is always present and may be empty. Every group it names is a key of
 `confidence_by_lesion_group`, so the two join directly.

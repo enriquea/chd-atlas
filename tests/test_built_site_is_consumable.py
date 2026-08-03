@@ -136,12 +136,20 @@ def test_the_seed_gene_and_its_manuscript_render_from_the_payloads_alone(site: P
     for resolvable entries and a string otherwise, so a consumer reading
     `entry.publication.title` got `undefined` with nothing raised — in the one
     payload the landing page renders without a further fetch.
+
+    `headline_confidence` and `validity_state` read `null`/`"uncurated"` here
+    rather than the `"definitive"`/`"expert_curated"` ClinGen's real Holt-Oram
+    curation would produce: `build_site` does not yet read the ClinGen/GenCC
+    mirrors at all, so `build_genes` is handed an empty `validity` map for
+    every gene. That is `build/runner.py`'s documented interim state, to be
+    replaced once it calls `build.validity.gene_validity()`.
     """
     entry = next(
         item for item in _read(site, "genes/index.json")["genes"] if item["gene"] == "HGNC:11604"
     )
     assert entry["symbol"] == "TBX5"
-    assert entry["headline_confidence"] == "definitive"
+    assert entry["headline_confidence"] is None
+    assert entry["validity_state"] == "uncurated"
     assert entry["has_conflicting_evidence"] is False
 
     bundle = _read(site, entry["bundle"])

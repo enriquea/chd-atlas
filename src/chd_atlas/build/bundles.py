@@ -38,6 +38,7 @@ from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
 from chd_atlas.build.paths import gene_bundle_path
+from chd_atlas.build.validity import GeneValidity
 from chd_atlas.corpus import Corpus
 from chd_atlas.identifiers import HgncId
 from chd_atlas.models.assertion import GeneDiseaseAssertion
@@ -101,9 +102,10 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
     """What the index row and the bundle must say identically about one gene.
 
     One function rather than two literals so the browse row and the page it
-    opens cannot disagree, and — the reason it exists — so `headline_confidence`
-    and `has_conflicting_evidence` are written together. Dropping the flag from
-    one payload alone is not an edit that can be made here by accident.
+    opens cannot disagree, and — the reason it exists — so `headline_confidence`,
+    `validity_state`, `has_conflicting_evidence` and `has_source_discordance` are
+    written together. Dropping any one of them from one payload alone is not an
+    edit that can be made here by accident.
 
     `.value` publishes the vocabulary's string rather than leaning on a `StrEnum`
     member *being* a `str`. Measured, not assumed: mypy accepts either spelling
@@ -112,12 +114,21 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
     member would then fail type checking here and be refused by `json.dumps`,
     while `.value` keeps publishing the same JSON. Neither is a trap; `.value` is
     the one that states at the call site what the file will contain.
+
+    `headline_confidence` publishes `null` for a gene no authority has assessed
+    — `fact.headline_confidence` is `None` in that case, per `derive.gene_facts`
+    — rather than coercing it to a string, which would invent a confidence
+    nobody stated.
     """
     return {
         "gene": gene,
         "symbol": symbol,
-        "headline_confidence": fact.headline_confidence.value,
+        "headline_confidence": (
+            fact.headline_confidence.value if fact.headline_confidence else None
+        ),
+        "validity_state": fact.validity_state.value,
         "has_conflicting_evidence": fact.has_conflicting_evidence,
+        "has_source_discordance": fact.has_source_discordance,
         "lesion_groups": [group.value for group in fact.lesion_groups],
     }
 
@@ -128,6 +139,7 @@ def build_genes(
     symbols: Mapping[str, str],
     omics: Mapping[str, Mapping[str, ModalitySummary]],
     variants: Mapping[str, list[dict[str, Any]]],
+    validity: dict[str, GeneValidity],
 ) -> None:
     """Emit `genes/index.json` and one bundle per gene carrying an assertion.
 
@@ -136,6 +148,9 @@ def build_genes(
     heading both render this value, so blank reads as a broken site while
     "HGNC:4173" reads as a symbol that has not been mirrored yet and is still
     something a reader can search for.
+
+    `validity` is passed straight to `gene_facts` — see its docstring for what
+    a gene absent from it publishes.
 
     `omics` and `variants` are what `build_omics` and `build_variants` returned,
     taken as `Mapping` because nothing here mutates them. Genes they carry that
@@ -154,7 +169,7 @@ def build_genes(
     which genes exist; the cost is pinned instead, by
     `test_a_gene_with_evidence_but_no_assertion_is_not_published`.
     """
-    facts = gene_facts(corpus)
+    facts = gene_facts(corpus, validity)
     assertions = _records_by_gene(corpus.assertions)
     functional = _records_by_gene(corpus.functional)
 
