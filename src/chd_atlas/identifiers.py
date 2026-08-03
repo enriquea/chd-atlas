@@ -20,6 +20,7 @@ from pydantic import StringConstraints
 HGNC_PATTERN: Final = r"^HGNC:\d+$"
 SEQUENCE_ONTOLOGY_PATTERN: Final = r"^SO:\d{7}$"
 MODIFICATION_PATTERN: Final = r"^MOD:\d{5}$"
+MONDO_PATTERN: Final = r"^MONDO:\d{7}$"
 # Official UniProt accession grammar, with an optional isoform suffix.
 UNIPROT_PATTERN: Final = (
     r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+)?$"
@@ -32,6 +33,13 @@ Pmcid = NewType("Pmcid", Annotated[str, StringConstraints(pattern=r"^PMC\d+$")])
 PhenotypeId = NewType(
     "PhenotypeId", Annotated[str, StringConstraints(pattern=r"^(HP|MONDO):\d{7}$")]
 )
+# Narrower than `PhenotypeId`, which admits HP as well because a curated
+# assertion may cite either. A mirrored gene-disease record names a disease
+# entity and nothing else, so accepting an HP term here would let a phenotypic
+# feature masquerade as the disease a classification was made against.
+# `PhenotypeId` is deliberately left alone: narrowing it changes curated records
+# and belongs in its own commit.
+DiseaseId = NewType("DiseaseId", Annotated[str, StringConstraints(pattern=MONDO_PATTERN)])
 SequenceOntologyId = NewType(
     "SequenceOntologyId",
     Annotated[str, StringConstraints(pattern=SEQUENCE_ONTOLOGY_PATTERN)],

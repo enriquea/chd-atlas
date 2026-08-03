@@ -21,7 +21,48 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The gate, and it is a separate job on purpose. `chd-atlas build` refuses a
+  # corpus that fails validation, so the deploy job was never going to publish
+  # invalid *data* — but validation is not the test suite. `validate.yml` runs
+  # the suite, and it fires independently on the same push with nothing
+  # sequencing the two, so a commit whose tests are red reached the live site
+  # while its failure was still being reported. `main` carries no branch
+  # protection and no required checks, so nothing else closed that gap either.
+  #
+  # Duplicated from `validate.yml` rather than chained with `workflow_run`:
+  # `workflow_run` fires on completion regardless of conclusion and would need
+  # its own conclusion check, and it re-resolves the commit, which is a second
+  # way to deploy something other than what was tested. `needs:` cannot race.
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Unit tests
+        run: uv run pytest
+
+      - name: Validate curation corpus
+        run: uv run chd-atlas validate
+
   deploy:
+    needs: gates
     runs-on: ubuntu-latest
     environment:
       name: github-pages

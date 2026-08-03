@@ -6,6 +6,7 @@ from chd_atlas.identifiers import (
     AccessionId,
     AssertionId,
     ContrastId,
+    DiseaseId,
     Doi,
     FunctionalId,
     HgncId,
@@ -81,3 +82,17 @@ def test_accepts_well_formed_identifiers(type_: type, value: str) -> None:
 def test_rejects_malformed_identifiers(type_: type, value: str) -> None:
     with pytest.raises(ValidationError):
         TypeAdapter(type_).validate_python(value)
+
+
+def test_disease_id_accepts_mondo_and_rejects_hp() -> None:
+    """DiseaseId is narrower than PhenotypeId, which admits both prefixes.
+
+    A disease entity and a phenotypic feature are different claims: MONDO:0007732
+    is Holt-Oram syndrome, HP:0001631 is an atrial septal defect. The mirror keys
+    on the first and must not silently accept the second.
+    """
+    adapter = TypeAdapter(DiseaseId)
+    assert adapter.validate_python("MONDO:0007732") == "MONDO:0007732"
+    for rejected in ("HP:0001631", "MONDO:7732", "MONDO:00077321", "mondo:0007732"):
+        with pytest.raises(ValidationError):
+            adapter.validate_python(rejected)

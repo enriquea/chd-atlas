@@ -2,6 +2,14 @@
 
 A curated set of genes associated with CHD.
 
+**Development status.** This atlas is under active development and is **not a
+clinical decision-support tool** — it must not be used to make or guide a
+diagnostic, treatment or any other clinical decision. Gene-disease validity is
+mirrored from ClinGen and GenCC, never authored by this atlas itself, and the
+evidence curated here so far is a small fraction of the genes that mirrored
+validity data covers. The published site's front page (`index.html`) states
+the exact, build-derived numbers behind that gap.
+
 ## Published data API
 
 The atlas is served as static JSON built from the curated sources — no server,
@@ -18,8 +26,9 @@ lists — every served file except itself, which cannot contain its own checksum
 
 `sources.json` records what the atlas mirrors and on whose terms — phenotype
 labels come from the Human Phenotype Ontology, whose licence requires
-attribution, and the `LICENSE` in this repository covers the code rather than
-mirrored third-party content.
+attribution; gene-disease validity is mirrored from ClinGen and GenCC, which
+this atlas attributes but does not curate itself. The `LICENSE` in this
+repository covers the code rather than mirrored third-party content.
 
 The shape of each file is documented in [docs/data-api.md](docs/data-api.md).
 Consumers should read that before writing against the output — in particular the

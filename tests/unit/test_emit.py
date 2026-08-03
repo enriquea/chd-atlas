@@ -80,6 +80,15 @@ def test_compression_embeds_no_timestamp(monkeypatch: pytest.MonkeyPatch) -> Non
     assert first == second
     assert gzip.decompress(first) == b"payload"
 
+    # The equality above proves the header carries *a* fixed value, not that it
+    # carries zero: `mtime=1` satisfies it just as well. Measured by mutation on
+    # 2026-08-03 — flipping `mtime=0` to `mtime=1` in `compress` survived the
+    # whole suite, changing the MTIME field and therefore every published `.gz`
+    # checksum with nothing red. Bytes 4-7 of a gzip header are that field, so
+    # pinning them is what makes the documented invariant checkable rather than
+    # merely stated.
+    assert first[4:8] == b"\x00\x00\x00\x00"
+
 
 def test_compression_level_is_pinned() -> None:
     """Changing the level re-checksums every `.gz` in the atlas at once.
@@ -125,6 +134,28 @@ def test_emitter_writes_json_and_records_its_checksum(tmp_path: Path) -> None:
     assert (tmp_path / "a" / "b" / "c" / "deep.json").is_file()
     assert list(emitter.checksums) == ["genes/index.json", "a/b/c/deep.json"]
     assert emitter.checksums["genes/index.json"] == checksum(written)
+
+
+def test_write_text_writes_utf8_bytes_verbatim_and_is_not_json_encoded(tmp_path: Path) -> None:
+    """`write_text` for a page, not a payload — the method `index.html` needs.
+
+    `write_json` would type-check on the same string: `Json`'s union includes
+    `str` directly, so nothing stops a caller reaching for the wrong method.
+    Calling it on this text would run it through `encode_json` and publish
+    `"<!doctype html>...\\n"` — a JSON string literal, quoted and escaped, not
+    the page a browser can render. Asserted against the raw bytes on disk
+    rather than against `emitter.checksums`, because the checksum would verify
+    either way; only reading the file back shows whether the markup survived.
+    """
+    emitter = Emitter(root=tmp_path)
+    page = "<!doctype html>\n<html><body>Folie à deux</body></html>\n"
+
+    emitter.write_text("index.html", page)
+
+    written = (tmp_path / "index.html").read_bytes()
+    assert written == page.encode("utf-8")
+    assert not written.startswith(b'"')
+    assert emitter.checksums == {"index.html": checksum(written)}
 
 
 def test_emitter_checksums_the_bytes_actually_served(tmp_path: Path) -> None:

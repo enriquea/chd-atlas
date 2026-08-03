@@ -44,3 +44,31 @@ def test_a_misnamed_assertion_in_the_real_corpus_fails_validation(tmp_path: Path
 
     assert report.ok is False
     assert "CUR001" in [issue.code for issue in report.issues]
+
+
+def test_missing_validity_mirrors_fails_validation(tmp_path: Path) -> None:
+    """Reproduces the gap found reviewing Task 10's wiring: with both validity
+    mirrors gone and everything else in the corpus valid, `_mirrored_validity`
+    returns None and only SCP000 -- a WARNING -- was reported. `ok` ignores
+    warnings, so `build_site` (which gates on `report.ok`) would have
+    published a site where scope, and so which genes exist at all, could not
+    be checked, while `chd-atlas validate` still exited 0. TBL012 makes the
+    missing mirrors an ERROR, matching how TBL008 covers a missing gene
+    registry the same way.
+
+    `is False`, not `== False`: `{"f": 0} == {"f": False}` is `True` in
+    Python, and this project pins boolean contracts with `is`.
+    """
+    for item in ("curation", "mirrors", "ontologies"):
+        shutil.copytree(REPO_ROOT / item, tmp_path / item)
+    assert validate_repository(tmp_path).ok, "the copied corpus should start clean"
+
+    (tmp_path / "mirrors" / "clingen_gene_validity.tsv").unlink()
+    (tmp_path / "mirrors" / "gencc_submissions.tsv").unlink()
+
+    report = validate_repository(tmp_path)
+
+    codes = [issue.code for issue in report.issues]
+    assert report.ok is False
+    assert "TBL012" in codes
+    assert "SCP000" in codes

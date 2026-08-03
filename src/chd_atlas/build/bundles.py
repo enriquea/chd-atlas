@@ -38,13 +38,14 @@ from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
 from chd_atlas.build.paths import gene_bundle_path
+from chd_atlas.build.validity import GeneValidity, ValidityRecord, uncurated
 from chd_atlas.corpus import Corpus
 from chd_atlas.identifiers import HgncId
-from chd_atlas.models.assertion import GeneDiseaseAssertion
+from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.models.functional import FunctionalEvidence
 
 
-def _records_by_gene[RecordT: (GeneDiseaseAssertion, FunctionalEvidence)](
+def _records_by_gene[RecordT: (LesionAssertion, FunctionalEvidence)](
     records: Iterable[RecordT],
 ) -> dict[str, list[dict[str, Json]]]:
     """Group one kind of curated record by gene, ordered by id, JSON-ready.
@@ -59,7 +60,7 @@ def _records_by_gene[RecordT: (GeneDiseaseAssertion, FunctionalEvidence)](
     second file would reorder a bundle that is otherwise unchanged.
 
     `mode="json"` so every value is a JSON primitive by construction.
-    `GeneDiseaseAssertion` carries two `date` fields, which `json.dumps` refuses
+    `LesionAssertion` carries two `date` fields, which `json.dumps` refuses
     outright — without this the build dies part-way through, with `dist/` already
     half written. `FunctionalEvidence` carries none today and would serialise
     either way, which is exactly why the conversion is applied to both rather
@@ -97,13 +98,71 @@ def _summaries(modalities: Mapping[str, ModalitySummary]) -> Mapping[str, Json]:
     return cast(Mapping[str, Json], modalities)
 
 
+def _validity_record(record: ValidityRecord) -> dict[str, Json]:
+    """One mirrored classification, JSON-ready.
+
+    Every record in the published array carries the same eleven keys, whichever
+    source it came from. `sop`, `classification_date` and `gcep` are ClinGen-only
+    and `submitter` is GenCC-only on `ValidityRecord` itself (see its
+    docstring), and each is `null` on a record from the other source rather than
+    left out of the object. The alternative — omitting a source's absent fields
+    — would publish an array whose objects differ in shape, which is a trap for
+    any consumer that reads one field off `records[0]` and expects the same key
+    to exist on `records[1]`.
+
+    `classification` publishes `null` for GenCC's `Supportive`, which
+    `ValidityRecord.classification` already represents as `None` — the mapping
+    exception documented on that field — while `classification_term` always
+    carries the authority's own word, mapped or not.
+    """
+    return {
+        "source": record.source.value,
+        "classification_term": record.classification_term,
+        "classification": record.classification.value if record.classification else None,
+        "disease": record.disease,
+        "disease_label": record.disease_label,
+        "moi": record.moi,
+        "sop": record.sop,
+        "classification_date": record.classification_date,
+        "gcep": record.gcep,
+        "report_url": record.report_url,
+        "submitter": record.submitter,
+    }
+
+
+def _validity(gene_validity: GeneValidity) -> dict[str, Json]:
+    """The bundle's `validity` block: how curated the gene is, and by whom.
+
+    `records` is serialised in the order `build.validity.gene_validity` already
+    sorted it into — content order, not encounter order, so two builds of one
+    commit agree on it. Never re-sorted or re-derived here: that module already
+    did the work of deciding the order, and doing it again risks disagreeing
+    with it instead of reusing it.
+
+    `state` and `has_source_discordance` duplicate the top-level
+    `validity_state` and `has_source_discordance` that `_headline` already
+    writes into this same bundle. That is deliberate rather than an oversight:
+    the top-level fields are what the browse row and the bundle publish
+    identically (`_headline`'s whole reason to exist), while this block is the
+    self-contained provenance object — a consumer who only wants "who curated
+    this gene, and what did each of them say" reads `validity` alone and never
+    has to cross-reference the flat fields beside it.
+    """
+    return {
+        "state": gene_validity.state.value,
+        "has_source_discordance": gene_validity.has_source_discordance,
+        "records": [_validity_record(record) for record in gene_validity.records],
+    }
+
+
 def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
     """What the index row and the bundle must say identically about one gene.
 
     One function rather than two literals so the browse row and the page it
-    opens cannot disagree, and — the reason it exists — so `headline_confidence`
-    and `has_conflicting_evidence` are written together. Dropping the flag from
-    one payload alone is not an edit that can be made here by accident.
+    opens cannot disagree, and — the reason it exists — so `headline_confidence`,
+    `validity_state`, `has_conflicting_evidence` and `has_source_discordance` are
+    written together. Dropping any one of them from one payload alone is not an
+    edit that can be made here by accident.
 
     `.value` publishes the vocabulary's string rather than leaning on a `StrEnum`
     member *being* a `str`. Measured, not assumed: mypy accepts either spelling
@@ -112,12 +171,21 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
     member would then fail type checking here and be refused by `json.dumps`,
     while `.value` keeps publishing the same JSON. Neither is a trap; `.value` is
     the one that states at the call site what the file will contain.
+
+    `headline_confidence` publishes `null` for a gene no authority has assessed
+    — `fact.headline_confidence` is `None` in that case, per `derive.gene_facts`
+    — rather than coercing it to a string, which would invent a confidence
+    nobody stated.
     """
     return {
         "gene": gene,
         "symbol": symbol,
-        "headline_confidence": fact.headline_confidence.value,
+        "headline_confidence": (
+            fact.headline_confidence.value if fact.headline_confidence else None
+        ),
+        "validity_state": fact.validity_state.value,
         "has_conflicting_evidence": fact.has_conflicting_evidence,
+        "has_source_discordance": fact.has_source_discordance,
         "lesion_groups": [group.value for group in fact.lesion_groups],
     }
 
@@ -128,6 +196,7 @@ def build_genes(
     symbols: Mapping[str, str],
     omics: Mapping[str, Mapping[str, ModalitySummary]],
     variants: Mapping[str, list[dict[str, Any]]],
+    validity: dict[str, GeneValidity],
 ) -> None:
     """Emit `genes/index.json` and one bundle per gene carrying an assertion.
 
@@ -136,6 +205,12 @@ def build_genes(
     heading both render this value, so blank reads as a broken site while
     "HGNC:4173" reads as a symbol that has not been mirrored yet and is still
     something a reader can search for.
+
+    `validity` is passed straight to `gene_facts` — see its docstring for what
+    a gene absent from it publishes. The bundle additionally embeds the whole
+    `GeneValidity` as a `validity` object (`_validity`), which `gene_facts`
+    does not carry forward because the browse layer never needs the individual
+    mirrored records, only the fields it already reduces `GeneValidity` to.
 
     `omics` and `variants` are what `build_omics` and `build_variants` returned,
     taken as `Mapping` because nothing here mutates them. Genes they carry that
@@ -154,7 +229,7 @@ def build_genes(
     which genes exist; the cost is pinned instead, by
     `test_a_gene_with_evidence_but_no_assertion_is_not_published`.
     """
-    facts = gene_facts(corpus)
+    facts = gene_facts(corpus, validity)
     assertions = _records_by_gene(corpus.assertions)
     functional = _records_by_gene(corpus.functional)
 
@@ -177,6 +252,14 @@ def build_genes(
         bundle = gene_bundle_path(HgncId(gene))
         headline = _headline(gene, symbols.get(gene, gene), fact)
         rows = variants.get(gene, [])
+        # Looked up again rather than threaded through `GeneFacts`: `gene_facts`
+        # already reduced `GeneValidity` to the scalar fields the browse layer
+        # needs (`headline_confidence`, `validity_state`, ...) and does not carry
+        # the record list forward, so the bundle -- the one payload that needs
+        # the records themselves -- reads the same `validity` mapping this
+        # function was handed, with the same `uncurated()` fallback `gene_facts`
+        # documents for a gene neither mirror curates.
+        gene_validity = validity.get(gene, uncurated())
 
         index.append(
             {
@@ -211,6 +294,10 @@ def build_genes(
             bundle,
             {
                 **headline,
+                # The full mirrored picture, alongside the flat fields
+                # `headline` already carries -- see `_validity`'s docstring for
+                # why both are published rather than one replacing the other.
+                "validity": _validity(gene_validity),
                 "publications": list(fact.publications),
                 "assertions": assertions.get(gene, []),
                 "functional": functional.get(gene, []),

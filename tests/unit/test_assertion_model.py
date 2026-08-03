@@ -5,8 +5,8 @@ from pydantic import ValidationError
 from chd_atlas.models.assertion import (
     AssertionFile,
     Evidence,
-    GeneDiseaseAssertion,
     InTextLocator,
+    LesionAssertion,
     SupplementaryLocator,
 )
 
@@ -29,12 +29,10 @@ def _assertion(**overrides: object) -> dict[str, object]:
         "gene": "HGNC:11604",
         "phenotypes": ["HP:0001631"],
         "lesion_groups": ["septal"],
-        "classification": "definitive",
         "inheritance": ["AD"],
         "mechanism": "haploinsufficiency",
         "syndromic": "both",
         "evidence": [_evidence()],
-        "source_tier": "own_curation",
         "curator": "0000-0002-1825-0097",
         "curated_on": "2026-07-01",
         "last_reviewed": "2026-07-15",
@@ -44,10 +42,25 @@ def _assertion(**overrides: object) -> dict[str, object]:
 
 
 def test_parses_a_well_formed_assertion() -> None:
-    assertion = GeneDiseaseAssertion.model_validate(_assertion())
+    assertion = LesionAssertion.model_validate(_assertion())
     assert assertion.gene == "HGNC:11604"
     assert isinstance(assertion.evidence[0].locator, SupplementaryLocator)
     assert assertion.evidence[0].locator.row == 42
+
+
+def test_a_curated_record_cannot_carry_a_classification() -> None:
+    """The atlas authors no validity call, and the schema enforces it (D12).
+
+    `extra="forbid"` turns a leftover `classification:` or `source_tier:` in a
+    curation file into a load error rather than an ignored key. That matters
+    more than it looks: a silently-ignored field is how a curator goes on
+    believing they set something the build never reads.
+    """
+    assert LesionAssertion.model_validate(_assertion()).gene == "HGNC:11604"
+
+    for removed_field in ("classification", "source_tier"):
+        with pytest.raises(ValidationError):
+            LesionAssertion.model_validate(_assertion(**{removed_field: "definitive"}))
 
 
 def test_locator_discriminates_on_kind() -> None:
@@ -77,26 +90,26 @@ def test_functional_evidence_class_accepts_a_functional_reference() -> None:
 
 def test_extracardiac_features_rejected_for_isolated_assertions() -> None:
     with pytest.raises(ValidationError, match="cannot be set when syndromic is 'isolated'"):
-        GeneDiseaseAssertion.model_validate(
+        LesionAssertion.model_validate(
             _assertion(syndromic="isolated", extracardiac_features=["HP:0009777"])
         )
 
 
 def test_last_reviewed_cannot_precede_curated_on() -> None:
     with pytest.raises(ValidationError, match="cannot precede"):
-        GeneDiseaseAssertion.model_validate(
+        LesionAssertion.model_validate(
             _assertion(curated_on="2026-07-15", last_reviewed="2026-07-01")
         )
 
 
 def test_assertion_requires_at_least_one_evidence_item() -> None:
     with pytest.raises(ValidationError):
-        GeneDiseaseAssertion.model_validate(_assertion(evidence=[]))
+        LesionAssertion.model_validate(_assertion(evidence=[]))
 
 
 def test_unknown_fields_are_rejected() -> None:
     with pytest.raises(ValidationError):
-        GeneDiseaseAssertion.model_validate(_assertion(confidence="high"))
+        LesionAssertion.model_validate(_assertion(confidence="high"))
 
 
 def test_assertion_file_wraps_a_non_empty_list() -> None:
@@ -106,18 +119,18 @@ def test_assertion_file_wraps_a_non_empty_list() -> None:
 
 def test_syndromic_assertion_requires_an_extracardiac_feature() -> None:
     with pytest.raises(ValidationError, match="at least one extracardiac feature"):
-        GeneDiseaseAssertion.model_validate(_assertion(syndromic="syndromic"))
+        LesionAssertion.model_validate(_assertion(syndromic="syndromic"))
 
 
 def test_syndromic_assertion_accepts_an_extracardiac_feature() -> None:
-    assertion = GeneDiseaseAssertion.model_validate(
+    assertion = LesionAssertion.model_validate(
         _assertion(syndromic="syndromic", extracardiac_features=["HP:0009777"])
     )
     assert assertion.extracardiac_features == ["HP:0009777"]
 
 
 def test_both_status_does_not_require_extracardiac_features() -> None:
-    assertion = GeneDiseaseAssertion.model_validate(_assertion(syndromic="both"))
+    assertion = LesionAssertion.model_validate(_assertion(syndromic="both"))
     assert assertion.extracardiac_features == []
 
 

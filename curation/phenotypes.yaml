@@ -1,6 +1,8 @@
-# Cardiac lesion terms, with the browse facet each belongs to. Labels and
-# synonyms are transcribed from the pinned HPO release named in
-# mirrors/sources.yaml; `lesion_group` is the atlas's own facet assignment.
+# HPO terms the atlas cites: cardiac lesion terms, with the browse facet each
+# belongs to, plus extracardiac features registered here only so their labels
+# get checked. Labels and synonyms are transcribed from the pinned HPO release
+# named in mirrors/sources.yaml; `lesion_group` is the atlas's own facet
+# assignment and is absent for a term that is not a cardiac lesion.
 phenotypes:
   - id: HP:0001631
     label: Atrial septal defect
@@ -12,3 +14,9 @@ phenotypes:
     lesion_group: septal
     synonyms:
       - VSD
+  # Extracardiac feature (TBX5/Holt-Oram syndrome, CHDA:AST:0000001) -- not a
+  # cardiac lesion, so no `lesion_group`.
+  - id: HP:0009601
+    label: Aplasia/Hypoplasia of the thumb
+    synonyms:
+      - Absent or hypoplastic thumbs

@@ -6,7 +6,7 @@ from chd_atlas.corpus import Corpus
 from chd_atlas.issues import Severity
 from chd_atlas.models.assertion import (
     Evidence,
-    GeneDiseaseAssertion,
+    LesionAssertion,
     SupplementaryLocator,
 )
 from chd_atlas.models.dataset import Dataset
@@ -43,24 +43,22 @@ def _evidence(**overrides: object) -> Evidence:
     return Evidence.model_validate(payload)
 
 
-def _assertion(**overrides: object) -> GeneDiseaseAssertion:
+def _assertion(**overrides: object) -> LesionAssertion:
     payload: dict[str, object] = {
         "id": "CHDA:AST:0000001",
         "gene": "HGNC:11604",
         "phenotypes": ["HP:0001631"],
         "lesion_groups": ["septal"],
-        "classification": "definitive",
         "inheritance": ["AD"],
         "mechanism": "haploinsufficiency",
         "syndromic": "both",
         "evidence": [_evidence()],
-        "source_tier": "own_curation",
         "curator": "c",
         "curated_on": date(2026, 7, 1),
         "last_reviewed": date(2026, 7, 1),
     }
     payload.update(overrides)
-    return GeneDiseaseAssertion.model_validate(payload)
+    return LesionAssertion.model_validate(payload)
 
 
 def _corpus(**overrides: object) -> Corpus:
@@ -269,6 +267,26 @@ def test_reports_a_cardiac_lesion_listed_as_an_extracardiac_feature() -> None:
     issues = validate_references(corpus, known_genes={"HGNC:11604"})
 
     assert [i.code for i in issues] == ["REF010"]
+
+
+def test_a_registered_term_with_no_lesion_group_is_not_reported_as_a_cardiac_lesion() -> None:
+    """`curation/phenotypes.yaml` also registers extracardiac terms, label-only.
+
+    `PhenotypeTerm.lesion_group` is `None` for a term that is not a cardiac
+    lesion, so `lesion_group_of.get(feature)` misses `is not None` and REF010
+    stays quiet -- the same shape as a term absent from the register
+    altogether, but reachable only because the term *is* registered (so its
+    label gets checked) and simply carries no group.
+    """
+    thumb = PhenotypeTerm.model_validate(
+        {"id": "HP:0009601", "label": "Aplasia/Hypoplasia of the thumb"}
+    )
+    corpus = _corpus(
+        assertions=(_assertion(syndromic="syndromic", extracardiac_features=["HP:0009601"]),),
+        phenotypes=(_septal_term(), thumb),
+    )
+
+    assert validate_references(corpus, known_genes={"HGNC:11604"}) == []
 
 
 def _dataset(accession: str = "PXD012345", **overrides: object) -> Dataset:

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.manifest import SCHEMA_VERSION, source_commit, write_manifest
+from chd_atlas.build.manifest import SCHEMA_VERSION, STATUS, source_commit, write_manifest
 from chd_atlas.corpus import Corpus
 
 
@@ -123,7 +123,7 @@ def test_the_manifest_counts_every_record_kind_separately(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("commit", ["a" * 40, None], ids=["a checkout", "a tarball"])
-def test_the_manifest_publishes_four_keys_and_nothing_that_varies(
+def test_the_manifest_publishes_five_keys_and_nothing_that_varies(
     tmp_path: Path, commit: str | None
 ) -> None:
     """No build timestamp, by decision, and an empty corpus still gets a manifest.
@@ -141,15 +141,19 @@ def test_the_manifest_publishes_four_keys_and_nothing_that_varies(
 
     `schema_version` is asserted against a literal as well as the constant: the
     constant compared with itself passes whatever it is set to, and the version
-    is a published contract a consumer branches on.
+    is a published contract a consumer branches on. `status` is asserted the
+    same way, against `STATUS` and against the literal `"in-development"` a
+    consumer actually branches on — a programmatic one now, not only a reader of
+    `index.html`'s prose, which is the field's whole reason to exist.
     """
     emitter = Emitter(root=tmp_path)
 
     write_manifest(Corpus(root=Path(".")), emitter, commit=commit)
 
     manifest = _published(tmp_path)
-    assert set(manifest) == {"schema_version", "source_commit", "counts", "files"}
-    assert manifest["schema_version"] == "1.1" == SCHEMA_VERSION
+    assert set(manifest) == {"schema_version", "source_commit", "status", "counts", "files"}
+    assert manifest["schema_version"] == "2.1" == SCHEMA_VERSION
+    assert manifest["status"] == "in-development" == STATUS
     assert manifest["source_commit"] == commit
     assert manifest["files"] == {}
 

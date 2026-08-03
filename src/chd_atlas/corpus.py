@@ -11,7 +11,7 @@ from ruamel.yaml.error import YAMLError
 
 from chd_atlas.fs import list_dir
 from chd_atlas.issues import Severity, ValidationIssue
-from chd_atlas.models.assertion import AssertionFile, GeneDiseaseAssertion
+from chd_atlas.models.assertion import AssertionFile, LesionAssertion
 from chd_atlas.models.dataset import Dataset
 from chd_atlas.models.functional import FunctionalEvidence, FunctionalFile
 from chd_atlas.models.literature import (
@@ -22,6 +22,7 @@ from chd_atlas.models.literature import (
     Publication,
     PublicationFile,
 )
+from chd_atlas.models.scope import ChdScopeFile, ScopeEntry
 
 
 @dataclass(frozen=True)
@@ -29,12 +30,13 @@ class Corpus:
     """Every interpretive record loaded from ``curation/``."""
 
     root: Path
-    assertions: tuple[GeneDiseaseAssertion, ...] = ()
+    assertions: tuple[LesionAssertion, ...] = ()
     functional: tuple[FunctionalEvidence, ...] = ()
     publications: tuple[Publication, ...] = ()
     featured: tuple[FeaturedManuscript, ...] = ()
     phenotypes: tuple[PhenotypeTerm, ...] = ()
     datasets: tuple[Dataset, ...] = ()
+    chd_scope: tuple[ScopeEntry, ...] = ()
 
 
 @dataclass
@@ -121,6 +123,7 @@ def unexpected_curation_entries(root: Path) -> list[ValidationIssue]:
 
     expected_files = {
         ".id_registry.yaml",
+        "chd_scope.yaml",
         "featured.yaml",
         "phenotypes.yaml",
         "publications.yaml",
@@ -175,7 +178,7 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         acc.error("CORPUS001", curation, "curation directory not found")
         return Corpus(root=root), acc.issues
 
-    assertions: list[GeneDiseaseAssertion] = []
+    assertions: list[LesionAssertion] = []
     for path in _record_files(curation / "assertions"):
         parsed = _parse(AssertionFile, path, acc)
         if parsed is not None:
@@ -214,6 +217,13 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         if parsed_phenotypes is not None:
             phenotypes = tuple(parsed_phenotypes.phenotypes)
 
+    chd_scope: tuple[ScopeEntry, ...] = ()
+    chd_scope_path = curation / "chd_scope.yaml"
+    if chd_scope_path.is_file():
+        parsed_chd_scope = _parse(ChdScopeFile, chd_scope_path, acc)
+        if parsed_chd_scope is not None:
+            chd_scope = tuple(parsed_chd_scope.diseases)
+
     corpus = Corpus(
         root=root,
         assertions=tuple(assertions),
@@ -222,5 +232,6 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         featured=featured,
         phenotypes=phenotypes,
         datasets=tuple(datasets),
+        chd_scope=chd_scope,
     )
     return corpus, acc.issues
