@@ -1,0 +1,11 @@
+format-version: 1.2
+ontology: so ! trailing '!' comments are safe; standalone '!' lines are not
+
+[Term]
+id: SO:0000704
+name: gene
+
+[Typedef]
+id: SO:has_part
+name: has part
+is_transitive: true

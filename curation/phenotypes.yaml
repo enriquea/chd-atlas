@@ -1,0 +1,14 @@
+# Cardiac lesion terms, with the browse facet each belongs to. Labels and
+# synonyms are transcribed from the pinned HPO release named in
+# mirrors/sources.yaml; `lesion_group` is the atlas's own facet assignment.
+phenotypes:
+  - id: HP:0001631
+    label: Atrial septal defect
+    lesion_group: septal
+    synonyms:
+      - ASD
+  - id: HP:0001629
+    label: Ventricular septal defect
+    lesion_group: septal
+    synonyms:
+      - VSD

@@ -1,0 +1,52 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    # `dev` is the working branch and the default branch, so most commits land
+    # there directly rather than through a pull request. Without it listed here
+    # those commits get no CI at all, which is how a push to `dev` came to sit
+    # unvalidated on the remote.
+    branches: [main, dev]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # `uv sync --locked` installs into a project .venv from the committed
+      # uv.lock and fails if the lock has drifted from pyproject.toml, so CI
+      # tests the exact dependency set the repository pins.
+      #
+      # Not `uv pip install --system`: that targets whichever python3 the runner
+      # image exposes, which on ubuntu-latest is externally managed, and it would
+      # ignore uv.lock entirely. Every step below therefore runs through `uv run`,
+      # which resolves console scripts from the project environment.
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # `ruff check` and `ruff format` are separate tools with separate rule
+      # sets, and only the first was run here. Fifteen files had drifted out of
+      # formatted shape with CI green throughout, because nothing was asking.
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Unit tests
+        run: uv run pytest -v
+
+      # The gate this whole plan exists for. Hermetic: every input is a
+      # repo-local path, including the pinned ontology release.
+      - name: Validate curation corpus
+        run: uv run chd-atlas validate

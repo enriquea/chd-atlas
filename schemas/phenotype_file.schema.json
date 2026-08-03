@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "LesionGroup": {
+      "enum": [
+        "conotruncal",
+        "septal",
+        "lvoto",
+        "rvoto",
+        "avsd",
+        "heterotaxy",
+        "anomalous_venous_return",
+        "complex",
+        "other"
+      ],
+      "title": "LesionGroup",
+      "type": "string"
+    },
+    "PhenotypeTerm": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^(HP|MONDO):\\d{7}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "lesion_group": {
+          "$ref": "#/$defs/LesionGroup"
+        },
+        "synonyms": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Synonyms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "lesion_group"
+      ],
+      "title": "PhenotypeTerm",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top level of ``curation/phenotypes.yaml``.",
+  "properties": {
+    "phenotypes": {
+      "items": {
+        "$ref": "#/$defs/PhenotypeTerm"
+      },
+      "minItems": 1,
+      "title": "Phenotypes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "phenotypes"
+  ],
+  "title": "PhenotypeFile",
+  "type": "object"
+}

@@ -1,0 +1,87 @@
+# src/chd_atlas/models/literature.py
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from chd_atlas.duplicates import duplicates
+from chd_atlas.identifiers import Doi, PhenotypeId, Pmcid, Pmid
+from chd_atlas.vocab import FeaturedTopic, LesionGroup, StudyType
+
+
+class Publication(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Pmid
+    title: str = Field(min_length=1)
+    journal: str = Field(min_length=1)
+    year: int = Field(ge=1900, le=2100)
+    authors: list[str] = Field(min_length=1)
+    study_type: StudyType
+    doi: Doi | None = None
+    pmcid: Pmcid | None = None
+    own_lab: bool = False
+    cohort_size: int | None = Field(default=None, ge=1)
+    ancestry: list[str] = Field(default_factory=list)
+
+
+class PublicationFile(BaseModel):
+    """Top level of ``curation/publications.yaml``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    publications: list[Publication] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def ids_are_unique(self) -> PublicationFile:
+        found = duplicates(p.id for p in self.publications)
+        if found:
+            raise ValueError(f"duplicate publication ids: {found}")
+        return self
+
+
+class FeaturedManuscript(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    publication: Pmid
+    order: int = Field(ge=1)
+    blurb: str = Field(min_length=1)
+    topic: FeaturedTopic
+
+
+class FeaturedFile(BaseModel):
+    """Top level of ``curation/featured.yaml``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    featured: list[FeaturedManuscript] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def display_order_is_unique(self) -> FeaturedFile:
+        found = duplicates(entry.order for entry in self.featured)
+        if found:
+            raise ValueError(f"duplicate display order: {found}")
+        return self
+
+
+class PhenotypeTerm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: PhenotypeId
+    label: str = Field(min_length=1)
+    lesion_group: LesionGroup
+    synonyms: list[str] = Field(default_factory=list)
+
+
+class PhenotypeFile(BaseModel):
+    """Top level of ``curation/phenotypes.yaml``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phenotypes: list[PhenotypeTerm] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def ids_are_unique(self) -> PhenotypeFile:
+        found = duplicates(term.id for term in self.phenotypes)
+        if found:
+            raise ValueError(f"duplicate phenotype ids: {found}")
+        return self

@@ -1,0 +1,15 @@
+format-version: 1.2
+ontology: hp
+
+[Term]
+id: HP:0001631
+name: Atrial septal defect
+
+[Term]
+id: HP:0001629
+name: Ventricular septal defect
+
+[Term]
+id: HP:0001636
+name: Tetralogy of Fallot
+is_obsolete: true

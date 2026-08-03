@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "Publication": {
+      "additionalProperties": false,
+      "properties": {
+        "ancestry": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ancestry",
+          "type": "array"
+        },
+        "authors": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Authors",
+          "type": "array"
+        },
+        "cohort_size": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cohort Size"
+        },
+        "doi": {
+          "anyOf": [
+            {
+              "pattern": "^10\\.\\d{4,9}/\\S+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Doi"
+        },
+        "id": {
+          "pattern": "^PMID:\\d+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "journal": {
+          "minLength": 1,
+          "title": "Journal",
+          "type": "string"
+        },
+        "own_lab": {
+          "default": false,
+          "title": "Own Lab",
+          "type": "boolean"
+        },
+        "pmcid": {
+          "anyOf": [
+            {
+              "pattern": "^PMC\\d+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pmcid"
+        },
+        "study_type": {
+          "$ref": "#/$defs/StudyType"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "year": {
+          "maximum": 2100,
+          "minimum": 1900,
+          "title": "Year",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "journal",
+        "year",
+        "authors",
+        "study_type"
+      ],
+      "title": "Publication",
+      "type": "object"
+    },
+    "StudyType": {
+      "enum": [
+        "trio_wes",
+        "trio_wgs",
+        "family_linkage",
+        "case_control",
+        "functional",
+        "proteomics",
+        "transcriptomics",
+        "review",
+        "meta_analysis"
+      ],
+      "title": "StudyType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top level of ``curation/publications.yaml``.",
+  "properties": {
+    "publications": {
+      "items": {
+        "$ref": "#/$defs/Publication"
+      },
+      "minItems": 1,
+      "title": "Publications",
+      "type": "array"
+    }
+  },
+  "required": [
+    "publications"
+  ],
+  "title": "PublicationFile",
+  "type": "object"
+}

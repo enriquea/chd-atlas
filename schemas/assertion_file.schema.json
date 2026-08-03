@@ -1,0 +1,371 @@
+{
+  "$defs": {
+    "Classification": {
+      "description": "ClinGen-style gene-disease validity classification.",
+      "enum": [
+        "definitive",
+        "strong",
+        "moderate",
+        "limited",
+        "disputed",
+        "refuted",
+        "no_known_association"
+      ],
+      "title": "Classification",
+      "type": "string"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "anyOf": [
+            {
+              "pattern": "^(PXD\\d{6,}|GSE\\d+|E-[A-Z]{4}-\\d+|EGA[SD]\\d{11})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataset"
+        },
+        "evidence_class": {
+          "$ref": "#/$defs/EvidenceClass"
+        },
+        "functional_evidence": {
+          "anyOf": [
+            {
+              "pattern": "^CHDA:FUN:\\d{7}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Functional Evidence"
+        },
+        "locator": {
+          "discriminator": {
+            "mapping": {
+              "in_text": "#/$defs/InTextLocator",
+              "supplementary": "#/$defs/SupplementaryLocator"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/SupplementaryLocator"
+            },
+            {
+              "$ref": "#/$defs/InTextLocator"
+            }
+          ],
+          "title": "Locator"
+        },
+        "publication": {
+          "pattern": "^PMID:\\d+$",
+          "title": "Publication",
+          "type": "string"
+        },
+        "strength": {
+          "$ref": "#/$defs/EvidenceStrength"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "publication",
+        "evidence_class",
+        "locator",
+        "summary",
+        "strength"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "EvidenceClass": {
+      "enum": [
+        "genetic_case",
+        "genetic_segregation",
+        "genetic_case_control",
+        "functional_model",
+        "expression",
+        "proteomic",
+        "ptm",
+        "regulatory"
+      ],
+      "title": "EvidenceClass",
+      "type": "string"
+    },
+    "EvidenceStrength": {
+      "enum": [
+        "strong",
+        "moderate",
+        "supporting",
+        "contradictory"
+      ],
+      "title": "EvidenceStrength",
+      "type": "string"
+    },
+    "GeneDiseaseAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "$ref": "#/$defs/Classification"
+        },
+        "curated_on": {
+          "format": "date",
+          "title": "Curated On",
+          "type": "string"
+        },
+        "curator": {
+          "minLength": 1,
+          "title": "Curator",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "minItems": 1,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "extracardiac_features": {
+          "items": {
+            "pattern": "^(HP|MONDO):\\d{7}$",
+            "type": "string"
+          },
+          "title": "Extracardiac Features",
+          "type": "array"
+        },
+        "gene": {
+          "pattern": "^HGNC:\\d+$",
+          "title": "Gene",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^CHDA:AST:\\d{7}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "inheritance": {
+          "items": {
+            "$ref": "#/$defs/Inheritance"
+          },
+          "minItems": 1,
+          "title": "Inheritance",
+          "type": "array"
+        },
+        "last_reviewed": {
+          "format": "date",
+          "title": "Last Reviewed",
+          "type": "string"
+        },
+        "lesion_groups": {
+          "items": {
+            "$ref": "#/$defs/LesionGroup"
+          },
+          "minItems": 1,
+          "title": "Lesion Groups",
+          "type": "array"
+        },
+        "mechanism": {
+          "$ref": "#/$defs/Mechanism"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "phenotypes": {
+          "items": {
+            "pattern": "^(HP|MONDO):\\d{7}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Phenotypes",
+          "type": "array"
+        },
+        "source_tier": {
+          "$ref": "#/$defs/SourceTier"
+        },
+        "syndromic": {
+          "$ref": "#/$defs/SyndromicStatus"
+        }
+      },
+      "required": [
+        "id",
+        "gene",
+        "phenotypes",
+        "lesion_groups",
+        "classification",
+        "inheritance",
+        "mechanism",
+        "syndromic",
+        "evidence",
+        "source_tier",
+        "curator",
+        "curated_on",
+        "last_reviewed"
+      ],
+      "title": "GeneDiseaseAssertion",
+      "type": "object"
+    },
+    "InTextLocator": {
+      "additionalProperties": false,
+      "description": "Points at a figure, table or section in the article body.",
+      "properties": {
+        "element": {
+          "minLength": 1,
+          "title": "Element",
+          "type": "string"
+        },
+        "kind": {
+          "const": "in_text",
+          "default": "in_text",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "element"
+      ],
+      "title": "InTextLocator",
+      "type": "object"
+    },
+    "Inheritance": {
+      "enum": [
+        "AD",
+        "AR",
+        "XL",
+        "de_novo",
+        "somatic",
+        "oligogenic",
+        "unknown"
+      ],
+      "title": "Inheritance",
+      "type": "string"
+    },
+    "LesionGroup": {
+      "enum": [
+        "conotruncal",
+        "septal",
+        "lvoto",
+        "rvoto",
+        "avsd",
+        "heterotaxy",
+        "anomalous_venous_return",
+        "complex",
+        "other"
+      ],
+      "title": "LesionGroup",
+      "type": "string"
+    },
+    "Mechanism": {
+      "enum": [
+        "loss_of_function",
+        "gain_of_function",
+        "dominant_negative",
+        "haploinsufficiency",
+        "unknown"
+      ],
+      "title": "Mechanism",
+      "type": "string"
+    },
+    "SourceTier": {
+      "enum": [
+        "own_curation",
+        "third_party_literature",
+        "database_mirror"
+      ],
+      "title": "SourceTier",
+      "type": "string"
+    },
+    "SupplementaryLocator": {
+      "additionalProperties": false,
+      "description": "Points at an exact place inside a supplementary archive.",
+      "properties": {
+        "file": {
+          "minLength": 1,
+          "title": "File",
+          "type": "string"
+        },
+        "kind": {
+          "const": "supplementary",
+          "default": "supplementary",
+          "title": "Kind",
+          "type": "string"
+        },
+        "row": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Row"
+        },
+        "sheet": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sheet"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "SupplementaryLocator",
+      "type": "object"
+    },
+    "SyndromicStatus": {
+      "enum": [
+        "isolated",
+        "syndromic",
+        "both"
+      ],
+      "title": "SyndromicStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top level of ``curation/assertions/<SYMBOL>.yaml``.",
+  "properties": {
+    "assertions": {
+      "items": {
+        "$ref": "#/$defs/GeneDiseaseAssertion"
+      },
+      "minItems": 1,
+      "title": "Assertions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "assertions"
+  ],
+  "title": "AssertionFile",
+  "type": "object"
+}
