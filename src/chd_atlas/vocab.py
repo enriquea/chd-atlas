@@ -64,6 +64,57 @@ def has_conflicting_evidence(classifications: Iterable[Classification]) -> bool:
     return bool(contesting and supportive)
 
 
+# The single place an authority's vocabulary becomes the atlas's. Mirrors store
+# what was published; this maps it. There is deliberately no `.get(term,
+# default)` anywhere downstream -- a term absent from these dicts is an error,
+# because a classification silently coerced to an adjacent rung is a confidence
+# nobody asserted.
+CLINGEN_CLASSIFICATIONS: Final[dict[str, Classification]] = {
+    "Definitive": Classification.DEFINITIVE,
+    "Strong": Classification.STRONG,
+    "Moderate": Classification.MODERATE,
+    "Limited": Classification.LIMITED,
+    "Disputed": Classification.DISPUTED,
+    "Refuted": Classification.REFUTED,
+    "No Known Disease Relationship": Classification.NO_KNOWN_ASSOCIATION,
+}
+
+# `Supportive` maps to None rather than to a member. It is GenCC's mapping
+# exception for submitters that assert an association without grading evidence,
+# so it is not a weaker rung of the ladder and must not be placed on one.
+# Callers publish the verbatim term and omit the mapped value, which is honest:
+# the submitter said "associated", not "how strongly".
+GENCC_CLASSIFICATIONS: Final[dict[str, Classification | None]] = {
+    "Definitive": Classification.DEFINITIVE,
+    "Strong": Classification.STRONG,
+    "Moderate": Classification.MODERATE,
+    "Limited": Classification.LIMITED,
+    "Disputed Evidence": Classification.DISPUTED,
+    "Refuted Evidence": Classification.REFUTED,
+    "No Known Disease Relationship": Classification.NO_KNOWN_ASSOCIATION,
+    "Supportive": None,
+}
+
+
+class ValidityState(StrEnum):
+    """How well curated a gene's validity is, published as a fact.
+
+    `UNCURATED` is not an absence. A consumer cannot tell "no authority has
+    assessed this gene" from "the build dropped it" by looking at a missing
+    field, and that distinction is exactly the silent evidence loss this project
+    treats as its characteristic failure.
+    """
+
+    EXPERT_CURATED = "expert_curated"
+    SUBMITTER_CURATED = "submitter_curated"
+    UNCURATED = "uncurated"
+
+
+class ValiditySource(StrEnum):
+    CLINGEN = "clingen"
+    GENCC = "gencc"
+
+
 class LesionGroup(StrEnum):
     CONOTRUNCAL = "conotruncal"
     SEPTAL = "septal"
