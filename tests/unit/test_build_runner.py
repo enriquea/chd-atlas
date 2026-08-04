@@ -10,7 +10,10 @@ from typing import Any
 import pytest
 
 from chd_atlas.build.runner import BuildRefused, _gene_registry, build_site
+from chd_atlas.build.validity import gene_validity, published_genes
+from chd_atlas.corpus import load_curation
 from chd_atlas.issues import Severity, ValidationIssue
+from chd_atlas.tables import TABLE_SCHEMAS, read_table
 from chd_atlas.validate.runner import ValidationReport
 
 REPO = Path(__file__).parent.parent.parent
@@ -319,6 +322,57 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
         "Chr12q24.1",
         "T-box 5",
     ]
+
+
+def test_the_site_publishes_exactly_the_genes_the_gate_selects(repo: Path, tmp_path: Path) -> None:
+    """`build_site` must publish `published_genes()`'s answer, not another set.
+
+    Design decision D21 lives in `build/validity.py`, and
+    `test_build_validity.py` pins what it returns over the committed mirrors --
+    23 genes. Nothing pinned that `build_site` *uses* that return, and the gap
+    was not academic: replacing `published = published_genes(validity)` with
+    `published = set(genes)` -- the 154-gene registry -- published 154 rows and
+    154 bundles, presenting 131 genes no ClinGen panel calls definitive inside
+    the definitive browse set, and the whole 590-test suite passed.
+
+    That is the charter's worse failure rather than its usual one. The
+    characteristic defect here is curated work reaching no page; this is its
+    inverse, a claim the sources do not support reaching every page, and "a
+    wrong claim here is worse than a missing one".
+
+    The expected set is recomputed from the same mirrors rather than written as
+    23 literals, because a literal list would have to be re-typed whenever
+    ClinGen curates another CHD gene and would fail as a mirror refresh rather
+    than as a defect. The *count* is pinned in `test_build_validity.py`, which is
+    where a moved number should be looked at; this test pins that the build and
+    the gate agree, which is a different property and needs its own guard --
+    `test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json`
+    cannot cover it, because both of its figures derive from one object and move
+    together under exactly this mutant.
+    """
+    out = tmp_path / "dist"
+
+    build_site(repo, out)
+
+    corpus, _ = load_curation(repo)
+    clingen, _ = read_table(
+        repo / "mirrors" / "clingen_gene_validity.tsv", TABLE_SCHEMAS["clingen_validity"]
+    )
+    gencc, _ = read_table(
+        repo / "mirrors" / "gencc_submissions.tsv", TABLE_SCHEMAS["gencc_submissions"]
+    )
+    assert clingen is not None and gencc is not None
+    expected = published_genes(
+        gene_validity(clingen, gencc, in_scope={str(entry.id) for entry in corpus.chd_scope})
+    )
+
+    index = json.loads((out / "genes" / "index.json").read_text())
+    assert {entry["gene"] for entry in index["genes"]} == expected
+    # The bundles too, not only the index: the two are written by one loop today
+    # and a reader of this test should not have to know that to trust it.
+    assert {path.stem for path in (out / "genes").glob("*.json")} - {"index"} == {
+        gene.replace(":", "_") for gene in expected
+    }
 
 
 def test_the_site_carries_the_terms_of_everything_it_republishes(

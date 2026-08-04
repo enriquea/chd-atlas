@@ -491,7 +491,7 @@ def test_every_functional_record_about_a_gene_is_counted() -> None:
     # evidenced genes is a coherent alternative design, and this is what says it
     # is not the one chosen. Its record is counted for nobody and published
     # nowhere -- the cost `bundles.py` pins with
-    # `test_a_gene_with_evidence_but_no_assertion_is_not_published`.
+    # `test_a_gene_with_evidence_but_outside_the_published_set_is_not_published`.
     assert "HGNC:11599" not in facts
     # And the other end of the count: a gene with no functional record at all
     # reports zero rather than raising, which is what the `Counter` buys over a
