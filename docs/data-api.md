@@ -32,7 +32,9 @@ const { records } = await new Response(stream).json();
 Plain `.json` files are gzipped in transit by Pages and need no such handling.
 
 **A contested gene must never be displayed as settled.** See the note at the end
-of this document; it is the one consumer obligation this API imposes.
+of this document; it is the one consumer obligation this API imposes, and
+`atlas_curation` extends it to the genes this atlas has not yet curated — 22 of
+the 23 published today.
 
 ---
 
@@ -99,15 +101,22 @@ wrong by the next one.
 
 ## The site root: `index.html`
 
-The one page a person opens directly rather than fetches as JSON. It states
-what the atlas is, the same development-status and research-use statement
-`status` above is the machine-readable half of, and the real counts behind it
-— curated assertions, genes with mirrored ClinGen/GenCC validity, and the
-rest of `counts` — read from the same build that produced this document's
-other examples rather than written by hand. It links to `manifest.json`,
-`genes/index.json`, `sources.json` and the repository. Self-contained: no
-external request, no build timestamp, byte-identical between two builds of one
-commit like everything else here.
+The page a person opens directly rather than fetches as JSON, and the entry
+point to the other 24. It states what the atlas is, the same development-status
+and research-use statement `status` above is the machine-readable half of, and
+the real counts behind it — curated assertions, genes with mirrored
+ClinGen/GenCC validity, and the rest of `counts` — read from the same build
+that produced this document's other examples rather than written by hand. It
+links to `genes/index.html`, `genes/index.json`, `manifest.json`,
+`sources.json` and the repository. Self-contained: no external request, no
+build timestamp, byte-identical between two builds of one commit like
+everything else here.
+
+**Every page is checksummed in `manifest.json` exactly like a payload.** The
+build behind this document publishes 25 of them — this one, `genes/index.html`
+and one per published gene — and each has an entry in `files` giving the sha256
+of the bytes served at it. A page is published output, so it is verifiable
+output.
 
 ## `genes/index.json`
 
@@ -123,6 +132,11 @@ which. GenCC is not a route in: it aggregates submissions rather than
 adjudicating them, and the five in-scope genes it alone calls definitive
 include one whose submissions run from `Definitive` to `No Known Disease
 Relationship`.
+
+**Read `atlas_curation` before presenting a row as curated content.** A
+`headline_confidence` of `definitive` is an upstream expert panel's call and
+never this atlas's, and on 22 of the 23 rows there is no assessment by this
+atlas behind it at all.
 
 ```json
 {
@@ -209,6 +223,28 @@ Relationship`.
   published.
 - The three counts describe what the bundle contains, so a browse row never
   promises more than the page delivers.
+
+## `genes/index.html`
+
+The browse page: the same 23 rows `genes/index.json` publishes, rendered as a
+table a person can read and filter. Each row carries the HGNC id — linked to
+that gene's page — the symbol, `headline_confidence`, `validity_state`,
+`atlas_curation` and the gene's lesion groups. Above the table sit a text box
+matching id or symbol and four menus (lesion group, confidence, validity state,
+atlas curation), whose options are the values actually present in the build
+rather than every value the vocabulary allows.
+
+**Every row is rendered by the build, and the inline script only hides rows.**
+There is no empty `<tbody>` filled in by a fetch, so `curl`, a crawler and a
+reader with JavaScript disabled all get the complete table of 23 genes,
+unfiltered — which is what the page shows before anyone touches a control in
+any case. Nothing is loaded from anywhere: the stylesheet and the script are
+inline, and the page makes no external request.
+
+**`genes/index.json` is the machine-readable contract; this page is not.** The
+column set, the markup and the `data-` attributes the filter reads may change
+without a `schema_version` bump. Write against the payload and leave the page
+to people.
 
 ## `genes/<slug>.json`
 
@@ -330,6 +366,42 @@ behind those fields live:
 
 `sources.json` (below) carries the licence terms this atlas mirrors ClinGen
 and GenCC under, the same way it does for HPO.
+
+## `genes/<slug>.html`
+
+One page per published gene, rendering that gene's bundle for a reader. A
+summary column carries the headline classification as a chip — with a
+`conflicting evidence` and a `sources disagree` chip beside it when those flags
+are set — then `validity_state`, `atlas_curation`, the lesion groups, the
+assertion, functional-record and publication counts, and a link to the gene's
+own JSON. Beside it, the mirrored validity table: one row per record, giving
+the source, the panel or submitter, the disease, the mode of inheritance, the
+authority's own `classification_term` **verbatim** rather than the rung this
+atlas maps it onto, the SOP, the date, and a link to the upstream report where
+one is published.
+
+Then either the curated evidence — each assertion, its evidence items with
+their class, strength and summary, and the publications that evidence cites —
+or, for the 22 genes published today with no curation here, a paragraph saying
+exactly that:
+
+> The atlas has **not yet curated** evidence for this gene. The classification
+> above is an expert panel's, mirrored with its provenance intact; nothing on
+> this page is the atlas's own assessment.
+
+That paragraph is there instead of the section simply being absent. A missing
+evidence section is indistinguishable from "the atlas looked and found
+nothing", and a reader deciding what a gene means clinically must not have to
+infer which.
+
+A gene page carries no script at all — every value on it was rendered at build
+time — and, like the browse page, makes no external request. The bundle remains
+the machine-readable contract: the page's markup is not one.
+
+**No payload carries the path to a gene's page.** A browse row's `bundle` is
+the JSON; the route to the page is the link on `genes/index.html`, which is why
+the slug rule stays an implementation detail (see
+[Reading this API](#reading-this-api)).
 
 ## `omics/<modality>/<accession>.json`
 
@@ -664,3 +736,20 @@ never a proper subset.
 
 The list is always present and may be empty. Every group it names is a key of
 `confidence_by_lesion_group`, so the two join directly.
+
+### The same failure in a second shape: a gene the atlas has not curated
+
+`headline_confidence` is published for every gene, curated here or not, so a
+consumer that renders it alone presents 22 of the 23 published genes as this
+atlas's assessment of them. It is not: it is a ClinGen expert panel's, and this
+atlas has recorded nothing about those genes beyond republishing it with its
+provenance.
+
+**A consumer must not present a `not_yet_curated` gene as one the atlas has
+assessed.** `atlas_curation` appears on the browse row and in the bundle,
+written in one place so the two cannot disagree, and it is what tells the two
+kinds of row apart — read it rather than testing `assertion_count == 0`, so a
+filter does not have to reimplement the rule. An empty `assertions` array is a
+curation gap, never a verdict and never a fetch that failed, the same way
+`headline_confidence: null` is not `no_known_association`. This atlas's own
+gene pages state the gap in prose for exactly that reason.
