@@ -3,12 +3,21 @@
 
 Everything a gene page shows has been published as JSON since the validity
 backbone landed. `genes/HGNC_11604.json` carries seven mirrored validity
-records -- four of them with a report URL -- alongside a curated assertion with
-its evidence quote, its locator, its phenotype terms and its publication
-(measured 2026-08-04 against a real build of the committed corpus). All of it
-sat at a URL, with a verifying checksum, and with nothing rendering it. This
-module is what makes that content reachable by a person rather than only by a
-program.
+records -- four of them with a report URL, and all four render as links --
+alongside a curated assertion whose evidence quote, class, strength and
+publication this module renders, under a summary of its lesion groups,
+inheritance, mechanism and syndromic status (measured 2026-08-04 against a real
+build of the committed corpus). All of it sat at a URL, with a verifying
+checksum, and with nothing rendering it. This module is what makes that content
+reachable by a person rather than only by a program.
+
+It does not make *all* of it reachable, and this paragraph claimed it did until
+the claim was measured. On the same real build, `HP:0001631` appears once in
+`genes/HGNC_11604.json` and **zero** times in `genes/HGNC_11604.html`; the
+evidence locator's `Abstract` likewise, 1 and 0. The assertion's phenotype terms
+and the in-text locator on every evidence item reach no page. Rendering them is
+a product decision rather than a defect to be patched, so what is recorded here
+is only that the JSON, not the page, is the complete artifact.
 
 Written through `Emitter.write_text`, never `write_json`. `Json`'s union
 includes `str`, so `write_json(path, page)` type-checks and then runs the whole
@@ -20,9 +29,10 @@ carry no `LesionAssertion` (measured 2026-08-04 on `genes/index.json`). Their
 pages state that the atlas has not curated them rather than omitting the
 evidence section, because an absent section is indistinguishable from "the atlas
 looked and found nothing" and a reader deciding what a gene means clinically
-must not have to infer which. Deleting the paragraph fails exactly one test,
-`test_an_uncurated_gene_page_says_the_atlas_has_not_curated_it`, and no other in
-the suite (measured 2026-08-04).
+must not have to infer which. Its exact wording is load-bearing for a second
+reason -- it sits one column from a rail that counts curated content this gene
+may have -- and `_not_curated` is where that wording and the reason for it are
+recorded.
 
 Every value interpolated into a page goes through `render.py`, which escapes
 text, links and attributes -- except the three bare interpolations in `_rail`,
@@ -46,6 +56,7 @@ from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
 from chd_atlas.build.render import (
     FILTER_SCRIPT,
+    Cell,
     Link,
     Row,
     chip,
@@ -60,9 +71,9 @@ from chd_atlas.models.literature import Publication
 from chd_atlas.vocab import AtlasCuration, Classification
 
 _NOT_CURATED: Final = (
-    "<p>The atlas has <strong>not yet curated</strong> evidence for this gene. "
+    "<p>The atlas has <strong>not yet curated</strong> a lesion assertion for this gene. "
     "The classification above is an expert panel's, mirrored with its provenance "
-    "intact; nothing on this page is the atlas's own assessment.</p>"
+    "intact; no classification on this page is the atlas's own assessment.</p>"
 )
 
 _EM_DASH: Final = "—"
@@ -100,6 +111,82 @@ def _pubmed(pmid: str) -> str:
     constructs rather than republishes.
     """
     return f"https://pubmed.ncbi.nlm.nih.gov/{pmid.removeprefix('PMID:')}/"
+
+
+def _not_curated(fact: GeneFacts) -> str:
+    """The notice an uncurated gene page carries, and what it must not deny.
+
+    `atlas_curation` is derived from `LesionAssertion`s alone -- `curated` iff
+    `assertion_count > 0`, `derive.gene_facts` -- while `_rail` counts
+    `functional_count` beside it from a population `referential.py` never
+    requires an assertion to cite. The two genuinely differ, so a gene can carry
+    functional records the atlas curated and still resolve to
+    `NOT_YET_CURATED`.
+
+    That is why this paragraph names the *lesion assertion* as what is absent
+    and narrows its second clause to classifications. The sentence it replaces
+    said "not yet curated evidence for this gene ... nothing on this page is the
+    atlas's own assessment", which such a gene's own rail contradicts one column
+    away by counting `functional records | 3`. Denying curated work on the page
+    that is rendering it is this project's characteristic failure wearing prose
+    instead of a dropped join.
+
+    `atlas_curation`'s meaning is deliberately untouched: `curated iff
+    assertion_count > 0` is tested, documented in `vocab.AtlasCuration` and
+    published in every bundle and index row. What was wrong was the sentence,
+    not the field.
+
+    Latent on the committed corpus, which has no `curation/functional/`
+    directory at all, so `corpus.functional` is empty and every published gene
+    counts zero (measured 2026-08-04). The second paragraph is reachable only
+    from a fixture until a functional record is curated.
+
+    Measured 2026-08-04 by restoring the old paragraph and returning it
+    unconditionally: 1 failed, 621 passed --
+    `test_an_uncurated_notice_never_denies_functional_records_the_rail_counts`
+    is its unique killer, and
+    `test_an_uncurated_gene_page_says_the_atlas_has_not_curated_it` does not
+    notice, because "not yet curated" is true of both wordings.
+
+    Two further mutants, measured the same day, because the two branches are
+    guarded separately: returning `""` for the `functional_count == 0` case
+    fails only `test_an_uncurated_gene_page_says_the_atlas_has_not_curated_it`
+    (1 failed, 621 passed), and returning `""` unconditionally fails both tests
+    (2 failed, 620 passed). Neither branch rests on the other's guard.
+    """
+    if fact.functional_count == 0:
+        return _NOT_CURATED
+    noun = "record" if fact.functional_count == 1 else "records"
+    return _NOT_CURATED + (
+        f"<p>The {fact.functional_count} functional {noun} counted beside this notice "
+        f"<em>are</em> the atlas's own curation, and are published in this gene's JSON.</p>"
+    )
+
+
+def _report_link(url: str | None) -> Cell:
+    """A link only for an `http`/`https` report URL; an em dash for anything else.
+
+    Neither mirror schema constrains this column, and the failure is not
+    hypothetical: `mirrors/gencc_submissions.tsv` carries one row -- SHOX,
+    `MONDO:0009588` Langer mesomelic dysplasia, submitted by Ambry Genetics --
+    whose `report_url` is the literal string `Pseudoautosomal region, recessive`
+    (measured 2026-08-04, the only such row of the file). That disease is out of
+    CHD scope today, so the row reaches no page; the same column would carry a
+    `javascript:` URL into an `href` just as readily, and `render.py` escapes an
+    attribute value without sanitising the scheme it names.
+
+    Fixed here rather than in `tables.py` on purpose. The mirror is a faithful
+    copy of what upstream published and has to stay one -- rejecting the row
+    would drop a real GenCC submission over a field no reader needs -- so the
+    scheme is decided at the render boundary, where a URL becomes a link.
+
+    A guard on a bypassed gate, in the same idiom as `encode_json`'s
+    `allow_nan=False` and `variants.py`'s shard checks: nothing upstream
+    promises this, so the page refuses rather than publishes.
+    """
+    if url and url.startswith(("http://", "https://")):
+        return Link(text="open", href=url)
+    return _EM_DASH
 
 
 def _rail(gene: str, symbol: str, fact: GeneFacts) -> str:
@@ -163,7 +250,7 @@ def _validity_section(gene_validity: GeneValidity) -> str:
                 record.classification_term,
                 record.sop or _EM_DASH,
                 record.classification_date or _EM_DASH,
-                Link(text="open", href=record.report_url) if record.report_url else _EM_DASH,
+                _report_link(record.report_url),
             )
         )
         for record in gene_validity.records
@@ -277,7 +364,7 @@ def build_gene_pages(
             + (
                 _evidence_section(records, publications)
                 if fact.atlas_curation is AtlasCuration.CURATED
-                else _NOT_CURATED
+                else _not_curated(fact)
             )
             + "</div></div>"
         )
@@ -301,6 +388,16 @@ def build_gene_index_page(
     Sorted by HGNC id, the order `genes/index.json` publishes in, so the browse
     page and the payload behind it agree on which gene comes first without
     either reading the other.
+
+    **The attribution line is not decoration.** This page renders 23 rows
+    reading `definitive` under a column headed `confidence` (measured
+    2026-08-04), and it was the only page on the site where that could be read
+    as the atlas's own call: `_validity_section` says "Every classification
+    below is an upstream panel's or submitter's" on each gene page, and
+    `landing.py` says "The atlas authors no validity classification of its own"
+    on the front page. The sentence below says the same thing in the same voice,
+    and names `atlas curation` as the column that answers the question the
+    confidence column does not -- whether the atlas has curated the gene at all.
 
     Two couplings to `render.FILTER_SCRIPT` that nothing in the type system
     holds, both pinned by
@@ -370,6 +467,10 @@ def build_gene_index_page(
 
     body = (
         "<h1>Genes</h1>"
+        "<p>Every confidence below is an upstream panel's or submitter's, republished "
+        "with its provenance intact &mdash; the atlas authors no validity classification "
+        "of its own. The <strong>atlas curation</strong> column is what says whether the "
+        "atlas has curated a gene itself.</p>"
         f'<p>Showing <span id="shown">{len(rows)}</span> of {len(rows)} genes.</p>'
         '<form id="filters" class="filters">'
         '<input name="q" type="search" placeholder="symbol or HGNC id">'

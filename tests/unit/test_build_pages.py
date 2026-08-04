@@ -30,7 +30,10 @@ TBX5 = "HGNC:11604"
 GATA4 = "HGNC:4173"
 
 
-def _validity(disease_label: str = "Holt-Oram syndrome") -> GeneValidity:
+def _validity(
+    disease_label: str = "Holt-Oram syndrome",
+    report_url: str | None = "https://search.clinicalgenome.org/kb/gene-validity/x",
+) -> GeneValidity:
     return GeneValidity(
         records=(
             ValidityRecord(
@@ -42,7 +45,7 @@ def _validity(disease_label: str = "Holt-Oram syndrome") -> GeneValidity:
                 moi="AD",
                 sop="SOP11",
                 gcep="Syndromic Disorders Gene Curation Expert Panel",
-                report_url="https://search.clinicalgenome.org/kb/gene-validity/x",
+                report_url=report_url,
             ),
         ),
         state=ValidityState.EXPERT_CURATED,
@@ -50,7 +53,12 @@ def _validity(disease_label: str = "Holt-Oram syndrome") -> GeneValidity:
     )
 
 
-def _facts(gene: str, curation: AtlasCuration, groups: tuple[LesionGroup, ...] = ()) -> GeneFacts:
+def _facts(
+    gene: str,
+    curation: AtlasCuration,
+    groups: tuple[LesionGroup, ...] = (),
+    functional_count: int = 0,
+) -> GeneFacts:
     return GeneFacts(
         gene=gene,
         headline_confidence=Classification.DEFINITIVE,
@@ -62,7 +70,7 @@ def _facts(gene: str, curation: AtlasCuration, groups: tuple[LesionGroup, ...] =
         conflicting_lesion_groups=(),
         evidence_counts={EvidenceClass.GENETIC_CASE: 1} if groups else {},
         assertion_count=1 if curation is AtlasCuration.CURATED else 0,
-        functional_count=0,
+        functional_count=functional_count,
         publications=("PMID:8988165",) if curation is AtlasCuration.CURATED else (),
         atlas_curation=curation,
     )
@@ -141,6 +149,17 @@ def _page(root: Path, name: str) -> str:
     return (root / "genes" / name).read_text(encoding="utf-8")
 
 
+def _validity_table(page: str) -> str:
+    """The mirrored-validity `<table>` alone, up to its closing tag.
+
+    Scoped rather than checked page-wide because the rail's "this gene as JSON"
+    link and the shell's `<nav>` are both `<a href=`, so "no anchor anywhere"
+    could never pass on any page. What the report column must not contain is one.
+    """
+    start = page.index("<h2>Mirrored gene&ndash;disease validity</h2>")
+    return page[start : page.index("</table>", start)]
+
+
 def test_an_uncurated_gene_page_says_the_atlas_has_not_curated_it(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
@@ -184,6 +203,19 @@ def test_a_curated_gene_page_carries_its_evidence_quote_and_pmid(
     the same interpolation the escaping tests already cover; what is pinned is
     the shape -- one `../` out of `genes/` and back in, since the page and its
     bundle are siblings and `paths.py` names both from the site root.
+
+    The PubMed href is pinned for a stronger reason: nothing observed the URL
+    `_pubmed` constructs. Asserting `"PMID:8988165" in page` passes on the link
+    *text*, which is the identifier verbatim, so the `href` beside it was
+    unmeasured -- dropping `.removeprefix("PMID:")` publishes
+    `https://pubmed.ncbi.nlm.nih.gov/PMID:8988165/`, a 404 on every evidence row
+    of every curated gene page, and the whole suite stayed green (measured
+    2026-08-04: 616 passed). With the href asserted below, that mutant fails
+    here and nowhere else: 1 failed, 621 passed.
+
+    Asserted as the full attribute rather than as the bare number, because
+    "8988165" is a substring of "PMID:8988165" and a substring check on the
+    digits alone cannot fail.
     """
     emitter = Emitter(root=tmp_path)
     build_gene_pages(
@@ -197,6 +229,7 @@ def test_a_curated_gene_page_carries_its_evidence_quote_and_pmid(
 
     page = _page(tmp_path, "HGNC_11604.html")
     assert "PMID:8988165" in page
+    assert 'href="https://pubmed.ncbi.nlm.nih.gov/8988165/"' in page
     assert "A nonsense TBX5 mutation was found in affected members." in page
     assert "Mutations in human TBX5 cause limb and cardiac malformation." in page
     assert "not yet curated" not in page.lower()
@@ -227,6 +260,94 @@ def test_a_symbol_carrying_markup_is_escaped(
     page = _page(tmp_path, "HGNC_4173.html")
     assert "<script>x</script>" not in page
     assert "&lt;script&gt;" in page
+
+
+@pytest.mark.parametrize(
+    "report_url",
+    ["Pseudoautosomal region, recessive", "javascript:alert(1)", "  https://evil.example"],
+)
+def test_a_non_http_report_url_never_becomes_a_link(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts], report_url: str
+) -> None:
+    """Escaping is not sanitising, and neither mirror schema constrains this column.
+
+    The first case is real, not invented: `mirrors/gencc_submissions.tsv` carries
+    one row -- SHOX, `MONDO:0009588`, Ambry Genetics -- whose `report_url` is the
+    literal string `Pseudoautosomal region, recessive` (measured 2026-08-04, the
+    only such row of the file). Langer mesomelic dysplasia is out of CHD scope
+    today, so that row reaches no page and the defect is latent; the second case
+    is the same column carrying a scheme that executes. `render.py` would escape
+    either into a syntactically valid `href` and publish it.
+
+    Both assertions matter. The first is the guard: no anchor at all for this
+    row. The second is what stops a "fix" that merely escapes harder -- the raw
+    string must not appear inside any attribute, quoted or not, because
+    `href="javascript:alert(1)"` needs no unescaped character to run.
+
+    The third case pins that leading whitespace does not smuggle a scheme past
+    `str.startswith`; browsers strip it, `startswith` does not, so the em dash is
+    the right answer there too.
+
+    Measured 2026-08-04 with the guard removed (`Link(text="open", href=url) if
+    url else _EM_DASH`): 3 failed, 619 passed -- one failure per case here, and
+    no other test in the suite noticed.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        facts_uncurated,
+        emitter,
+        symbols={GATA4: "GATA4"},
+        validity={GATA4: _validity(report_url=report_url)},
+        assertions={},
+        publications={},
+    )
+
+    page = _page(tmp_path, "HGNC_4173.html")
+    assert "<a href=" not in _validity_table(page)
+    assert report_url.strip() not in page
+
+
+def test_an_uncurated_notice_never_denies_functional_records_the_rail_counts(
+    tmp_path: Path,
+) -> None:
+    """The page must not contradict the column beside it.
+
+    `atlas_curation` is `curated` iff `assertion_count > 0` (`derive.gene_facts`),
+    but `_rail` counts `functional_count` from a population that needs no
+    assertion at all, so a gene can carry curated functional records and still be
+    `NOT_YET_CURATED`. The paragraph used to answer that with "not yet curated
+    evidence for this gene ... nothing on this page is the atlas's own
+    assessment", one column away from `functional records | 3`.
+
+    `atlas_curation`'s meaning is deliberately unchanged -- it is tested,
+    documented and published -- so what is pinned here is the wording: the notice
+    names the *lesion assertion* as what is absent, narrows its denial to
+    classifications, and acknowledges the records rather than denying them.
+
+    Latent: the committed corpus has no `curation/functional/` directory, so
+    every published gene counts zero functional records (measured 2026-08-04).
+    Reachable only from this fixture.
+    """
+    facts = {GATA4: _facts(GATA4, AtlasCuration.NOT_YET_CURATED, functional_count=3)}
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        facts,
+        emitter,
+        symbols={GATA4: "GATA4"},
+        validity={GATA4: _validity()},
+        assertions={},
+        publications={},
+    )
+
+    page = _page(tmp_path, "HGNC_4173.html")
+    # The rail is counting them; the prose must agree.
+    assert "<dt>functional records</dt><dd>3</dd>" in page
+    assert "not yet curated" in page.lower()
+    assert "not yet curated</strong> a lesion assertion" in page
+    assert "3 functional records" in page
+    # The two sentences that would deny it, in the forms they could come back in.
+    assert "nothing on this page is the atlas's own assessment" not in page
+    assert "not yet curated</strong> evidence for this gene" not in page
 
 
 def test_a_mirrored_disease_label_carrying_markup_is_escaped(
@@ -371,6 +492,97 @@ def test_browse_rows_are_ordered_by_hgnc_id_against_a_literal(
 
     page = _page(tmp_path, "index.html")
     assert page.index("HGNC_11604.html") < page.index("HGNC_4173.html")
+
+
+def test_browse_facet_options_are_ordered_against_a_literal(tmp_path: Path) -> None:
+    """The `<option>` values are built from sets, so their order is seed-dependent.
+
+    `build_gene_index_page` derives each facet's values with a set comprehension
+    over `facts.values()`. Set iteration order for strings varies with
+    `PYTHONHASHSEED`, and these options are part of the page's bytes and
+    therefore of its checksum and its manifest entry -- so dropping the
+    `sorted(values)` makes two builds of one commit differ. Measured 2026-08-04
+    on the committed corpus, one process per seed: with the sort dropped,
+    `genes/index.html` and `manifest.json` differ between `PYTHONHASHSEED=0` and
+    `PYTHONHASHSEED=2`, and no other file does. The whole suite still passed --
+    616 passed -- so nothing guarded this. With this test in place the mutant
+    fails here and nowhere else: 1 failed, 621 passed.
+
+    Asserted against a literal rather than by building twice: `PYTHONHASHSEED` is
+    fixed for the life of an interpreter, so a same-process comparison cannot see
+    this at any fixture size (CLAUDE.md §4.13).
+
+    The fixture names **all nine** `LesionGroup` members on one gene, because
+    this guard is probabilistic in the same way `test_cited_publications_come_back_sorted`
+    is: *n* strings can land in an order that happens to equal sorted order, and
+    the unsorted code then passes. Measured with the sort dropped, one process
+    per seed, counting seeds on which the mutant survives:
+
+    * the two-value `curation` facet the committed corpus would give
+      (`curated`, `not_yet_curated`) -- **105/200**. Sizing this test to the real
+      corpus would have produced a guard that waved the regression through on
+      better than half of all runs, which §4.12 records as not being a guard.
+    * the nine-member `lesion` facet below -- **0/200**, and **0/1000**.
+
+    Nothing pins `PYTHONHASHSEED` in CI or in a `conftest.py`, so that difference
+    is the whole value of the fixture. The `curation` assertion is kept beneath
+    the `lesion` one anyway: it is the facet a reader actually uses to tell a
+    curated gene from a mirrored one, and pinning its two values costs nothing.
+    """
+    facts = {
+        TBX5: _facts(TBX5, AtlasCuration.CURATED, groups=tuple(LesionGroup)),
+        GATA4: _facts(GATA4, AtlasCuration.NOT_YET_CURATED),
+    }
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(facts, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+
+    facets = dict(
+        re.findall(r'<select name="([^"]+)">(.*?)</select>', _page(tmp_path, "index.html"))
+    )
+    assert re.findall(r'<option value="([^"]*)">', facets["lesion"]) == [
+        "",
+        "anomalous_venous_return",
+        "avsd",
+        "complex",
+        "conotruncal",
+        "heterotaxy",
+        "lvoto",
+        "other",
+        "rvoto",
+        "septal",
+    ]
+    assert re.findall(r'<option value="([^"]*)">', facets["curation"]) == [
+        "",
+        "curated",
+        "not_yet_curated",
+    ]
+
+
+def test_the_browse_page_says_whose_classification_the_confidence_column_carries(
+    tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    """23 rows reading `definitive` under a column headed `confidence`, unattributed.
+
+    Every gene page says "Every classification below is an upstream panel's or
+    submitter's" and the landing page says "The atlas authors no validity
+    classification of its own". This was the only page on the site where a
+    panel's call could be read as the atlas's own, and the `atlas curation`
+    column that answers the question was unexplained beside it.
+
+    Both halves are asserted because they are separate claims: the attribution,
+    and the pointer to the column that says whether the atlas has curated the
+    gene at all. `_BROWSE_HEADERS` is checked in the same breath so the sentence
+    cannot come to name a column the table stopped rendering.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+
+    page = _page(tmp_path, "index.html")
+    assert "upstream panel's or submitter's" in page
+    assert "the atlas authors no validity classification of its own" in page
+    assert "<strong>atlas curation</strong> column" in page
+    assert "<th>atlas curation</th>" in page
+    assert "<th>confidence</th>" in page
 
 
 def test_every_browse_row_links_to_a_page_that_was_written(
