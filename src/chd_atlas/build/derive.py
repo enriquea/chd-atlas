@@ -146,17 +146,27 @@ def gene_facts(
     functional_counts: Counter[str] = Counter(record.gene for record in corpus.functional)
 
     facts: dict[str, GeneFacts] = {}
-    # `sorted` rather than `published`'s own iteration order. That used to be a
-    # guard against a consumer's gene index being reordered by an unrelated file
-    # rename, because the population was built from `corpus.assertions` and so
-    # was stable within a process. It is now what keeps the build byte-identical:
-    # `published_genes` returns a `set[str]`, and set iteration order for strings
-    # varies with `PYTHONHASHSEED`, which no local re-run reproduces. Measured on
-    # the 23 ids this build publishes, one process per seed: `list(set(ids))[:4]`
-    # gave four different answers under seeds 0, 1, 12345 and 99 (2026-08-04).
-    # `test_assertions_are_counted_per_gene_and_the_genes_come_back_sorted` pins
-    # the order against literals rather than against a second build, because a
-    # build-twice comparison inside one process cannot see this at all.
+    # `sorted` rather than `published`'s own iteration order, which makes the
+    # returned mapping's key order a contract this function keeps rather than an
+    # accident of the `set[str]` `published_genes` hands it. That matters because
+    # the return is public: `build_genes` hands the same mapping to
+    # `build_gene_pages` and `build_gene_index_page`, and a caller is entitled to
+    # iterate it without sorting first.
+    #
+    # It is **not** what keeps the build byte-identical, and this comment claimed
+    # it was until the claim was measured. Every consumer that turns this mapping
+    # into published bytes re-sorts: `bundles.py::build_genes`, `build_gene_pages`
+    # and `build_gene_index_page` all iterate `sorted(facts)`, and the browse
+    # page's facets go through sets that `pages.py` sorts itself. Measured
+    # 2026-08-04, one process per seed with this `sorted` dropped: full builds
+    # under `PYTHONHASHSEED` 0, 2, 12345 and 99 were byte-identical to each other
+    # and to a sorted build, across all 57 emitted files. Keep the sort for the
+    # contract; do not cite it as the determinism guard, or removing a caller's
+    # `sorted` will look safe.
+    #
+    # Pinned by `test_assertions_are_counted_per_gene_and_the_genes_come_back_sorted`,
+    # which hands in a reverse-ordered `list` rather than a `set` so the mutant
+    # fails on every run instead of on a fraction of the seeds.
     for gene in sorted(published):
         assertions = by_gene.get(gene, [])
         gene_validity = validity.get(gene, uncurated())

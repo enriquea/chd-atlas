@@ -39,11 +39,20 @@ Three gene populations reach this page, and they are three different claims:
   the committed corpus. It is kept, but under "Where this data comes from" and
   labelled so it cannot be read as what this site browses.
 
-`tests/unit/test_build_landing.py` recomputes each number from the same fixture
-and compares it against the rendered text rather than against a literal, for
-exactly that reason — a hardcoded expectation in the test would only prove the
-two hardcodings agree with each other — and checks the published-gene figure
-against a real build's `genes/index.json` besides.
+`tests/unit/test_build_landing.py` guards those three against each other by
+fixture rather than by recomputation, and the description here said otherwise
+until it was checked. Exactly one of its tests recomputes a number and compares
+it against the rendered text —
+`test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json`,
+which reads `len(genes/index.json["genes"])` off a real build. Every other
+count assertion in the file is a literal.
+
+They are literals on purpose, and the fixture is what makes them strong: it is
+hand-sized so that all three populations differ — two assertions, on one gene,
+against three published genes and five mirrored ones — so a figure wired to the
+wrong population renders a number that is true of *something* and still fails.
+None of the three matches the committed corpus's 1 / 23 / 154 either, and
+`assert "154" not in text` is what catches the count being hardcoded back.
 
 Every value that reaches the page from curated or mirrored text — a gene
 symbol, an HGNC id — goes through `html.escape`. Nothing curated here is
