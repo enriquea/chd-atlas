@@ -194,9 +194,12 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
 
     # D21's population, computed once for the same reason `symbols` is, and with
     # more riding on it: `build_genes` publishes one index row and one bundle per
-    # member, and `build_landing` prints how many there are. Deriving it twice
-    # would let the front page state a figure the browse payload contradicts,
-    # which is the shape the "154 genes published" defect already had once.
+    # member, `build_search` indexes one record per member so that every one of
+    # those bundles is reachable from the search box, and `build_landing` prints
+    # how many there are. Deriving it three times would let the front page state a
+    # figure the browse payload contradicts, or let the search index advertise a
+    # `genes/<id>.json` no builder wrote — the shape the "154 genes published"
+    # defect already had once.
     published = published_genes(validity)
 
     emitter = Emitter(root=out)
@@ -218,7 +221,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # It cannot fail here — SRC001 is an error, so the gate refused already.
     registry, _ = load_sources(root)
     build_sources(registry, emitter)
-    build_search(corpus, emitter, genes=genes)
+    build_search(corpus, emitter, genes=genes, published=published)
     build_landing(corpus, symbols=symbols, validity=validity, published=published, emitter=emitter)
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))

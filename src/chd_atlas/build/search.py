@@ -27,22 +27,20 @@ whose measurements were reported somewhere also reaches a reader through
 Revisit this when a dataset gains a title, or when the site gains a page for one
 to land on; today an indexed dataset would be a row labelled with an accession.
 
-Genes are drawn from the assertion set, so a gene carrying omics or variant
-evidence but no curated assertion is not searchable. Widening this to the gene
-registry would publish search hits whose only action is a fetch that 404s:
-`path` advertises `genes/<id>.json`, and `build_genes` writes one bundle per
-member of `published` — D21's population — and no others.
+The gene loop iterates `published` -- `build.validity.published_genes()`'s
+return, the same population `build_genes` writes a bundle for. Keyed on the
+asserted genes instead, as it was, the index would hold one gene while the
+site published 23 bundles: a visitor typing GATA4 gets nothing while
+`genes/HGNC_4173.json` is served. (The plan's wording here said
+`genes/HGNC_4173.html`; no builder writes an HTML gene page yet, so the
+extension is corrected rather than copied.) The dead-link sweep in
+`tests/test_built_site_is_consumable.py` does not cover that direction --
+it walks each published `path` and checks the file exists, so a record that
+was never emitted breaks no link and leaves the sweep green.
 
-Until D21 that population *was* the asserted genes, so the two sets were equal
-by construction and this docstring said so. They are no longer. The asserted
-genes are now a subset of what has a bundle for the committed corpus (1 gene of
-23), which is safe but narrow: 22 published genes are unfindable by search here
-while the browse index lists them. It is not safe in general — an assertion
-curated for a gene no ClinGen panel calls definitive would be indexed here and
-have no bundle behind it, the dead link this module exists to avoid. Nothing in
-the build catches that today; `tests/test_built_site_is_consumable.py` sweeps
-the real corpus, where no such gene exists. Widening this module to `published`
-is the change that closes both, and it is not made here.
+Keyed on `genes` -- the whole 154-gene registry -- it would be worse: 131
+results whose `path` names a bundle no builder wrote. That direction the
+sweep does catch. `published` is the only population that is right in both.
 
 Amendment A29 records the sharper case, which this module does not change: a
 `FunctionalEvidence` record about a gene outside `published` reaches no
@@ -51,12 +49,13 @@ published file at all, so nothing here can make it findable.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.paths import PHENOTYPES, PUBLICATIONS, gene_bundle_path
 from chd_atlas.corpus import Corpus
+from chd_atlas.identifiers import HgncId
 
 
 @dataclass(frozen=True)
@@ -132,6 +131,7 @@ def build_search(
     corpus: Corpus,
     emitter: Emitter,
     genes: Mapping[str, GeneLabels],
+    published: Collection[str],
 ) -> None:
     """Emit `search/index.json.gz`, the whole searchable surface in one file.
 
@@ -167,18 +167,29 @@ def build_search(
     `Mapping` because nothing here mutates it — the concrete type is invariant,
     so spelling it `dict` would reject legitimate arguments for no benefit.
     `build_genes` takes `symbols: Mapping[str, str]` the same way for the same
-    reason, and keeps taking exactly that: it needs the symbol alone, so a runner
-    passes `{gene: labels.symbol for gene, labels in genes.items()}` there and
-    this whole record here. Neither has a caller yet; the Task 11 runner is the
-    caller both are shaped for, and its specification predates this signature.
+    reason, and keeps taking exactly that: it needs the symbol alone, so
+    `build_site` passes `{gene: labels.symbol for gene, labels in genes.items()}`
+    there and this whole record here.
+
+    `published` is D21's population and is what the gene loop iterates — the
+    module docstring says why that and not `corpus.assertions` or `genes`. Taken
+    as a `Collection[str]` rather than a `set` for the reason `genes` is a
+    `Mapping`, and the same annotation `build_genes` and `build_landing` take it
+    under; `build_site` derives it once and hands the same object to all three,
+    so the search index, the browse payload and the front page's count cannot
+    name three different populations.
 
     A gene absent from `genes` labels itself with its HGNC id, so a result row
-    reads "HGNC:4173" rather than blank. Behind the validation gate `build_site`
-    will be, that fallback is unreachable: REF001 makes an asserted gene missing
-    from the registry an error, TBL008 makes a missing registry one, and it
-    refuses to build on any error — so reaching it means the gate was bypassed or
-    not yet in place, and an ugly row a reader can still search for beats an
-    unlabelled one.
+    reads "HGNC:4173" rather than blank. That fallback is reachable behind a
+    green gate, which it was not while this loop drew genes from the assertions:
+    REF001 makes an *asserted* gene missing from the registry an error, and no
+    rule pairs `mirrors/clingen_gene_validity.tsv` with `mirrors/genes.tsv`, so a
+    gene a panel calls definitive and HGNC has not been mirrored for reaches here
+    labelled with its id. Measured 2026-08-04 against the committed mirrors: 0 of
+    the 23 published genes are missing from the registry. `build_genes` and
+    `build_landing` apply the identical `symbols.get(gene, gene)` fallback, so
+    such a gene reads "HGNC:4173" consistently across the browse row, the page
+    heading and the search hit rather than being unlabelled in one of them.
 
     Aliases are sorted; authors and synonyms are not. An alias cell is a
     pipe-separated dump whose order is whatever the upstream release emitted, so
@@ -196,9 +207,10 @@ def build_search(
 
     # Sorted so that the published array does not follow set iteration order,
     # which varies with `PYTHONHASHSEED` between two builds of one commit and
-    # would move every checksum downstream of it. The set itself is what makes a
-    # gene with several assertions one result rather than one per assertion.
-    for gene in sorted({assertion.gene for assertion in corpus.assertions}):
+    # would move every checksum downstream of it. `published_genes` returns a
+    # `set`, so that hazard is exactly as live as it was when this line built a
+    # set from the assertions.
+    for gene in sorted(published):
         labels = genes.get(gene, GeneLabels(symbol=gene))
         # Filtered rather than published as a term: a null `name` is a bypassed
         # TBL003 (see `GeneLabels`), and an empty string in `terms` is a term
@@ -211,11 +223,17 @@ def build_search(
                 "id": gene,
                 "label": labels.symbol,
                 "terms": _terms([labels.symbol, gene, *name, *sorted(labels.aliases)]),
-                # `HgncId` reaches this untouched, because `assertion.gene` is
-                # annotated as one — unlike `gene_facts`' keys, which are plain
-                # `str` and make `bundles.py` recover the NewType before it can
-                # name a file. Nothing to assert here, so nothing to get wrong.
-                "path": gene_bundle_path(gene),
+                # The NewType is recovered rather than asserted, exactly as
+                # `bundles.py` recovers it over the same population: `published`
+                # is annotated `Collection[str]`, but every member `build_site`
+                # puts in it comes from the `gene` column of
+                # `mirrors/clingen_gene_validity.tsv`, checked against
+                # `HGNC_PATTERN` by that table's schema, and a TBL failure is an
+                # error the gate refuses on. `gene_bundle_path` requires `HgncId`
+                # so that only HGNC ids can name a file under `genes/`, where a
+                # `ContrastId` would slug to a name that collides with one on a
+                # case-insensitive filesystem.
+                "path": gene_bundle_path(HgncId(gene)),
             }
         )
 

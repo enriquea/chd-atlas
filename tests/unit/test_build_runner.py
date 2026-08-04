@@ -283,6 +283,13 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
     of the mirror is left intact. Rewriting the file down to its first row
     worked only while the registry held TBX5 alone; against the 154-gene mirror
     it deleted the asserted gene and the build refused with REF001.
+
+    The search record is located by id for the same reason, and the reason is
+    newer: D31 keyed the index on `published` rather than on the assertions, so
+    it went from one gene record to 23 sorted by HGNC id, and `next(...)` on the
+    first one started returning TBX20 (HGNC:11598). It was reading a real
+    payload, just never the row this test names — the shape of failure that a
+    positional lookup into a growing array always has.
     """
     mirror = repo / "mirrors" / "genes.tsv"
     header, *rows = mirror.read_text().splitlines()
@@ -313,7 +320,11 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
     # above pins for one gene, checked over every gene the build publishes.
     assert [gene for gene, symbol in symbols.items() if symbol == gene] == []
 
-    gene = next(record for record in _search_records(out) if record["kind"] == "gene")
+    gene = next(
+        record
+        for record in _search_records(out)
+        if record["kind"] == "gene" and record["id"] == "HGNC:11604"
+    )
     assert gene["label"] == "TBX5"
     assert gene["terms"] == [
         "TBX5",
