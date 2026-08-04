@@ -65,6 +65,27 @@ _DE_NOVO: dict[str, str] = {
 }
 
 
+# A case series: carriers, a denominator, and nothing to compare them with.
+# Module-level rather than built inside one test because two separate rules
+# constrain it -- it may carry no comparator column (BUR001) and no statistic
+# (BUR002) -- and a mutation dropping either was measured to survive while this
+# lived in only one of them.
+_SERIES: dict[str, str] = {
+    **_ROW,
+    "comparator": "none",
+    "n_control_carriers": "",
+    "n_controls": "",
+    "control_cohorts": "",
+    "effect": "",
+    "effect_measure": "",
+    "effect_bound": "",
+    "ci_low": "",
+    "ci_high": "",
+    "pvalue": "",
+    "pvalue_test": "",
+}
+
+
 def _write(tmp_path: Path, *rows: dict[str, str]) -> Path:
     """Write `rows` as `mirrors/burden.tsv` under a fresh root."""
     mirrors = tmp_path / "mirrors"
@@ -104,6 +125,13 @@ def test_a_real_case_control_row_and_a_real_de_novo_row_both_pass(tmp_path: Path
         pytest.param(
             _DE_NOVO, "control_cohorts", "ukbb", id="mutation_model-has-no-controls-named"
         ),
+        # A case series: none of the three. `expected_count` is the one a
+        # mutation was measured to slip past when this case lived only in
+        # `test_a_case_series_cannot_report_any_statistic` -- a row claiming to
+        # compare against nothing while carrying a modelled expectation
+        # validated clean, which is a comparator the study did use, unrecorded.
+        pytest.param(_SERIES, "expected_count", "0.42", id="case_series-cannot-model"),
+        pytest.param(_SERIES, "n_controls", "45082", id="case_series-has-no-controls"),
     ],
 )
 def test_a_row_must_carry_exactly_the_columns_its_comparator_implies(
@@ -130,22 +158,8 @@ def test_a_case_series_cannot_report_any_statistic(tmp_path: Path, field: str) -
     one from that tuple is a mutation this test must kill, and it can only do
     that if it names them all.
     """
-    series = {
-        **_ROW,
-        "comparator": "none",
-        "n_control_carriers": "",
-        "n_controls": "",
-        "control_cohorts": "",
-        "effect": "",
-        "effect_measure": "",
-        "effect_bound": "",
-        "ci_low": "",
-        "ci_high": "",
-        "pvalue": "",
-        "pvalue_test": "",
-    }
-    assert validate_burden(_write(tmp_path, series)) == []
-    assert "BUR002" in _codes(tmp_path, {**series, field: "1.5"})
+    assert validate_burden(_write(tmp_path, _SERIES)) == []
+    assert "BUR002" in _codes(tmp_path, {**_SERIES, field: "1.5"})
 
 
 def test_a_mutation_model_cannot_report_an_odds_ratio(tmp_path: Path) -> None:
@@ -207,8 +221,14 @@ def test_an_inverted_confidence_interval_is_reported(tmp_path: Path) -> None:
     and left out because it was not measured against the real data, and
     asserting an invariant nobody verified is how this project's docstrings have
     been wrong before.
+
+    The inversion below is 0.5 wide, not the 5.9 it was first written with. An
+    off-by-one mutant (`low > high + 1`) survived the wider gap: the check still
+    fired, so the test still passed, while a genuinely inverted [24.6, 24.1]
+    would have validated clean. The boundary is what needs pinning, not the
+    direction.
     """
-    assert "BUR004" in _codes(tmp_path, {**_DE_NOVO, "ci_low": "30.0"})
+    assert "BUR004" in _codes(tmp_path, {**_DE_NOVO, "ci_low": "24.6"})
 
 
 def test_a_pvalue_and_the_test_that_produced_it_must_arrive_together(tmp_path: Path) -> None:
