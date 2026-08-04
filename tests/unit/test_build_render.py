@@ -1,13 +1,74 @@
 # tests/unit/test_build_render.py
 """The shell every page shares, and the escaping every page depends on."""
 
-from chd_atlas.build.render import Link, Row, chip, data_table, definition_list, document
+import pytest
+
+from chd_atlas.build.render import (
+    RESEARCH_USE_NOTICE,
+    Link,
+    Row,
+    chip,
+    data_table,
+    definition_list,
+    document,
+)
+
+
+def test_the_research_use_notice_is_the_owner_s_sentence_character_for_character() -> None:
+    """The one string in this build that may not be reworded, shortened or split.
+
+    Asserted against a literal written out here rather than against
+    `RESEARCH_USE_NOTICE` itself, because a test that compares the constant to
+    itself passes on every possible wording -- including a "shortened for the
+    gene pages" variant, which is exactly the edit this forbids. The `<strong>`
+    is part of what was specified and is compared with the rest of it.
+    """
+    assert RESEARCH_USE_NOTICE == (
+        "This atlas is under active development. It is "
+        "<strong>not a clinical decision-support tool</strong> and must not be used to make "
+        "or guide a diagnostic, treatment or any other clinical decision."
+    )
+
+
+def test_every_page_carries_the_research_use_notice_before_its_own_content() -> None:
+    """It reached 1 of the 25 pages the build writes, and it was not a gene page.
+
+    Measured 2026-08-04 against a real build: `grep -l "not a clinical
+    decision-support tool"` matched `index.html` alone. The 24 pages that carry a
+    gene-level classification -- 23 gene pages and `genes/index.html` -- carried
+    no research-use statement at all, so a clinician arriving at
+    `genes/HGNC_4173.html` from a search engine met `GATA4`, an HGNC id and a
+    green `definitive` chip and nothing else above the fold.
+
+    `document` is where it lives now, which is what makes it structurally
+    impossible to add a page kind without it: `landing.py` and `pages.py` both
+    render through this function and neither mentions the notice.
+
+    **Position is asserted, not merely presence.** A notice in the footer is a
+    notice the reader meets after the classification it qualifies, and on a gene
+    page the classification is the first thing in `<main>`. `body` here stands in
+    for a gene page's rail, and the assertion is that the sentence precedes it in
+    DOM order -- which is reading order, screen-reader order and, on a viewport
+    under 46rem where `.layout` collapses to one column, painting order too.
+    """
+    page = document(title="GATA4 — CHD Atlas", root="../", body="<h1>GATA4</h1>")
+
+    assert page.count(RESEARCH_USE_NOTICE) == 1
+    assert f'<div class="notice" role="note"><p>{RESEARCH_USE_NOTICE}</p></div>' in page
+    assert page.index(RESEARCH_USE_NOTICE) < page.index("<main>")
+    assert page.index(RESEARCH_USE_NOTICE) < page.index("<h1>GATA4</h1>")
 
 
 def test_a_document_is_self_contained_and_carries_no_external_reference() -> None:
     """No `<link>`, `<script src>` or `@import`: the page renders with no
-    network request beyond the one that fetched it, and a strict-CSP or offline
-    reader sees the same site.
+    network request beyond the one that fetched it, so an offline reader and a
+    reviewer unpacking `dist/` see the same site.
+
+    Not a strict-CSP claim, which this docstring used to make. `default-src
+    'self'` blocks an inline `<style>` and an inline `<script>` exactly as it
+    blocks a remote one, so under such a policy the styling and the browse
+    filter die. Self-contained and CSP-safe are different properties and only
+    the first is asserted here.
     """
     page = document(title="CHD Atlas", root="", body="<p>hi</p>")
 
@@ -67,22 +128,43 @@ def test_a_quote_in_an_href_cannot_close_the_attribute_early() -> None:
     assert ' onmouseover="' not in html
 
 
-def test_a_row_attribute_name_and_value_are_both_escaped() -> None:
-    """`data-*` carries curated text too — lesion group names reach it verbatim.
-
-    The name is escaped as well as the value, because both come from the caller
-    and an unescaped name is the shorter route to the same escape: no `<` is
-    needed, only a `"` to close the attribute and start another one the row
-    never declared.
-    """
+def test_a_row_attribute_value_is_escaped() -> None:
+    """`data-*` carries curated text too — lesion group names reach it verbatim."""
     html = data_table(
         headers=["gene"],
-        rows=[Row(cells=("TBX5",), attributes=(('lesion" onclick="x', '<b> "septal"'),))],
+        rows=[Row(cells=("TBX5",), attributes=(("lesion", '<b> "septal"'),))],
     )
 
-    assert ' onclick="' not in html
     assert "<b>" not in html
-    assert 'data-lesion&quot; onclick=&quot;x="&lt;b&gt; &quot;septal&quot;"' in html
+    assert 'data-lesion="&lt;b&gt; &quot;septal&quot;"' in html
+
+
+def test_an_attribute_name_that_is_not_a_bare_word_is_refused() -> None:
+    """Escaping cannot make an attribute *name* safe, so it is refused instead.
+
+    This test replaces one whose docstring was measured false on 2026-08-04. It
+    passed `'lesion" onclick="x'` and asserted `' onclick="' not in html`,
+    reasoning that a `"` "closes the attribute and starts another one the row
+    never declared". Both halves were wrong. The bytes did contain
+    `onclick=&quot;`, so the assertion passed — while `html.parser` read the
+    result as `[('data-lesion"', None), ('onclick', '"x="v"')]`, meaning a
+    second attribute *was* declared. And the `"` is not what does it: `<`, `>`,
+    `&`, `"` and `'` are all escaped, so the character that opens a second
+    attribute is the **space**, which `html.escape` does not touch and which
+    that payload smuggled in unnoticed.
+
+    The payload below carries no quote and no angle bracket at all — nothing
+    `html.escape` would alter — and without the guard it renders
+    `<tr data-x onmouseover=alert(1) y="v">`, a live event handler.
+
+    Every name the build passes is a literal in `pages.py`, so this is a guard
+    on a bypassed gate: reaching it means a caller derived a name from data.
+    """
+    with pytest.raises(ValueError, match="escaping cannot"):
+        data_table(
+            headers=["gene"],
+            rows=[Row(cells=("TBX5",), attributes=(("x onmouseover=alert(1) y", "v"),))],
+        )
 
 
 def test_a_table_with_no_rows_still_renders_its_header() -> None:

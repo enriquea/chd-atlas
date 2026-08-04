@@ -6,13 +6,14 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 
 import pytest
 
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.pages import build_gene_index_page, build_gene_pages
+from chd_atlas.build.pages import _SCOPE_RULE, build_gene_index_page, build_gene_pages
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.literature import Publication
@@ -92,6 +93,18 @@ def facts_two() -> dict[str, GeneFacts]:
         TBX5: _facts(TBX5, AtlasCuration.CURATED, groups=(LesionGroup.SEPTAL,)),
         GATA4: _facts(GATA4, AtlasCuration.NOT_YET_CURATED),
     }
+
+
+@pytest.fixture
+def validity_two() -> dict[str, GeneValidity]:
+    """Both genes of `facts_two`, each Definitive for a *different* in-scope disease.
+
+    Different labels on purpose. The `definitive for` column and the rail row it
+    mirrors are both per-gene lookups, and a fixture where every gene carried
+    the same disease label could not tell a correct lookup from one wired to the
+    first gene, to `next(iter(validity))`, or to a constant.
+    """
+    return {TBX5: _validity(), GATA4: _validity("structural congenital heart disease")}
 
 
 @pytest.fixture
@@ -434,7 +447,9 @@ def test_a_contested_gene_is_never_chipped_as_settled(
 
 
 def test_every_gene_in_the_facts_gets_exactly_one_page(
-    tmp_path: Path, facts_two: dict[str, GeneFacts]
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
 ) -> None:
     """Including a gene with no symbol in the registry -- `symbols` is empty here."""
     emitter = Emitter(root=tmp_path)
@@ -442,7 +457,7 @@ def test_every_gene_in_the_facts_gets_exactly_one_page(
         facts_two,
         emitter,
         symbols={},
-        validity={TBX5: _validity(), GATA4: _validity()},
+        validity=validity_two,
         assertions={},
         publications={},
     )
@@ -454,7 +469,9 @@ def test_every_gene_in_the_facts_gets_exactly_one_page(
 
 
 def test_the_browse_table_is_complete_before_any_script_runs(
-    tmp_path: Path, facts_two: dict[str, GeneFacts]
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
 ) -> None:
     """D29. The rows are rendered by the build, not fetched.
 
@@ -471,7 +488,9 @@ def test_the_browse_table_is_complete_before_any_script_runs(
     below, which is expected: an empty table has no order and no links.
     """
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+    build_gene_index_page(
+        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
 
     page = _page(tmp_path, "index.html")
     assert "TBX5" in page and "GATA4" in page
@@ -480,7 +499,9 @@ def test_the_browse_table_is_complete_before_any_script_runs(
 
 
 def test_browse_rows_are_ordered_by_hgnc_id_against_a_literal(
-    tmp_path: Path, facts_two: dict[str, GeneFacts]
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
 ) -> None:
     """Asserted against a literal, not by building twice and comparing.
 
@@ -488,13 +509,17 @@ def test_browse_rows_are_ordered_by_hgnc_id_against_a_literal(
     build-twice comparison cannot catch a dropped sort at any fixture size.
     """
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+    build_gene_index_page(
+        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
 
     page = _page(tmp_path, "index.html")
     assert page.index("HGNC_11604.html") < page.index("HGNC_4173.html")
 
 
-def test_browse_facet_options_are_ordered_against_a_literal(tmp_path: Path) -> None:
+def test_browse_facet_options_are_ordered_against_a_literal(
+    tmp_path: Path, validity_two: dict[str, GeneValidity]
+) -> None:
     """The `<option>` values are built from sets, so their order is seed-dependent.
 
     `build_gene_index_page` derives each facet's values with a set comprehension
@@ -534,7 +559,9 @@ def test_browse_facet_options_are_ordered_against_a_literal(tmp_path: Path) -> N
         GATA4: _facts(GATA4, AtlasCuration.NOT_YET_CURATED),
     }
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+    build_gene_index_page(
+        facts, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
 
     facets = dict(
         re.findall(r'<select name="([^"]+)"[^>]*>(.*?)</select>', _page(tmp_path, "index.html"))
@@ -559,7 +586,9 @@ def test_browse_facet_options_are_ordered_against_a_literal(tmp_path: Path) -> N
 
 
 def test_the_browse_page_says_whose_classification_the_confidence_column_carries(
-    tmp_path: Path, facts_two: dict[str, GeneFacts]
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
 ) -> None:
     """23 rows reading `definitive` under a column headed `confidence`, unattributed.
 
@@ -575,7 +604,9 @@ def test_the_browse_page_says_whose_classification_the_confidence_column_carries
     cannot come to name a column the table stopped rendering.
     """
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+    build_gene_index_page(
+        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
 
     page = _page(tmp_path, "index.html")
     assert "upstream panel's or submitter's" in page
@@ -585,8 +616,189 @@ def test_the_browse_page_says_whose_classification_the_confidence_column_carries
     assert "<th>confidence</th>" in page
 
 
+def test_no_browse_row_states_a_bare_definitive_without_the_disease_it_is_for(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """`KMT2D | definitive` on a site called "CHD Atlas" is a wrong claim.
+
+    ClinGen's assertion is `KMT2D -- Definitive for Kabuki syndrome 1`, made by
+    the SCID-CID GCEP. Measured 2026-08-04 against the committed mirrors, the
+    browse page rendered 23 rows all reading `definitive`, with no disease column
+    at all: 10 of the 23 are qualified by a panel that is not the Congenital
+    Heart Disease GCEP, and 10 are definitive for a disease whose label names no
+    cardiac feature (Kabuki 1 and 2, Mowat-Wilson, CHARGE, Alagille, Ellis-van
+    Creveld twice, Holt-Oram, TARP, NR2F2-related multiple congenital anomalies).
+
+    Asserted per row rather than as "both labels appear somewhere on the page",
+    because the failure this guards is a lookup wired to the wrong gene: the
+    fixture gives the two genes two different diseases, and a page naming
+    Holt-Oram on both rows would satisfy a page-wide substring check while
+    telling a reader GATA4 is definitive for Holt-Oram syndrome.
+
+    The disease cell is required to sit in the same `<tr>` as the `definitive`
+    cell, so moving the column to the far right -- or into a second table -- fails
+    here even though every string is still on the page.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
+
+    page = _page(tmp_path, "index.html")
+    assert "<th>definitive for</th>" in page
+    rows = re.findall(r"<tr(?: data-[^>]*)?><td>(.*?)</tr>", page)
+    assert len(rows) == 2
+    expected = {TBX5: "Holt-Oram syndrome", GATA4: "structural congenital heart disease"}
+    for row in rows:
+        gene = next(g for g in expected if g in row)
+        assert f"<td>definitive</td><td>{expected[gene]}</td>" in row, row
+        # The other gene's disease must not be on this row at all.
+        other = next(expected[g] for g in expected if g != gene)
+        assert other not in row
+
+
+def test_a_gene_definitive_for_two_in_scope_diseases_names_both_in_a_fixed_order(
+    tmp_path: Path,
+) -> None:
+    """Latent today, and sorted so it stays deterministic when it is not.
+
+    Measured 2026-08-04 against the committed mirrors: all 23 published genes
+    carry exactly one in-scope ClinGen `Definitive` record naming exactly one
+    distinct disease label, so nothing in the real corpus exercises this. It is a
+    fixture, not a hypothetical: `curation/chd_scope.yaml` is an editorial file a
+    curator widens, and one added MONDO term can give a gene a second qualifying
+    record without any code changing.
+
+    Two properties, and they are separate. That **both** labels are named --
+    dropping one would publish half the reason the gene is on the site. And that
+    they come back in sorted order -- `_definitive_diseases` de-duplicates through
+    a `set`, whose iteration order for strings varies with `PYTHONHASHSEED`, so
+    an unsorted return makes `genes/index.html` and its manifest checksum differ
+    between two builds of one commit. Asserted against a literal in reverse
+    alphabetical fixture order rather than by building twice: `PYTHONHASHSEED` is
+    fixed for the life of an interpreter, so a same-process comparison cannot see
+    a dropped sort at any fixture size (CLAUDE.md §4.13).
+
+    Only a GenCC record calling the gene definitive is also present, and it is
+    asserted absent: GenCC admits no gene to this population (D21), so naming its
+    disease here would qualify the confidence with a disease that is not the one
+    the gate turned on.
+    """
+    two = GeneValidity(
+        records=(
+            _validity("Zellweger syndrome").records[0],
+            _validity("Alagille syndrome").records[0],
+            ValidityRecord(
+                source=ValiditySource.GENCC,
+                classification=Classification.DEFINITIVE,
+                classification_term="Definitive",
+                disease="MONDO:0000001",
+                disease_label="a submitter's disease",
+                moi="AD",
+                report_url=None,
+                submitter="Ambry Genetics",
+            ),
+        ),
+        state=ValidityState.EXPERT_CURATED,
+        has_source_discordance=False,
+    )
+    facts = {TBX5: _facts(TBX5, AtlasCuration.CURATED, groups=(LesionGroup.SEPTAL,))}
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(facts, emitter, symbols={TBX5: "TBX5"}, validity={TBX5: two})
+    build_gene_pages(
+        facts,
+        emitter,
+        symbols={TBX5: "TBX5"},
+        validity={TBX5: two},
+        assertions={},
+        publications={},
+    )
+
+    browse = _page(tmp_path, "index.html")
+    assert "<td>definitive</td><td>Alagille syndrome; Zellweger syndrome</td>" in browse
+    assert "a submitter's disease" not in browse
+    gene_page = _page(tmp_path, "HGNC_11604.html")
+    assert "<dt>definitive for</dt><dd>Alagille syndrome; Zellweger syndrome</dd>" in gene_page
+
+
+def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """No page on the site said what the 23-gene set is. `docs/data-api.md` did.
+
+    A reader of the HTML never sees that document, so the browse page and every
+    gene page now carry the rule themselves: a gene is published when a ClinGen
+    expert panel classifies it Definitive **for a disease in this atlas's CHD
+    scope**, which is not the same as definitive for congenital heart disease.
+
+    Both page kinds are checked from one constant, `pages._SCOPE_RULE`, because
+    the rule is one editorial claim and two copies of it are two things that
+    drift. What is asserted here is that the constant *reaches both kinds of
+    page* -- the drift this cannot catch is the constant itself being reworded,
+    which is what the phrase assertions below are for. They are deliberately not
+    the whole string: this must fail when the sentence stops distinguishing the
+    two claims, not merely when a comma moves.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
+    build_gene_pages(
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        assertions={},
+        publications={},
+    )
+
+    for name in ("index.html", "HGNC_11604.html", "HGNC_4173.html"):
+        page = _page(tmp_path, name)
+        assert _SCOPE_RULE in page, f"{name} does not state the inclusion rule"
+        assert "for a disease in this atlas's CHD scope" in page
+        assert "not the same as definitive for congenital heart disease" in page
+
+
+def test_a_gene_page_names_the_disease_beside_the_chip_that_says_definitive(
+    tmp_path: Path,
+    facts_uncurated: dict[str, GeneFacts],
+) -> None:
+    """The rail is the first screen, and the green chip on it said only `definitive`.
+
+    `_rail` renders the symbol, the HGNC id and a `chip-definitive` pill, and on
+    a viewport under 46rem `.layout` collapses to one column so those three fill
+    the screen on their own. On a site titled "CHD Atlas" a green `definitive`
+    with no disease reads as definitive for congenital heart disease; for CHD7 it
+    means CHARGE syndrome, graded by the Hearing Loss GCEP.
+
+    The order is asserted, not only the presence: the disease must come *after*
+    the chip and before the rest of the rail's rows, so it is read as qualifying
+    the chip rather than as one more fact three rows down.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        facts_uncurated,
+        emitter,
+        symbols={GATA4: "GATA4"},
+        validity={GATA4: _validity("CHARGE syndrome")},
+        assertions={},
+        publications={},
+    )
+
+    page = _page(tmp_path, "HGNC_4173.html")
+    assert "<dt>definitive for</dt><dd>CHARGE syndrome</dd>" in page
+    assert page.index('chip chip-definitive">definitive') < page.index("CHARGE syndrome")
+    assert page.index("CHARGE syndrome") < page.index("<dt>validity</dt>")
+
+
 def test_every_browse_row_links_to_a_page_that_was_written(
-    tmp_path: Path, facts_two: dict[str, GeneFacts]
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
 ) -> None:
     emitter = Emitter(root=tmp_path)
     build_gene_pages(
@@ -597,7 +809,7 @@ def test_every_browse_row_links_to_a_page_that_was_written(
         assertions={},
         publications={},
     )
-    build_gene_index_page(facts_two, emitter, symbols={})
+    build_gene_index_page(facts_two, emitter, symbols={}, validity=validity_two)
 
     page = _page(tmp_path, "index.html")
     for name in ("HGNC_11604.html", "HGNC_4173.html"):
@@ -605,8 +817,42 @@ def test_every_browse_row_links_to_a_page_that_was_written(
         assert f"genes/{name}" in emitter.checksums
 
 
-def test_every_facet_names_a_data_attribute_the_filter_script_reads(
+def test_a_facet_option_value_is_escaped_like_every_other_published_string(
     tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    """The one interpolation on the site where escaping rested on provenance.
+
+    Review on #15 measured this: every other value on every page reaches markup
+    through a `render.py` primitive, and `<option value="{value}">` did not. It
+    was safe only because all 21 members of `LesionGroup`, `Classification`,
+    `ValidityState` and `AtlasCuration` happen to be `[a-z_]`. Driving the loop
+    with `"><script>alert(1)</script>` emitted a live `<script>` element into
+    the page while the same build's table cells stayed correctly escaped.
+
+    The hostile value arrives as a `StrEnum` member rather than a bare `str`,
+    because the facet loop reads `.value` off each field -- so a plain string
+    never reaches the interpolation and a test using one would fail for the
+    wrong reason, which is what happened when this test was first written.
+    """
+
+    class Hostile(StrEnum):
+        X = '"><script>alert(1)</script>'
+
+    facts = dict(facts_two)
+    facts[GATA4] = replace(facts[GATA4], validity_state=Hostile.X)  # type: ignore[arg-type]
+    emitter = Emitter(root=tmp_path)
+
+    build_gene_index_page(facts, emitter, symbols={}, validity={})
+
+    page = _page(tmp_path, "index.html")
+    assert "<script>alert(1)</script>" not in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+
+
+def test_every_facet_names_a_data_attribute_the_filter_script_reads(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
 ) -> None:
     """A facet whose name matches no `data-*` attribute filters nothing, silently.
 
@@ -625,7 +871,9 @@ def test_every_facet_names_a_data_attribute_the_filter_script_reads(
     leaves every filter dead.
     """
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+    build_gene_index_page(
+        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
 
     page = _page(tmp_path, "index.html")
     assert 'name="q"' in page
@@ -639,7 +887,9 @@ def test_every_facet_names_a_data_attribute_the_filter_script_reads(
 
 
 def test_every_browse_control_is_named_for_a_screen_reader(
-    tmp_path: Path, facts_two: dict[str, GeneFacts]
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
 ) -> None:
     """Five form controls, five `aria-label`s. Raised by review on #14.
 
@@ -657,7 +907,9 @@ def test_every_browse_control_is_named_for_a_screen_reader(
     label wired to the wrong facet.
     """
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+    build_gene_index_page(
+        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+    )
 
     page = _page(tmp_path, "index.html")
     assert 'aria-label="Search by gene symbol or HGNC id"' in page
