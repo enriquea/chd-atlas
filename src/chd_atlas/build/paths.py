@@ -84,6 +84,17 @@ def gene_bundle_path(gene: HgncId) -> str:
     return f"genes/{slug(gene)}.json"
 
 
+def gene_page_path(gene: HgncId) -> str:
+    """Relative URL of one gene's HTML page, beside its JSON bundle.
+
+    Built from the same `slug` as `gene_bundle_path` so the pair cannot drift:
+    a page whose name is derived differently from its bundle is a page linking
+    to a file that was never written. `HgncId` rather than `str` for the reason
+    `gene_bundle_path` takes one — only HGNC ids may name a file in `genes/`.
+    """
+    return f"genes/{slug(gene)}.html"
+
+
 # The whole-corpus payloads, named here because two modules have to agree on each
 # and neither owns it: `literature.py` writes these files and `search.py`
 # advertises two of them as the `path` a search result resolves to. Held apart as
@@ -111,3 +122,9 @@ SOURCES: Final = "sources.json"
 # and `tests/unit/test_build_landing.py` has to name the same file without
 # either one hardcoding a string the other could drift from.
 LANDING: Final = "index.html"
+
+# The browse page. `genes/index.json` is its data and this is the page; Pages
+# serves this at `/genes/`. Named here beside the other whole-site payloads
+# because `pages.py` writes it and `landing.py` links to it, and nothing in code
+# ties a written path to a path a payload promised.
+GENE_INDEX_PAGE: Final = "genes/index.html"

@@ -8,6 +8,7 @@ from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import Evidence, LesionAssertion, SupplementaryLocator
 from chd_atlas.models.functional import FunctionalEvidence
 from chd_atlas.vocab import (
+    AtlasCuration,
     Classification,
     EvidenceClass,
     LesionGroup,
@@ -108,7 +109,7 @@ def test_headline_confidence_is_the_strongest_mirrored_classification() -> None:
         )
     }
 
-    facts = gene_facts(_corpus(), validity)
+    facts = gene_facts(_corpus(), validity, published={"HGNC:11604"})
 
     assert facts["HGNC:11604"].headline_confidence == Classification.DEFINITIVE
 
@@ -122,7 +123,7 @@ def test_an_uncurated_gene_publishes_no_headline_and_no_breakdown() -> None:
     breakdown is empty for the identical reason: there is no mirrored
     classification to collapse under any group.
     """
-    fact = gene_facts(_corpus(), validity={})["HGNC:11604"]
+    fact = gene_facts(_corpus(), validity={}, published={"HGNC:11604"})["HGNC:11604"]
 
     assert fact.headline_confidence is None
     assert fact.validity_state is ValidityState.UNCURATED
@@ -160,11 +161,14 @@ def test_the_conflict_flag_is_set_by_contradiction_and_by_nothing_else() -> None
         )
     }
 
-    facts = gene_facts(_corpus(), contested)
+    facts = gene_facts(_corpus(), contested, published={"HGNC:11604"})
 
     assert facts["HGNC:11604"].headline_confidence == Classification.DEFINITIVE
     assert facts["HGNC:11604"].has_conflicting_evidence is True
-    assert gene_facts(_corpus(), {})["HGNC:11604"].has_conflicting_evidence is False
+    assert (
+        gene_facts(_corpus(), {}, published={"HGNC:11604"})["HGNC:11604"].has_conflicting_evidence
+        is False
+    )
 
 
 def test_each_gene_is_derived_only_from_its_own_assertions_and_validity() -> None:
@@ -208,7 +212,7 @@ def test_each_gene_is_derived_only_from_its_own_assertions_and_validity() -> Non
         ),
     }
 
-    facts = gene_facts(corpus, validity)
+    facts = gene_facts(corpus, validity, published={"HGNC:11599", "HGNC:11604"})
 
     second = facts["HGNC:11604"]
     assert second.gene == "HGNC:11604"
@@ -251,7 +255,7 @@ def test_confidence_by_lesion_group_applies_the_mirrored_headline_to_every_decla
         )
     }
 
-    facts = gene_facts(corpus, validity)
+    facts = gene_facts(corpus, validity, published={"HGNC:11604"})
 
     assert facts["HGNC:11604"].confidence_by_lesion_group == {
         LesionGroup.AVSD: Classification.DEFINITIVE,
@@ -273,7 +277,7 @@ def test_evidence_is_counted_per_class() -> None:
         )
     )
 
-    facts = gene_facts(corpus, {})
+    facts = gene_facts(corpus, {}, published={"HGNC:11604"})
 
     assert facts["HGNC:11604"].evidence_counts == {
         EvidenceClass.GENETIC_CASE: 2,
@@ -293,11 +297,22 @@ def test_cited_publications_are_collected_and_deduplicated() -> None:
         )
     )
 
-    assert gene_facts(corpus, {})["HGNC:11604"].publications == ("PMID:8988165",)
+    assert gene_facts(corpus, {}, published={"HGNC:11604"})["HGNC:11604"].publications == (
+        "PMID:8988165",
+    )
 
 
-def test_a_corpus_with_no_assertions_derives_nothing() -> None:
-    assert gene_facts(Corpus(root=Path(".")), {}) == {}
+def test_an_empty_published_set_derives_nothing() -> None:
+    """The degenerate input: nothing published, so nothing derived.
+
+    This used to read "a corpus with no assertions derives nothing", which D21
+    made false in the direction that matters --
+    `test_a_published_gene_with_no_assertion_still_gets_facts` is the same
+    empty corpus with one published gene, and it derives one fact. What is left
+    to pin is that an empty population returns an empty mapping rather than
+    raising, since `published` is now the only thing that decides.
+    """
+    assert gene_facts(Corpus(root=Path(".")), {}, published=set()) == {}
 
 
 def test_cited_publications_come_back_sorted() -> None:
@@ -335,7 +350,7 @@ def test_cited_publications_come_back_sorted() -> None:
 
     # Lexicographic, not numeric: these are strings, and that is what the site
     # serves.
-    assert gene_facts(corpus, {})["HGNC:11604"].publications == (
+    assert gene_facts(corpus, {}, published={"HGNC:11604"})["HGNC:11604"].publications == (
         "PMID:11729",
         "PMID:3",
         "PMID:40404",
@@ -359,7 +374,7 @@ def test_lesion_groups_are_sorted_rather_than_first_seen() -> None:
         )
     )
 
-    assert gene_facts(corpus, {})["HGNC:11604"].lesion_groups == (
+    assert gene_facts(corpus, {}, published={"HGNC:11604"})["HGNC:11604"].lesion_groups == (
         LesionGroup.AVSD,
         LesionGroup.CONOTRUNCAL,
         LesionGroup.SEPTAL,
@@ -369,13 +384,18 @@ def test_lesion_groups_are_sorted_rather_than_first_seen() -> None:
 def test_assertions_are_counted_per_gene_and_the_genes_come_back_sorted() -> None:
     """The returned mapping is ordered by gene id, not by the order they arrived.
 
-    Nothing else in this file looked at `facts`' own key order, so dropping the
-    `sorted(by_gene)` in `gene_facts` passed the whole suite — which is what the
-    second assertion is here for. The assertions below are deliberately curated
-    HGNC:11604 first and HGNC:11599 last, so insertion order and sorted order
-    disagree and the check cannot pass by coincidence. A consumer that iterates
-    `facts.items()` into a JSON array would otherwise have its gene index
-    reordered by an unrelated file rename.
+    Nothing else in this file looks at `facts`' own key order, so dropping the
+    `sorted(published)` in `gene_facts` passes the whole suite bar the last
+    assertion below. What the build actually passes is a `set` from
+    `published_genes`, whose iteration order for strings varies with
+    `PYTHONHASHSEED`; a set here would therefore catch that mutation on some
+    seeds and wave it through on others, which §4.12 of `CLAUDE.md` records as
+    not being a guard at all. `published` is declared `Collection[str]`, so this
+    hands it an ordered `list` in the reverse of sorted order instead: the
+    mutant then fails on every run rather than on a fraction of them.
+
+    A consumer that iterates `facts.items()` into a JSON array would otherwise
+    have its gene index reordered between two builds of one commit.
     """
     corpus = _corpus(
         assertions=(
@@ -385,11 +405,65 @@ def test_assertions_are_counted_per_gene_and_the_genes_come_back_sorted() -> Non
         )
     )
 
-    facts = gene_facts(corpus, {})
+    facts = gene_facts(corpus, {}, published=["HGNC:11604", "HGNC:11599"])
 
     assert facts["HGNC:11604"].assertion_count == 2
     assert facts["HGNC:11599"].assertion_count == 1
     assert list(facts) == ["HGNC:11599", "HGNC:11604"]
+
+
+def test_a_published_gene_with_no_assertion_still_gets_facts() -> None:
+    """The 22-of-23 case, and the whole point of D21.
+
+    Before this, `gene_facts` keyed on the asserted genes, so a gene an expert
+    panel calls definitive and the atlas has not curated produced no facts, no
+    bundle and no page. Its mirrored confidence still comes from the mirror --
+    the assertion was never where it came from.
+    """
+    corpus = _corpus(assertions=())
+    validity = {"HGNC:1": _gene_validity()}
+
+    facts = gene_facts(corpus, validity, published={"HGNC:1"})
+
+    assert set(facts) == {"HGNC:1"}
+    fact = facts["HGNC:1"]
+    assert fact.headline_confidence is Classification.DEFINITIVE
+    assert fact.assertion_count == 0
+    assert fact.atlas_curation is AtlasCuration.NOT_YET_CURATED
+    assert fact.lesion_groups == ()
+    assert fact.confidence_by_lesion_group == {}
+
+
+def test_atlas_curation_is_curated_exactly_when_an_assertion_exists() -> None:
+    """The invariant a consumer filters on, asserted in both directions.
+
+    One-directional would pass on a hardcoded "curated", which is the mutant
+    that matters: it would advertise atlas evidence for 22 genes that have none.
+    """
+    corpus = _corpus(assertions=(_assertion(gene="HGNC:1"),))
+    validity = {"HGNC:1": _gene_validity(), "HGNC:2": _gene_validity()}
+
+    facts = gene_facts(corpus, validity, published={"HGNC:1", "HGNC:2"})
+
+    assert facts["HGNC:1"].atlas_curation is AtlasCuration.CURATED
+    assert facts["HGNC:1"].assertion_count == 1
+    assert facts["HGNC:2"].atlas_curation is AtlasCuration.NOT_YET_CURATED
+    assert facts["HGNC:2"].assertion_count == 0
+
+
+def test_an_asserted_gene_outside_the_published_set_gets_no_facts() -> None:
+    """`published` is the population, full stop.
+
+    A curated assertion does not admit a gene: D21 is the gate and D37 keeps
+    candidate genes out of the definitive set. Without this, a curator adding an
+    assertion for a gene no panel has graded would silently publish it beside
+    the panel-adjudicated ones.
+    """
+    corpus = _corpus(assertions=(_assertion(gene="HGNC:9"),))
+
+    facts = gene_facts(corpus, {"HGNC:1": _gene_validity()}, published={"HGNC:1"})
+
+    assert set(facts) == {"HGNC:1"}
 
 
 def test_every_functional_record_about_a_gene_is_counted() -> None:
@@ -409,16 +483,17 @@ def test_every_functional_record_about_a_gene_is_counted() -> None:
         )
     )
 
-    facts = gene_facts(corpus, {})
+    facts = gene_facts(corpus, {}, published={"HGNC:11604"})
 
     assert facts["HGNC:11604"].functional_count == 2
-    # HGNC:11599 has a functional record and no assertion, which is the state the
-    # docstring calls deliberately absent: keying off the union of assertions and
-    # functional records is a coherent alternative design, and this is what says
-    # it is not the one chosen. A gene with nothing asserted has no confidence to
-    # display, so there is no headline it could be given.
+    # HGNC:11599 carries a functional record and is outside `published`, so it
+    # gets no facts: keying off the union of `published` and the functionally
+    # evidenced genes is a coherent alternative design, and this is what says it
+    # is not the one chosen. Its record is counted for nobody and published
+    # nowhere -- the cost `bundles.py` pins with
+    # `test_a_gene_with_evidence_but_outside_the_published_set_is_not_published`.
     assert "HGNC:11599" not in facts
     # And the other end of the count: a gene with no functional record at all
     # reports zero rather than raising, which is what the `Counter` buys over a
     # plain dict.
-    assert gene_facts(_corpus(), {})["HGNC:11604"].functional_count == 0
+    assert gene_facts(_corpus(), {}, published={"HGNC:11604"})["HGNC:11604"].functional_count == 0

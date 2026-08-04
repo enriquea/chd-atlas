@@ -31,7 +31,7 @@ write, which is what makes the two agree by construction rather than by review.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import Any, cast
 
 from chd_atlas.build.derive import GeneFacts, gene_facts
@@ -160,9 +160,9 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
 
     One function rather than two literals so the browse row and the page it
     opens cannot disagree, and — the reason it exists — so `headline_confidence`,
-    `validity_state`, `has_conflicting_evidence` and `has_source_discordance` are
-    written together. Dropping any one of them from one payload alone is not an
-    edit that can be made here by accident.
+    `validity_state`, `atlas_curation`, `has_conflicting_evidence` and
+    `has_source_discordance` are written together. Dropping any one of them from
+    one payload alone is not an edit that can be made here by accident.
 
     `.value` publishes the vocabulary's string rather than leaning on a `StrEnum`
     member *being* a `str`. Measured, not assumed: mypy accepts either spelling
@@ -184,6 +184,11 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
             fact.headline_confidence.value if fact.headline_confidence else None
         ),
         "validity_state": fact.validity_state.value,
+        # Written inside `_headline` for the same reason `has_conflicting_evidence`
+        # is: the browse row and the page it opens must not be able to disagree
+        # about whether the atlas has curated a gene, and 22 of 23 published
+        # genes have not.
+        "atlas_curation": fact.atlas_curation.value,
         "has_conflicting_evidence": fact.has_conflicting_evidence,
         "has_source_discordance": fact.has_source_discordance,
         "lesion_groups": [group.value for group in fact.lesion_groups],
@@ -197,8 +202,28 @@ def build_genes(
     omics: Mapping[str, Mapping[str, ModalitySummary]],
     variants: Mapping[str, list[dict[str, Any]]],
     validity: dict[str, GeneValidity],
-) -> None:
-    """Emit `genes/index.json` and one bundle per gene carrying an assertion.
+    published: Collection[str],
+) -> dict[str, GeneFacts]:
+    """Emit `genes/index.json` and one bundle per published gene, and return the facts.
+
+    The return is `gene_facts`' mapping, handed back rather than discarded so
+    that `build_gene_pages` and `build_gene_index_page` render from the same
+    derivation these bundles were written from. Deriving it a second time in the
+    runner would type-check, cost another pass over the corpus, and leave two
+    call sites free to drift apart — a page and the bundle it links to
+    disagreeing about a gene's confidence is exactly the failure `_headline`
+    exists to make unrepresentable within one payload, and it would reappear
+    between payloads. Returning it does not widen what this function promises:
+    the mapping is `gene_facts`' own return, keyed on the same population, and
+    this function does not mutate it.
+
+    `published` is D21's population: `build.validity.published_genes()`'s
+    return, the genes a ClinGen expert panel classifies definitive for an
+    in-scope disease. It is passed to `gene_facts`, which keys on it, so this
+    function writes exactly one bundle per member and the index lists exactly
+    the same set. 22 of the 23 published today carry no curated assertion at
+    all; `atlas_curation` is what says so, in the index row and the bundle
+    alike.
 
     `symbols` comes from `mirrors/genes.tsv`, keyed on HGNC id. A gene absent
     from it keeps its HGNC id as its display label: the browse row and the page
@@ -214,22 +239,22 @@ def build_genes(
 
     `omics` and `variants` are what `build_omics` and `build_variants` returned,
     taken as `Mapping` because nothing here mutates them. Genes they carry that
-    hold no assertion are ignored, which is the same rule `gene_facts` applies:
-    the atlas browses curated claims, and a gene with nothing asserted has no
-    confidence to display. Their rows are still published in the shards those two
-    modules wrote — the gene index simply does not link to them.
+    are outside `published` are ignored, which is the same rule `gene_facts`
+    applies: no expert panel has called them definitive for CHD, so the atlas
+    publishes no page for them. Their rows are still published in the shards
+    those two modules wrote — the gene index simply does not link to them.
 
     That last sentence covers `omics` and `variants` and nothing else. A
-    `FunctionalEvidence` record about a gene with no assertion is worse off: no
+    `FunctionalEvidence` record about a gene outside `published` is worse off: no
     other build module reads `corpus.functional` — `derive.py` reads it only to
     count records per gene, and this is its only writer — so it reaches no
     published file at all rather than an unlinked one. That is evidence loss,
     not a missing link. It still does not raise here, because such a record is
     legal under every validator in the project and `gene_facts` is what decides
     which genes exist; the cost is pinned instead, by
-    `test_a_gene_with_evidence_but_no_assertion_is_not_published`.
+    `test_a_gene_with_evidence_but_outside_the_published_set_is_not_published`.
     """
-    facts = gene_facts(corpus, validity)
+    facts = gene_facts(corpus, validity, published=published)
     assertions = _records_by_gene(corpus.assertions)
     functional = _records_by_gene(corpus.functional)
 
@@ -243,9 +268,11 @@ def build_genes(
     for gene in sorted(facts):
         fact = facts[gene]
         # `HgncId` rather than `str` at this boundary: `gene_facts` keys on a
-        # plain `str` by choice, but every key it returns came from
-        # `assertion.gene`, which pydantic validated against `HGNC_PATTERN`. The
-        # NewType is being recovered, not asserted. `gene_bundle_path` requires
+        # plain `str` by choice, but every key it returns is a member of
+        # `published`, which `build_site` derives from the `gene` column of
+        # `mirrors/clingen_gene_validity.tsv` — checked against `HGNC_PATTERN` by
+        # that table's schema, and TBL-level failures are errors the gate refuses
+        # on. The NewType is being recovered, not asserted. `gene_bundle_path` requires
         # it so that only HGNC ids can name a file in `genes/`, where a
         # `ContrastId` would slug to a name that collides with one on a
         # case-insensitive filesystem.
@@ -323,3 +350,4 @@ def build_genes(
     # "no genes curated yet" from "wrong URL" by reading a 404 will get it wrong,
     # and this is the first thing the browse page fetches.
     emitter.write_json("genes/index.json", {"genes": index})
+    return facts

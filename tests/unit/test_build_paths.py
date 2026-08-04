@@ -5,7 +5,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from chd_atlas import identifiers
-from chd_atlas.build.paths import gene_bundle_path, slug
+from chd_atlas.build.paths import gene_bundle_path, gene_page_path, slug
 from chd_atlas.identifiers import (
     AccessionId,
     AssertionId,
@@ -193,4 +193,14 @@ def test_the_sample_covers_every_grammar_that_exists() -> None:
 
 
 def test_gene_bundle_path_is_relative_and_forward_slashed() -> None:
+    assert gene_bundle_path(HgncId("HGNC:11604")) == "genes/HGNC_11604.json"
+
+
+def test_a_gene_page_sits_beside_its_bundle() -> None:
+    """One slug, two extensions, so the pair cannot drift.
+
+    `Emitter._write`'s case guard compares casefolded paths, and these two
+    differ only after the dot, so they never collide.
+    """
+    assert gene_page_path(HgncId("HGNC:11604")) == "genes/HGNC_11604.html"
     assert gene_bundle_path(HgncId("HGNC:11604")) == "genes/HGNC_11604.json"

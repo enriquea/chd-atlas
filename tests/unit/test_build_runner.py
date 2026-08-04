@@ -10,7 +10,10 @@ from typing import Any
 import pytest
 
 from chd_atlas.build.runner import BuildRefused, _gene_registry, build_site
+from chd_atlas.build.validity import gene_validity, published_genes
+from chd_atlas.corpus import load_curation
 from chd_atlas.issues import Severity, ValidationIssue
+from chd_atlas.tables import TABLE_SCHEMAS, read_table
 from chd_atlas.validate.runner import ValidationReport
 
 REPO = Path(__file__).parent.parent.parent
@@ -263,32 +266,65 @@ def test_the_gate_refuses_on_an_error_and_builds_through_a_warning(
 def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_path: Path) -> None:
     """Symbol, approved name and aliases, from `mirrors/genes.tsv` to both payloads.
 
-    The committed mirror has a null `aliases` cell, so the split is exercised
-    only if this test supplies one. That matters more than it looks: the cell is
-    pipe-separated and handing it over unsplit type-checks — `frame.to_dicts()`
-    yields `dict[str, Any]`, and an `Any` satisfies `tuple[str, ...]` silently —
-    so the mistake this asserts against is one mypy cannot catch. A reader that
-    skipped the split publishes one term reading "T-box 5|Chr12q24.1", and a
-    reader that passed the raw string publishes a term per character.
+    TBX5's committed `aliases` cell is null, so the split is exercised only if
+    this test supplies one.
+    That matters more than it looks: the cell is pipe-separated and handing it
+    over unsplit type-checks — `frame.to_dicts()` yields `dict[str, Any]`, and
+    an `Any` satisfies `tuple[str, ...]` silently — so the mistake this asserts
+    against is one mypy cannot catch. A reader that skipped the split publishes
+    one term reading "T-box 5|Chr12q24.1", and a reader that passed the raw
+    string publishes a term per character.
 
     The name is asserted because it is the column every valid mirror is required
     to have (TBL003) and the one A38 found unreachable: a visitor typing
     "T-box transcription factor" must find TBX5.
+
+    The row is located by id rather than taken as the first line, and the rest
+    of the mirror is left intact. Rewriting the file down to its first row
+    worked only while the registry held TBX5 alone; against the 154-gene mirror
+    it deleted the asserted gene and the build refused with REF001.
+
+    The search record is located by id for the same reason, and the reason is
+    newer: D31 keyed the index on `published` rather than on the assertions, so
+    it went from one gene record to 23 sorted by HGNC id, and `next(...)` on the
+    first one started returning TBX20 (HGNC:11598). It was reading a real
+    payload, just never the row this test names — the shape of failure that a
+    positional lookup into a growing array always has.
     """
     mirror = repo / "mirrors" / "genes.tsv"
-    header, row = mirror.read_text().splitlines()[:2]
-    columns = header.split("\t")
-    cells = row.split("\t")
-    cells[columns.index("aliases")] = "T-box 5|Chr12q24.1"
-    mirror.write_text("\t".join(columns) + "\n" + "\t".join(cells) + "\n")
+    header, *rows = mirror.read_text().splitlines()
+    aliases = header.split("\t").index("aliases")
+
+    def with_aliases(row: str) -> str:
+        cells = row.split("\t")
+        if cells[0] != "HGNC:11604":
+            return row
+        cells[aliases] = "T-box 5|Chr12q24.1"
+        return "\t".join(cells)
+
+    edited = [with_aliases(row) for row in rows]
+    assert edited != rows, "TBX5 left the registry; this test would assert nothing"
+    mirror.write_text("\n".join((header, *edited)) + "\n")
     out = tmp_path / "dist"
 
     build_site(repo, out)
 
     index = json.loads((out / "genes" / "index.json").read_text())
-    assert [entry["symbol"] for entry in index["genes"]] == ["TBX5"]
+    symbols = {entry["gene"]: entry["symbol"] for entry in index["genes"]}
+    assert symbols["HGNC:11604"] == "TBX5"
+    # Widened rather than dropped when D21 took the index from 1 row to 23: this
+    # line used to read `== ["TBX5"]`, which covered the one published gene there
+    # was. `bundles.py` falls back to the HGNC id for a gene absent from the
+    # registry, so a row whose symbol *is* its id is a label the mirror was
+    # supposed to hold and the site did not get — the same loss the assertion
+    # above pins for one gene, checked over every gene the build publishes.
+    assert [gene for gene, symbol in symbols.items() if symbol == gene] == []
 
-    gene = next(record for record in _search_records(out) if record["kind"] == "gene")
+    gene = next(
+        record
+        for record in _search_records(out)
+        if record["kind"] == "gene" and record["id"] == "HGNC:11604"
+    )
     assert gene["label"] == "TBX5"
     assert gene["terms"] == [
         "TBX5",
@@ -297,6 +333,104 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
         "Chr12q24.1",
         "T-box 5",
     ]
+
+
+def test_the_site_publishes_exactly_the_genes_the_gate_selects(repo: Path, tmp_path: Path) -> None:
+    """`build_site` must publish `published_genes()`'s answer, not another set.
+
+    Design decision D21 lives in `build/validity.py`, and
+    `test_build_validity.py` pins what it returns over the committed mirrors --
+    23 genes. Nothing pinned that `build_site` *uses* that return, and the gap
+    was not academic: replacing `published = published_genes(validity)` with
+    `published = set(genes)` -- the 154-gene registry -- published 154 rows and
+    154 bundles, presenting 131 genes no ClinGen panel calls definitive inside
+    the definitive browse set, and the whole 590-test suite passed.
+
+    That is the charter's worse failure rather than its usual one. The
+    characteristic defect here is curated work reaching no page; this is its
+    inverse, a claim the sources do not support reaching every page, and "a
+    wrong claim here is worse than a missing one".
+
+    The expected set is recomputed from the same mirrors rather than written as
+    23 literals, because a literal list would have to be re-typed whenever
+    ClinGen curates another CHD gene and would fail as a mirror refresh rather
+    than as a defect. The *count* is pinned in `test_build_validity.py`, which is
+    where a moved number should be looked at; this test pins that the build and
+    the gate agree, which is a different property and needs its own guard --
+    `test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json`
+    cannot cover it, because both of its figures derive from one object and move
+    together under exactly this mutant.
+    """
+    out = tmp_path / "dist"
+
+    build_site(repo, out)
+
+    corpus, _ = load_curation(repo)
+    clingen, _ = read_table(
+        repo / "mirrors" / "clingen_gene_validity.tsv", TABLE_SCHEMAS["clingen_validity"]
+    )
+    gencc, _ = read_table(
+        repo / "mirrors" / "gencc_submissions.tsv", TABLE_SCHEMAS["gencc_submissions"]
+    )
+    assert clingen is not None and gencc is not None
+    expected = published_genes(
+        gene_validity(clingen, gencc, in_scope={str(entry.id) for entry in corpus.chd_scope})
+    )
+
+    index = json.loads((out / "genes" / "index.json").read_text())
+    assert {entry["gene"] for entry in index["genes"]} == expected
+    # The bundles too, not only the index: the two are written by one loop today
+    # and a reader of this test should not have to know that to trust it.
+    assert {path.stem for path in (out / "genes").glob("*.json")} - {"index"} == {
+        gene.replace(":", "_") for gene in expected
+    }
+
+
+def test_a_built_site_carries_a_page_for_every_published_gene(repo: Path, tmp_path: Path) -> None:
+    """`build_site` is the only place the published population reaches the page builders.
+
+    Nothing in `src/` imported `pages.py` until this call existed — only its own
+    unit test did — while `build_landing` and the shared `<nav>` already linked
+    to `genes/index.html`. That is a green build with every checksum verifying
+    and every visitor who clicks "Genes" served a 404: the work reaching no
+    page, which is the failure this project is written against.
+
+    Both directions are asserted. A missing page is a dead link from a row the
+    browse payload published; an extra page is a gene reachable by URL that the
+    index does not list, which is how a de-published gene stays up. The expected
+    names are derived from each row's own `bundle` rather than from a second
+    `slug()` call, so the test cannot reproduce a page-naming bug and agree with
+    it.
+
+    The count is deliberately not re-pinned here — `test_build_validity.py` and
+    `test_build_landing.py` already hold the figure of 23, and a third copy would
+    fail as a mirror refresh rather than as a defect. What is guarded instead is
+    that the index is non-empty, without which every assertion below is vacuous.
+
+    Mutation matrix, measured 2026-08-04 against the full suite (616 tests), one
+    fresh process per mutant. Each was killed by this test and by no other:
+
+    * `build_gene_pages` dropped from `build_site` — 1 failed, 615 passed.
+    * `build_gene_index_page` dropped from `build_site` — 1 failed, 615 passed.
+    * `symbols={}` passed to `build_gene_index_page` — 1 failed, 615 passed,
+      which is what earns the symbol loop its place beside the file-set
+      assertion. `test_every_gene_label_the_registry_holds_reaches_the_site`
+      does not cover it: that one reads `genes/index.json` and the search index,
+      neither of which this builder writes.
+    """
+    out = tmp_path / "dist"
+
+    build_site(repo, out)
+
+    index = json.loads((out / "genes" / "index.json").read_text())["genes"]
+    assert index, "an empty index would make every assertion below assert nothing"
+
+    expected = {Path(row["bundle"]).name.replace(".json", ".html") for row in index}
+    assert {path.name for path in (out / "genes").glob("*.html")} == expected | {"index.html"}
+
+    browse = (out / "genes" / "index.html").read_text(encoding="utf-8")
+    for row in index:
+        assert row["symbol"] in browse, f"{row['symbol']} is published but is not browsable"
 
 
 def test_the_site_carries_the_terms_of_everything_it_republishes(

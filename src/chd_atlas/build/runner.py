@@ -29,10 +29,12 @@ from chd_atlas.build.landing import build_landing
 from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
+from chd_atlas.build.pages import build_gene_index_page, build_gene_pages
 from chd_atlas.build.search import GeneLabels, build_search
-from chd_atlas.build.validity import gene_validity
+from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.build.variants import build_variants
-from chd_atlas.corpus import load_curation
+from chd_atlas.corpus import Corpus, load_curation
+from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.tables import TABLE_SCHEMAS, read_table
 from chd_atlas.validate.runner import validate_repository
 from chd_atlas.validate.sources import load_sources
@@ -131,6 +133,32 @@ def _gene_registry(root: Path) -> dict[str, GeneLabels]:
     return registry
 
 
+def _assertions_by_gene(corpus: Corpus) -> dict[str, list[LesionAssertion]]:
+    """Every curated assertion, grouped by the gene it is about, ordered by id.
+
+    `pages.py` renders one `<h3>` block per assertion in the order it is handed
+    them, so this order is part of a page's bytes and therefore its checksum.
+    Ordered by id rather than left in corpus order for the reason
+    `bundles._records_by_gene` gives: corpus order is `load_curation`'s — record
+    files sorted by filename, then each file's own order within it — which makes
+    it an artefact of how the curation is filed. Without this, moving an
+    assertion from `TBX5.yaml` into a second file would reorder a page that is
+    otherwise unchanged.
+
+    Not shared with `bundles._records_by_gene`, which groups the same records
+    the same way and then dumps each one to JSON: these builders need the models
+    themselves, and a helper returning both shapes would be doing two jobs.
+
+    Genes outside the published population are grouped here too and never looked
+    up — `build_gene_pages` iterates `facts`, so what it renders is decided by
+    the population, not by this mapping.
+    """
+    grouped: dict[str, list[LesionAssertion]] = {}
+    for assertion in corpus.assertions:
+        grouped.setdefault(assertion.gene, []).append(assertion)
+    return {gene: sorted(items, key=lambda record: record.id) for gene, items in grouped.items()}
+
+
 def build_site(root: Path, out: Path) -> dict[str, str]:
     """Build the published API into `out`. Returns path-to-checksum per file.
 
@@ -192,16 +220,30 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # the mirror either — both project the same `genes` registry the same way.
     symbols = {gene: labels.symbol for gene, labels in genes.items()}
 
+    # D21's population, computed once for the same reason `symbols` is, and with
+    # more riding on it: `build_genes` publishes one index row and one bundle per
+    # member, `build_search` indexes one record per member so that every one of
+    # those bundles is reachable from the search box, and `build_landing` prints
+    # how many there are. Deriving it three times would let the front page state a
+    # figure the browse payload contradicts, or let the search index advertise a
+    # `genes/<id>.json` no builder wrote — the shape the "154 genes published"
+    # defect already had once.
+    published = published_genes(validity)
+
     emitter = Emitter(root=out)
     omics = build_omics(root, emitter)
     variants = build_variants(root, emitter)
-    build_genes(
+    # `facts` rather than a second `gene_facts` call below: the pages and the
+    # bundles render from one derivation, so a page cannot state a confidence the
+    # bundle it links to contradicts. See `build_genes`' docstring.
+    facts = build_genes(
         corpus,
         emitter,
         symbols=symbols,
         omics=omics,
         variants=variants,
         validity=validity,
+        published=published,
     )
     build_literature(corpus, emitter)
     # Read again rather than threaded down from the gate: `validate_repository`
@@ -210,8 +252,26 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # It cannot fail here — SRC001 is an error, so the gate refused already.
     registry, _ = load_sources(root)
     build_sources(registry, emitter)
-    build_search(corpus, emitter, genes=genes)
-    build_landing(corpus, symbols=symbols, validity=validity, emitter=emitter)
+    build_search(corpus, emitter, genes=genes, published=published)
+    build_landing(corpus, symbols=symbols, validity=validity, published=published, emitter=emitter)
+    # The HTML over everything above. Wired here and nowhere else: until this
+    # call existed, `pages.py` was imported by its unit test alone, `build_landing`
+    # and the shared `<nav>` both linked to `genes/index.html`, and no build wrote
+    # one — a green build, every checksum verifying, and every visitor clicking
+    # "Genes" served a 404.
+    #
+    # Keyed by id rather than by position, because both builders look records up
+    # by identifier: `publications` resolves the PMID an assertion's evidence
+    # cites, the same lookup `literature._featured` performs over the same tuple.
+    build_gene_pages(
+        facts,
+        emitter,
+        symbols=symbols,
+        validity=validity,
+        assertions=_assertions_by_gene(corpus),
+        publications={publication.id: publication for publication in corpus.publications},
+    )
+    build_gene_index_page(facts, emitter, symbols=symbols)
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))
     return dict(emitter.checksums)
