@@ -2,15 +2,28 @@
 """The document shell and the HTML primitives every page is built from.
 
 This module knows nothing about genes, assertions or validity. It knows how to
-turn text into a page, and it is the only place in the build that produces HTML
-markup, so escaping is decided once here rather than at every call site.
+turn text into a page. It holds every *primitive* that escapes -- so escaping is
+decided here rather than at each call site -- but it is **not** the only place
+that produces markup: `pages.py` and `landing.py` both assemble their own
+elements around these primitives, and this paragraph claimed otherwise until
+review on #15 measured it. The claim mattered, because it is what made an
+unescaped `<option value>` in `pages.py` look impossible. What is true is
+narrower and is the rule to hold: **a value derived from curated or mirrored
+data must reach markup only through a primitive here.**
 
 Self-contained by construction, like every artifact this build writes: no
-`<link>`, no `<script src>`, no `@import`, only an inline `<style>` and an
-inline `<script>` whose contents are literals in this file. A page renders with
-no network request beyond the one that fetched it, which is what keeps the site
-working behind a strict CSP, from a local checkout, and from the `dist/`
-directory a reviewer unpacks.
+`<link>`, no `<script src>`, no `@import`, no `url(` in the stylesheet, no
+external font, no `<img>` -- only an inline `<style>` and, on the browse page,
+an inline `<script>`, both literals in this file. A page renders with no network
+request beyond the one that fetched it, from a local checkout and from the
+`dist/` directory a reviewer unpacks.
+
+That is not the same as surviving a strict Content-Security-Policy, which this
+paragraph also used to claim. Measured on a real build: `default-src 'self'`
+blocks an inline `<style>` and an inline `<script>` exactly as it blocks a
+remote one, so under such a policy the browse filter and all styling die. GitHub
+Pages sets no CSP, so nothing breaks on deploy; a consumer self-hosting these
+pages behind one needs a hash or nonce allowance.
 
 Deterministic for the reason every other builder here is: nothing reads a clock,
 and every value interpolated comes from the caller.
@@ -37,9 +50,15 @@ add a page kind without it.
 from __future__ import annotations
 
 import html
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
+
+# What `data_table` accepts as a `data-*` attribute name. Deliberately narrower
+# than HTML permits: every name this build passes is a literal, so the only way
+# to reach a rejection is for a caller to have derived one from data.
+_ATTRIBUTE_NAME: Final = re.compile(r"[a-z][a-z0-9-]*")
 
 # Moved here from `landing.py`, which now renders through `document` below.
 # One stylesheet rather than one per page kind: three `<style>` blocks are three
@@ -207,13 +226,34 @@ def data_table(headers: Sequence[str], rows: Sequence[Row], table_id: str = "") 
 
     An empty `rows` still renders the header, because a table with no rows and
     a table that was never written read the same to a caller otherwise.
+
+    An attribute *name* is refused rather than escaped, because escaping cannot
+    make it safe. `html.escape` rewrites `<`, `>`, `&`, `"` and `'` and leaves
+    the space and the `=` alone, and a name sits outside any quote delimiter --
+    so `("x onmouseover=alert(1) y", "v")` renders
+    `<tr data-x onmouseover=alert(1) y="v">`, which the HTML tokenizer reads as
+    three attributes, the second a live event handler, from a payload carrying
+    no quote and no angle bracket. Measured with `html.parser` on 2026-08-04:
+    `[('data-x', None), ('onmouseover', 'alert(1)'), ('y', 'v')]`.
+
+    Every name the build passes is a literal in `pages.py`, so this is a guard
+    on a bypassed gate in the same idiom as `encode_json`'s `allow_nan=False`:
+    reaching it means a caller derived an attribute name from data, and that
+    must fail rather than publish. `raise`, never `assert` -- `-O` strips
+    `assert`.
     """
     ident = f' id="{html.escape(table_id)}"' if table_id else ""
     head = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
     body = ""
     for row in rows:
+        for name, _ in row.attributes:
+            if not _ATTRIBUTE_NAME.fullmatch(name):
+                raise ValueError(
+                    f"data attribute name {name!r} is not [a-z][a-z0-9-]*; escaping cannot "
+                    f"make a name safe, because a space in one opens a second attribute"
+                )
         attributes = "".join(
-            f' data-{html.escape(name)}="{html.escape(value)}"' for name, value in row.attributes
+            f' data-{name}="{html.escape(value)}"' for name, value in row.attributes
         )
         cells = "".join(f"<td>{_cell(cell)}</td>" for cell in row.cells)
         body += f"<tr{attributes}>{cells}</tr>"

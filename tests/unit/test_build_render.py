@@ -1,6 +1,8 @@
 # tests/unit/test_build_render.py
 """The shell every page shares, and the escaping every page depends on."""
 
+import pytest
+
 from chd_atlas.build.render import (
     RESEARCH_USE_NOTICE,
     Link,
@@ -59,8 +61,14 @@ def test_every_page_carries_the_research_use_notice_before_its_own_content() -> 
 
 def test_a_document_is_self_contained_and_carries_no_external_reference() -> None:
     """No `<link>`, `<script src>` or `@import`: the page renders with no
-    network request beyond the one that fetched it, and a strict-CSP or offline
-    reader sees the same site.
+    network request beyond the one that fetched it, so an offline reader and a
+    reviewer unpacking `dist/` see the same site.
+
+    Not a strict-CSP claim, which this docstring used to make. `default-src
+    'self'` blocks an inline `<style>` and an inline `<script>` exactly as it
+    blocks a remote one, so under such a policy the styling and the browse
+    filter die. Self-contained and CSP-safe are different properties and only
+    the first is asserted here.
     """
     page = document(title="CHD Atlas", root="", body="<p>hi</p>")
 
@@ -120,22 +128,43 @@ def test_a_quote_in_an_href_cannot_close_the_attribute_early() -> None:
     assert ' onmouseover="' not in html
 
 
-def test_a_row_attribute_name_and_value_are_both_escaped() -> None:
-    """`data-*` carries curated text too — lesion group names reach it verbatim.
-
-    The name is escaped as well as the value, because both come from the caller
-    and an unescaped name is the shorter route to the same escape: no `<` is
-    needed, only a `"` to close the attribute and start another one the row
-    never declared.
-    """
+def test_a_row_attribute_value_is_escaped() -> None:
+    """`data-*` carries curated text too — lesion group names reach it verbatim."""
     html = data_table(
         headers=["gene"],
-        rows=[Row(cells=("TBX5",), attributes=(('lesion" onclick="x', '<b> "septal"'),))],
+        rows=[Row(cells=("TBX5",), attributes=(("lesion", '<b> "septal"'),))],
     )
 
-    assert ' onclick="' not in html
     assert "<b>" not in html
-    assert 'data-lesion&quot; onclick=&quot;x="&lt;b&gt; &quot;septal&quot;"' in html
+    assert 'data-lesion="&lt;b&gt; &quot;septal&quot;"' in html
+
+
+def test_an_attribute_name_that_is_not_a_bare_word_is_refused() -> None:
+    """Escaping cannot make an attribute *name* safe, so it is refused instead.
+
+    This test replaces one whose docstring was measured false on 2026-08-04. It
+    passed `'lesion" onclick="x'` and asserted `' onclick="' not in html`,
+    reasoning that a `"` "closes the attribute and starts another one the row
+    never declared". Both halves were wrong. The bytes did contain
+    `onclick=&quot;`, so the assertion passed — while `html.parser` read the
+    result as `[('data-lesion"', None), ('onclick', '"x="v"')]`, meaning a
+    second attribute *was* declared. And the `"` is not what does it: `<`, `>`,
+    `&`, `"` and `'` are all escaped, so the character that opens a second
+    attribute is the **space**, which `html.escape` does not touch and which
+    that payload smuggled in unnoticed.
+
+    The payload below carries no quote and no angle bracket at all — nothing
+    `html.escape` would alter — and without the guard it renders
+    `<tr data-x onmouseover=alert(1) y="v">`, a live event handler.
+
+    Every name the build passes is a literal in `pages.py`, so this is a guard
+    on a bypassed gate: reaching it means a caller derived a name from data.
+    """
+    with pytest.raises(ValueError, match="escaping cannot"):
+        data_table(
+            headers=["gene"],
+            rows=[Row(cells=("TBX5",), attributes=(("x onmouseover=alert(1) y", "v"),))],
+        )
 
 
 def test_a_table_with_no_rows_still_renders_its_header() -> None:

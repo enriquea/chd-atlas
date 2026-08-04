@@ -1,6 +1,8 @@
 # tests/test_built_site_is_consumable.py
 import gzip
 import json
+import posixpath
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -219,3 +221,60 @@ def test_tbx5_publishes_its_mirrored_validity_with_the_provenance_behind_it(
     assert clingen["source"] == "clingen"
     for field in ("source", "classification_term", "disease", "sop", "report_url"):
         assert clingen[field], f"{field} is empty on TBX5's ClinGen record"
+
+
+def _page_links(site: Path) -> list[tuple[str, str, str]]:
+    """Every internal `href` on every built page, with the page that carries it.
+
+    Returns `(page, href, resolved)` where `resolved` is the site-relative path
+    the browser would request. External schemes and pure fragments are skipped:
+    this sweep is about links the build is responsible for.
+    """
+    links: list[tuple[str, str, str]] = []
+    for path in sorted(site.rglob("*.html")):
+        page = path.relative_to(site).as_posix()
+        for href in re.findall(r'href="([^"]+)"', path.read_text(encoding="utf-8")):
+            if href.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(page), href))
+            links.append((page, href, target))
+    return links
+
+
+def test_every_link_on_every_page_resolves_to_a_file_the_build_wrote(site: Path) -> None:
+    """The HTML half of the sweep above, which had no HTML half at all.
+
+    `_advertised` walks manifest entries, gene bundles, omics and variant shards
+    and search `path`s -- every one of them JSON. It never opens an `.html`
+    file. This release added 25 pages and, measured here, 100+ internal links,
+    none of which anything checked.
+
+    This project has already shipped exactly this failure once: `runner.py`
+    records that the nav and the landing page both linked `genes/index.html`
+    while no builder wrote one -- green build, verifying checksums, 404 for
+    every visitor. It was fixed by hand and no sweep was added.
+
+    Measured before this test existed: changing the browse row's href from
+    `f"../{gene_page_path(...)}"` to `gene_page_path(...)` -- which points all
+    23 rows at `genes/genes/HGNC_*.html` -- left the whole 624-test suite green.
+    `test_every_browse_row_links_to_a_page_that_was_written` could not catch it
+    because it asserts a bare substring (`name in page`) and a key in
+    `emitter.checksums`, neither of which sees the `../` prefix.
+
+    Resolution is `posixpath.normpath` against the page's own directory, so a
+    link that escapes the site root normalises to a path starting `..` and fails
+    the membership test rather than silently resolving somewhere on disk.
+    """
+    written = {path.relative_to(site).as_posix() for path in site.rglob("*") if path.is_file()}
+    links = _page_links(site)
+
+    assert links, "no page links found; the sweep would pass vacuously"
+
+    broken = [
+        (page, href)
+        for page, href, target in links
+        # A directory URL is served by its `index.html`, which is how
+        # `genes/index.html` is reached as `genes/`.
+        if target not in written and f"{target}/index.html" not in written
+    ]
+    assert not broken, f"pages link to files the build never wrote: {broken}"

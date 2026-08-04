@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 
 import pytest
@@ -814,6 +815,38 @@ def test_every_browse_row_links_to_a_page_that_was_written(
     for name in ("HGNC_11604.html", "HGNC_4173.html"):
         assert name in page
         assert f"genes/{name}" in emitter.checksums
+
+
+def test_a_facet_option_value_is_escaped_like_every_other_published_string(
+    tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    """The one interpolation on the site where escaping rested on provenance.
+
+    Review on #15 measured this: every other value on every page reaches markup
+    through a `render.py` primitive, and `<option value="{value}">` did not. It
+    was safe only because all 21 members of `LesionGroup`, `Classification`,
+    `ValidityState` and `AtlasCuration` happen to be `[a-z_]`. Driving the loop
+    with `"><script>alert(1)</script>` emitted a live `<script>` element into
+    the page while the same build's table cells stayed correctly escaped.
+
+    The hostile value arrives as a `StrEnum` member rather than a bare `str`,
+    because the facet loop reads `.value` off each field -- so a plain string
+    never reaches the interpolation and a test using one would fail for the
+    wrong reason, which is what happened when this test was first written.
+    """
+
+    class Hostile(StrEnum):
+        X = '"><script>alert(1)</script>'
+
+    facts = dict(facts_two)
+    facts[GATA4] = replace(facts[GATA4], validity_state=Hostile.X)  # type: ignore[arg-type]
+    emitter = Emitter(root=tmp_path)
+
+    build_gene_index_page(facts, emitter, symbols={}, validity={})
+
+    page = _page(tmp_path, "index.html")
+    assert "<script>alert(1)</script>" not in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
 
 
 def test_every_facet_names_a_data_attribute_the_filter_script_reads(

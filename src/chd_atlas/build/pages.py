@@ -569,10 +569,22 @@ def build_gene_index_page(
     # review on #14; the labels are literals here rather than derived from
     # `label` so that "any lesion" stays the neutral option text while the
     # control is announced as what it does.
+    # `html.escape` on the option value, though every value is a vocabulary
+    # member. Review on #15 measured this as the one interpolation on the whole
+    # site where escaping was decided by provenance rather than by `render.py`:
+    # driving this loop with a value of `"><script>alert(1)</script>` emits a
+    # live `<script>` element into the page while the same build's table cells
+    # stay correctly escaped. The provenance argument holds today -- all 21
+    # members of `LesionGroup`, `Classification`, `ValidityState` and
+    # `AtlasCuration` are `[a-z_]` -- and an invariant that rests on nobody ever
+    # adding a member with a quote in it is not one this project keeps.
     selects = "".join(
         f'<select name="{name}" aria-label="Filter by {aria}">'
         f'<option value="">{label}</option>'
-        + "".join(f'<option value="{value}">{value}</option>' for value in sorted(values))
+        + "".join(
+            f'<option value="{html.escape(value)}">{html.escape(value)}</option>'
+            for value in sorted(values)
+        )
         + "</select>"
         for name, label, aria, values in (
             (
