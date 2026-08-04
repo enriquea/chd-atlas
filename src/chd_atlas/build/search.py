@@ -139,10 +139,15 @@ def build_search(
 
     The approved name is a term and not the label. `mirrors/genes.tsv` requires
     `name` on every row and leaves `aliases` nullable, and measured on the mirror
-    as committed, `name` is non-null in 1/1 rows while `aliases` is null in 1/1:
-    the one piece of gene text a reader is guaranteed to be able to search for is
-    the one that was not indexed, and the column that was contributes nothing
-    today. It stays out of `label` because `label` is the result row and
+    as committed, `name` is non-null in 154/154 rows while `aliases` is null in
+    38: the one piece of gene text a reader is guaranteed to be able to search
+    for is the one that was not indexed, and the one that was is absent for a
+    quarter of the registry. This paragraph read "1/1 rows" and "null in 1/1"
+    until the registry was mirrored from HGNC in full; the earlier figures were
+    measured against a two-line file holding TBX5 alone, and the conclusion they
+    supported -- that `aliases` "contributes nothing today" -- was an artefact of
+    that one row rather than a property of the column. It stays out of `label`
+    because `label` is the result row and
     `bundles.py` publishes the symbol as both the browse row's label and the page
     heading; a search hit reading "T-box transcription factor 5" for the gene the
     rest of the site calls TBX5 would read as two different things.
