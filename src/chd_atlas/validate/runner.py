@@ -16,6 +16,7 @@ from chd_atlas.tables import (
     unexpected_mirror_entries,
     validate_table,
 )
+from chd_atlas.validate.burden import validate_burden
 from chd_atlas.validate.ids import load_id_registry, validate_ids
 from chd_atlas.validate.ontology import (
     OntologyRegistry,
@@ -216,6 +217,10 @@ def validate_repository(root: Path) -> ValidationReport:
     # Unconditional: the loop above iterates what the schemas expect, so an entry
     # nothing claims — a shard directory lost to a typo — is invisible to it.
     issues.extend(unexpected_mirror_entries(root))
+    # Also unconditional, and deliberately outside the corpus branch below: the
+    # burden table's cross-column rules read nothing but the table itself, so a
+    # corpus that failed to load must not silently take these checks with it.
+    issues.extend(validate_burden(root))
     # Same reasoning for the interpretive tree, which holds the curator
     # judgement the atlas exists to record.
     issues.extend(unexpected_curation_entries(root))

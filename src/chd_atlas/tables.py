@@ -22,14 +22,27 @@ from polars.exceptions import PolarsError
 from chd_atlas.duplicates import duplicates
 from chd_atlas.fs import list_dir
 from chd_atlas.identifiers import (
+    COHORT_LIST_PATTERN,
     HGNC_PATTERN,
     MODIFICATION_PATTERN,
     MONDO_PATTERN,
+    PMID_PATTERN,
     SEQUENCE_ONTOLOGY_PATTERN,
     UNIPROT_PATTERN,
 )
 from chd_atlas.issues import Severity, ValidationIssue
-from chd_atlas.vocab import SourceTier
+from chd_atlas.vocab import (
+    BurdenComparator,
+    CohortStratum,
+    ConsequenceClass,
+    EffectBound,
+    EffectMeasure,
+    LesionGroup,
+    SourceTier,
+    StatisticalTest,
+    VariantClass,
+    VariantOrigin,
+)
 
 
 @dataclass(frozen=True)
@@ -571,6 +584,93 @@ PHOSPHO = TableSchema(
     sort_key=("contrast", "protein", "position", "mod_type"),
 )
 
+# Derived from the enums so the mirror's vocabulary and the code's cannot drift.
+_COHORT_STRATA = frozenset(item.value for item in CohortStratum)
+_VARIANT_CLASSES = frozenset(item.value for item in VariantClass)
+_CONSEQUENCE_CLASSES = frozenset(item.value for item in ConsequenceClass)
+_VARIANT_ORIGINS = frozenset(item.value for item in VariantOrigin)
+_COMPARATORS = frozenset(item.value for item in BurdenComparator)
+_EFFECT_MEASURES = frozenset(item.value for item in EffectMeasure)
+_EFFECT_BOUNDS = frozenset(item.value for item in EffectBound)
+_STATISTICAL_TESTS = frozenset(item.value for item in StatisticalTest)
+_LESION_GROUPS = frozenset(item.value for item in LesionGroup)
+
+BURDEN = TableSchema(
+    name="burden",
+    columns=(
+        # Identity. `study` cites the paper; `source` names the file the numbers
+        # were transcribed out of, whose licence and sha256 live in sources.yaml.
+        # Both are needed and neither implies the other: one supplement can carry
+        # several studies' results, and one study can publish several supplements.
+        Column("study", pl.String, pattern=PMID_PATTERN),
+        Column("gene", pl.String, pattern=HGNC_PATTERN),
+        # The partition. Every column here is a degree of freedom that changes
+        # what the counts mean, and the set exists to stop two incomparable rows
+        # from *looking* comparable -- not to make them easier to compare. Drop
+        # `maf_max` and a MAF<1e-4 test sits beside a MAF<1e-2 test unlabelled;
+        # drop `origin` and a trio's de novo count reads like a case-control
+        # rare-variant count.
+        Column("cohort_stratum", pl.String, allowed=_COHORT_STRATA),
+        # Null unless the study analysed one lesion group separately. Reuses the
+        # curated `LesionGroup` vocabulary rather than inventing a parallel one,
+        # so a lesion-stratified burden row and a curated assertion name the same
+        # thing with the same token.
+        Column("lesion_group", pl.String, nullable=True, allowed=_LESION_GROUPS),
+        Column("variant_class", pl.String, allowed=_VARIANT_CLASSES),
+        Column("consequence_class", pl.String, allowed=_CONSEQUENCE_CLASSES),
+        Column("origin", pl.String, allowed=_VARIANT_ORIGINS),
+        # Null where the analysis applied no frequency filter, which is normal
+        # for CNV burden. Not defaulted to 1.0: "no filter" and "filtered at
+        # fixation" are different claims and only one of them was made.
+        Column("maf_max", pl.Float64, nullable=True, minimum=0, maximum=1),
+        # The observation. Both mandatory: a burden row without a denominator is
+        # a count nobody can interpret.
+        Column("n_case_carriers", pl.Int64, minimum=0),
+        Column("n_cases", pl.Int64, minimum=1),
+        # The comparator, and the fields each kind requires. `validate_burden`
+        # enforces which of the next three must be present and which must be
+        # empty; the schema alone cannot express that dependency.
+        Column("comparator", pl.String, allowed=_COMPARATORS),
+        Column("n_control_carriers", pl.Int64, nullable=True, minimum=0),
+        Column("n_controls", pl.Int64, nullable=True, minimum=1),
+        Column("expected_count", pl.Float64, nullable=True, minimum=0),
+        # The statistic. `effect` is null both when none was published and when
+        # the published one was non-finite -- `effect_bound` distinguishes those,
+        # and `validate_burden` requires `effect_measure` for either.
+        Column("effect", pl.Float64, nullable=True, minimum=0),
+        Column("effect_measure", pl.String, nullable=True, allowed=_EFFECT_MEASURES),
+        Column("effect_bound", pl.String, nullable=True, allowed=_EFFECT_BOUNDS),
+        Column("ci_low", pl.Float64, nullable=True, minimum=0),
+        Column("ci_high", pl.Float64, nullable=True, minimum=0),
+        Column("pvalue", pl.Float64, nullable=True, minimum=0, maximum=1),
+        Column("pvalue_test", pl.String, nullable=True, allowed=_STATISTICAL_TESTS),
+        # Provenance. Cohort membership is what makes overlap between studies
+        # visible: DDD contributes cases to more than one paper here, so two rows
+        # a reader would otherwise mentally meta-analyse can be shown to share
+        # samples. `;`-joined, same convention as `genes.aliases`.
+        Column("case_cohorts", pl.String, pattern=COHORT_LIST_PATTERN),
+        Column("control_cohorts", pl.String, nullable=True, pattern=COHORT_LIST_PATTERN),
+        # Free text, rendered verbatim as a row footnote. Deliberately not a
+        # controlled vocabulary yet: what "carrier" means for a CNV differs
+        # between papers (any overlap, exonic overlap, whole gene), and inventing
+        # the axis from a single example is how a vocabulary ends up wrong.
+        Column("method_note", pl.String, nullable=True),
+        Column("source", pl.String),
+    ),
+    # The full partition, which is what makes a row unique. Gene first so the
+    # file reads gene by gene, which is also how a curator reviews a diff.
+    sort_key=(
+        "gene",
+        "study",
+        "cohort_stratum",
+        "lesion_group",
+        "variant_class",
+        "consequence_class",
+        "origin",
+        "maf_max",
+    ),
+)
+
 TABLE_SCHEMAS: Final[dict[str, TableSchema]] = {
     schema.name: schema
     for schema in (
@@ -583,6 +683,7 @@ TABLE_SCHEMAS: Final[dict[str, TableSchema]] = {
         PHOSPHO,
         CLINGEN_VALIDITY,
         GENCC_SUBMISSIONS,
+        BURDEN,
     )
 }
 
@@ -599,6 +700,11 @@ FLAT_TABLES: Final[dict[str, str]] = {
     "ptm_sites": "ptm_sites.tsv",
     "clingen_validity": "clingen_gene_validity.tsv",
     "gencc_submissions": "gencc_submissions.tsv",
+    # Flat rather than sharded: one study contributes a few thousand in-scope
+    # rows, and the whole table is read at once to group a gene's rows by
+    # (study, stratum, maf) — a per-gene shard would make that the expensive
+    # access pattern rather than the cheap one.
+    "burden": "burden.tsv",
 }
 
 

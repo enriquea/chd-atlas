@@ -218,6 +218,165 @@ class StudyType(StrEnum):
     META_ANALYSIS = "meta_analysis"
 
 
+class BurdenComparator(StrEnum):
+    """What a burden row's statistic compared the case count against.
+
+    This is the discriminator the whole burden schema turns on. Every published
+    burden analysis asks the same question -- is this gene hit more often than
+    expected? -- and differs only in where "expected" comes from:
+
+    - `CONTROL_COHORT`: an observed rate in sequenced controls (case-control).
+    - `MUTATION_MODEL`: a per-gene expectation from a trinucleotide mutation
+      rate model, the standard for de novo enrichment in trios, where there is
+      no control group at all.
+    - `NONE`: a case series. A numerator and a denominator, and nothing to
+      compare them with -- so no effect size and no p-value may be published,
+      which `validate_burden` enforces rather than trusts.
+
+    A row's design is a property of the *row*, not of the study: one paper
+    routinely contributes de novo rows and case-control rows, so this cannot be
+    hoisted onto the publication record.
+    """
+
+    CONTROL_COHORT = "control_cohort"
+    MUTATION_MODEL = "mutation_model"
+    NONE = "none"
+
+
+class EffectMeasure(StrEnum):
+    """Which quantity a burden row's `effect` column holds.
+
+    Mandatory whenever an effect is present, because an odds ratio of 3.1 and a
+    de novo enrichment of 3.1 are different claims and a column headed "effect"
+    holding a bare number silently equates them. `EFFECT_MEASURES` below pins
+    which measures each comparator can produce; the renderer additionally must
+    never print the number without this label.
+    """
+
+    ODDS_RATIO = "odds_ratio"
+    ENRICHMENT_RATIO = "enrichment_ratio"
+    RATE_RATIO = "rate_ratio"
+
+
+# Which effect measures each comparator can legitimately yield. A mutation
+# model cannot produce an odds ratio -- it has no control odds -- and a control
+# cohort cannot produce an "enrichment over expectation" because its expectation
+# is observed, not modelled. Read by `validate_burden`; the empty set for `NONE`
+# is what makes a case series unable to carry an effect at all.
+EFFECT_MEASURES: Final[dict[BurdenComparator, frozenset[EffectMeasure]]] = {
+    BurdenComparator.CONTROL_COHORT: frozenset(
+        {EffectMeasure.ODDS_RATIO, EffectMeasure.RATE_RATIO}
+    ),
+    BurdenComparator.MUTATION_MODEL: frozenset({EffectMeasure.ENRICHMENT_RATIO}),
+    BurdenComparator.NONE: frozenset(),
+}
+
+
+class EffectBound(StrEnum):
+    """Why a row reports no finite effect size though the test ran.
+
+    Fisher's exact test returns an unbounded odds ratio when no control carries
+    the variant class, and the published upper confidence bound is likewise
+    infinite. Measured 2026-08-04 against Supplementary Data 3 of PMID 42230622:
+    927 of 138,609 rows across its three strata report `Infinity`, always in
+    `fet.odds_ratio` and `fet.ci_95_upper` together and nowhere else.
+
+    Those rows carry the *strongest* signal in the study -- TAB2, 6 syndromic
+    carriers against 0 of 45,082 controls -- so dropping them would discard the
+    result the reader most wants. They cannot be published as a number either:
+    `encode_json` sets `allow_nan=False`, and `Infinity` is accepted by Python's
+    `json.loads` but rejected by `JSON.parse`, so it would break every page
+    while the manifest checksum still verified.
+
+    The row therefore carries a null `effect`, a null `ci_high`, and this flag,
+    and a page renders "unbounded" rather than a blank or an invented ceiling.
+
+    There is deliberately no `unbounded_below` member. An odds ratio of zero --
+    13,430 rows in the same sheet, where no case carries -- is finite, publishes
+    as `0.0`, and comes with a finite upper bound, so it needs no flag.
+    """
+
+    UNBOUNDED_ABOVE = "unbounded_above"
+
+
+class CohortStratum(StrEnum):
+    """Which slice of a study's cases a burden row counted.
+
+    Separate from `SyndromicStatus`, which records what a curator asserts about
+    a gene. This records how a *published analysis* partitioned its cohort, and
+    its `ALL` is not that enum's `BOTH`: `ALL` means the undivided case set,
+    while `BOTH` means a gene causes isolated and syndromic disease alike.
+    """
+
+    ALL = "all"
+    SYNDROMIC = "syndromic"
+    NONSYNDROMIC = "nonsyndromic"
+
+
+class VariantClass(StrEnum):
+    """What kind of DNA change a burden row counted.
+
+    Kept separate from `ConsequenceClass` rather than merged into one
+    "variant category": deletion-and-loss-of-function and SNV-and-loss-of-function
+    are both real cells, and merging them would make "all loss-of-function
+    evidence for this gene, whatever the variant type" unaskable.
+    """
+
+    SNV_INDEL = "snv_indel"
+    CNV_DELETION = "cnv_deletion"
+    CNV_DUPLICATION = "cnv_duplication"
+    SV_OTHER = "sv_other"
+
+
+class ConsequenceClass(StrEnum):
+    """What the counted variants do to the protein.
+
+    `SYNONYMOUS` is a first-class member, not an artifact to be filtered out on
+    the way in. Synonymous variants should show no case-control enrichment, so a
+    synonymous row is the study's own negative control -- and several published
+    genes carry a nominally significant one. Publishing it beside the
+    loss-of-function row for the same gene, study and stratum is what lets a
+    reader judge how well that comparison was calibrated, which no other CHD
+    resource shows. `build/bundles.py` groups on that key for exactly this
+    reason; nothing anywhere may drop a row for being synonymous.
+    """
+
+    LOF = "lof"
+    MISSENSE_DAMAGING = "missense_damaging"
+    MISSENSE_ALL = "missense_all"
+    SYNONYMOUS = "synonymous"
+    ALL_CODING = "all_coding"
+
+
+class VariantOrigin(StrEnum):
+    """Whether the counted variants were required to be de novo.
+
+    Without it, a trio study's de novo loss-of-function count and a
+    case-control study's rare-inherited loss-of-function count differ in no
+    published column and read as the same measurement.
+    """
+
+    DE_NOVO = "de_novo"
+    INHERITED = "inherited"
+    ANY = "any"
+
+
+class StatisticalTest(StrEnum):
+    """Which test produced a burden row's p-value.
+
+    Deliberately not constrained against `BurdenComparator` the way
+    `EFFECT_MEASURES` constrains the measure. A binomial test appears against
+    both a control rate and a modelled rate in the published literature, so a
+    compatibility table here would encode a rule this project has not measured.
+    The one rule that *is* asserted -- a `NONE` comparator carries no test at
+    all -- lives in `validate_burden`.
+    """
+
+    FISHER_EXACT = "fisher_exact"
+    POISSON = "poisson"
+    BINOMIAL = "binomial"
+
+
 class FeaturedTopic(StrEnum):
     GENOMICS = "genomics"
     VARIANTS = "variants"

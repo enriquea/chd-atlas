@@ -1,0 +1,259 @@
+# tests/unit/test_validate_burden.py
+"""The rules that stop a burden row claiming more than its study measured.
+
+Every case below is built by overriding one field of `_ROW`, which is a real
+row: GATA6 loss-of-function in the syndromic stratum of PMID 42230622,
+transcribed from Supplementary Data 3. Using a real row rather than a synthetic
+one matters here because several of these checks (the `Infinity` odds ratio, the
+synonymous negative control) exist only because the real data has that shape.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from chd_atlas.tables import BURDEN
+from chd_atlas.validate.burden import validate_burden
+
+_ROW: dict[str, str] = {
+    "study": "PMID:42230622",
+    "gene": "HGNC:4174",
+    "cohort_stratum": "syndromic",
+    "lesion_group": "",
+    "variant_class": "snv_indel",
+    "consequence_class": "lof",
+    "origin": "any",
+    "maf_max": "0.001",
+    "n_case_carriers": "4",
+    "n_cases": "1471",
+    "comparator": "control_cohort",
+    "n_control_carriers": "0",
+    "n_controls": "45082",
+    "expected_count": "",
+    "effect": "",
+    "effect_measure": "odds_ratio",
+    "effect_bound": "unbounded_above",
+    "ci_low": "3.72",
+    "ci_high": "",
+    "pvalue": "1.05e-06",
+    "pvalue_test": "fisher_exact",
+    "case_cohorts": "cnchd;ddd;nottingham",
+    "control_cohorts": "ukbb",
+    "method_note": "",
+    "source": "audain2026_sd3",
+}
+
+# A de novo row, whose comparator is a mutation model rather than a control
+# cohort. Kept beside `_ROW` because half the point of this schema is that both
+# shapes live in one table, and a rule that only ever sees case-control rows
+# would not be tested against the branch that admits neither control column.
+_DE_NOVO: dict[str, str] = {
+    **_ROW,
+    "origin": "de_novo",
+    "comparator": "mutation_model",
+    "n_control_carriers": "",
+    "n_controls": "",
+    "control_cohorts": "",
+    "expected_count": "0.42",
+    "effect": "9.5",
+    "effect_measure": "enrichment_ratio",
+    "effect_bound": "",
+    "ci_high": "24.1",
+    "pvalue_test": "poisson",
+}
+
+
+def _write(tmp_path: Path, *rows: dict[str, str]) -> Path:
+    """Write `rows` as `mirrors/burden.tsv` under a fresh root."""
+    mirrors = tmp_path / "mirrors"
+    mirrors.mkdir(parents=True, exist_ok=True)
+    header = "\t".join(BURDEN.column_names)
+    body = ["\t".join(row[name] for name in BURDEN.column_names) for row in rows]
+    (mirrors / "burden.tsv").write_text("\n".join([header, *body]) + "\n", encoding="utf-8")
+    return tmp_path
+
+
+def _codes(tmp_path: Path, *rows: dict[str, str]) -> list[str]:
+    return sorted(issue.code for issue in validate_burden(_write(tmp_path, *rows)))
+
+
+def test_a_real_case_control_row_and_a_real_de_novo_row_both_pass(tmp_path: Path) -> None:
+    """The smoke test every check below rests on.
+
+    Without it, a rule that fired unconditionally would still make each negative
+    case go green, and the whole suite would agree the validator worked.
+    """
+    assert validate_burden(_write(tmp_path, _ROW, _DE_NOVO)) == []
+
+
+@pytest.mark.parametrize(
+    ("row", "field", "value"),
+    [
+        # Case-control: both control columns and the control cohort are required.
+        pytest.param(_ROW, "n_control_carriers", "", id="case_control-needs-carriers"),
+        pytest.param(_ROW, "n_controls", "", id="case_control-needs-denominator"),
+        pytest.param(_ROW, "control_cohorts", "", id="case_control-needs-cohort"),
+        # ...and a modelled expectation is not something it has.
+        pytest.param(_ROW, "expected_count", "0.42", id="case_control-cannot-model"),
+        # De novo: the mirror image. An expectation is required, and a control
+        # count is a column it cannot have observed.
+        pytest.param(_DE_NOVO, "expected_count", "", id="mutation_model-needs-expected"),
+        pytest.param(_DE_NOVO, "n_controls", "45082", id="mutation_model-has-no-controls"),
+        pytest.param(
+            _DE_NOVO, "control_cohorts", "ukbb", id="mutation_model-has-no-controls-named"
+        ),
+    ],
+)
+def test_a_row_must_carry_exactly_the_columns_its_comparator_implies(
+    tmp_path: Path, row: dict[str, str], field: str, value: str
+) -> None:
+    """BUR001, in both directions: a missing requirement and a stray field.
+
+    Both are the same defect seen from either side -- the row's declared
+    comparator does not match the numbers it carries -- so both report one code.
+    A curator fixes either by deciding which of the two is the truth.
+    """
+    assert "BUR001" in _codes(tmp_path, {**row, field: value})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["effect", "effect_measure", "effect_bound", "ci_low", "ci_high", "pvalue", "pvalue_test"],
+)
+def test_a_case_series_cannot_report_any_statistic(tmp_path: Path, field: str) -> None:
+    """BUR002. A case series counted carriers and compared them with nothing.
+
+    Every one of these columns is therefore a claim with no basis, and the
+    parametrisation is exhaustive over `_STATISTIC_COLUMNS` on purpose: dropping
+    one from that tuple is a mutation this test must kill, and it can only do
+    that if it names them all.
+    """
+    series = {
+        **_ROW,
+        "comparator": "none",
+        "n_control_carriers": "",
+        "n_controls": "",
+        "control_cohorts": "",
+        "effect": "",
+        "effect_measure": "",
+        "effect_bound": "",
+        "ci_low": "",
+        "ci_high": "",
+        "pvalue": "",
+        "pvalue_test": "",
+    }
+    assert validate_burden(_write(tmp_path, series)) == []
+    assert "BUR002" in _codes(tmp_path, {**series, field: "1.5"})
+
+
+def test_a_mutation_model_cannot_report_an_odds_ratio(tmp_path: Path) -> None:
+    """BUR007 -- the guard the whole `effect`/`effect_measure` pair exists for.
+
+    A single `effect` column holding both odds ratios and de novo enrichments is
+    what makes this schema extend to a fifth study without a migration, and it
+    is also the one place two incomparable quantities could silently merge. A
+    mutation model has no control odds, so it cannot yield an odds ratio; a
+    control cohort observes its expectation rather than modelling one, so it
+    cannot yield an enrichment over expectation.
+    """
+    assert "BUR007" in _codes(tmp_path, {**_DE_NOVO, "effect_measure": "odds_ratio"})
+    assert "BUR007" in _codes(tmp_path, {**_ROW, "effect_measure": "enrichment_ratio"})
+
+
+def test_an_effect_and_its_measure_are_useless_without_each_other(tmp_path: Path) -> None:
+    """BUR006, both directions.
+
+    A bare 3.1 does not say whether it is an odds ratio or an enrichment, and a
+    measure with nothing to measure is a number lost in transcription. The
+    unbounded case is asserted too, because "unbounded" needs its measure for
+    exactly the same reason a finite value does -- and it is the branch a naive
+    `if effect is None: skip` would miss.
+    """
+    assert "BUR006" in _codes(tmp_path, {**_DE_NOVO, "effect_measure": ""})
+    assert "BUR006" in _codes(tmp_path, {**_ROW, "effect_measure": ""})
+    assert "BUR006" in _codes(
+        tmp_path, {**_DE_NOVO, "effect": "", "ci_low": "", "ci_high": ""}
+    )
+
+
+def test_an_unbounded_effect_may_not_also_carry_a_number(tmp_path: Path) -> None:
+    """BUR008. The flag and a finite value contradict each other.
+
+    Which one a reader believes decides whether the gene looks significant, so
+    this cannot be left to whichever the renderer happens to reach for.
+    """
+    assert "BUR008" in _codes(tmp_path, {**_ROW, "effect": "12.4"})
+    assert "BUR008" in _codes(tmp_path, {**_ROW, "ci_high": "99.0"})
+
+
+def test_a_carrier_count_above_its_denominator_is_reported(tmp_path: Path) -> None:
+    """BUR003. Both numbers are individually valid non-negative integers, so no
+    per-column range check can see this -- it is what a column transcribed into
+    the wrong slot looks like, which is the single likeliest converter bug.
+    """
+    assert "BUR003" in _codes(tmp_path, {**_ROW, "n_case_carriers": "1472"})
+    assert "BUR003" in _codes(tmp_path, {**_ROW, "n_control_carriers": "45083"})
+
+
+def test_an_inverted_confidence_interval_is_reported(tmp_path: Path) -> None:
+    """BUR004. Measured 2026-08-04 against all three strata of Supplementary
+    Data 3 (138,609 rows): zero rows have `ci_lower > ci_upper`, so this fires
+    on a transcription error rather than on anything the study published.
+
+    It deliberately does *not* check that the interval brackets the point
+    estimate. That sentence is load-bearing: a bracketing rule was considered
+    and left out because it was not measured against the real data, and
+    asserting an invariant nobody verified is how this project's docstrings have
+    been wrong before.
+    """
+    assert "BUR004" in _codes(tmp_path, {**_DE_NOVO, "ci_low": "30.0"})
+
+
+def test_a_pvalue_and_the_test_that_produced_it_must_arrive_together(tmp_path: Path) -> None:
+    """BUR005. A p-value whose test is unnamed cannot be interpreted, and a
+    named test with no p-value lost its number somewhere.
+    """
+    assert "BUR005" in _codes(tmp_path, {**_ROW, "pvalue": ""})
+    assert "BUR005" in _codes(tmp_path, {**_ROW, "pvalue_test": ""})
+
+
+def test_a_whitespace_only_cell_counts_as_empty(tmp_path: Path) -> None:
+    """`read_table` maps `""` to null but leaves `" "` a string, which passes
+    every presence check while rendering as nothing on a page. Same defect
+    `_NonBlankStr` exists to catch on the curation side.
+    """
+    assert "BUR001" in _codes(tmp_path, {**_ROW, "control_cohorts": "   "})
+
+
+def test_an_absent_or_unreadable_table_reports_nothing_and_does_not_raise(
+    tmp_path: Path,
+) -> None:
+    """Three distinct absences, none of which is this validator's to report.
+
+    No burden mirror exists before any is curated. An unreadable file is
+    TBL000's and a missing column is TBL001's, both ERRORs against the same
+    path, so the build refuses either way and a second report would only say it
+    twice. Raising instead would abort validation of every other table.
+    """
+    assert validate_burden(tmp_path) == []
+
+    (tmp_path / "mirrors").mkdir()
+    (tmp_path / "mirrors" / "burden.tsv").write_bytes(b"\xff\xfe not utf-8")
+    assert validate_burden(tmp_path) == []
+
+    (tmp_path / "mirrors" / "burden.tsv").write_text("gene\tstudy\nHGNC:4174\tPMID:1\n")
+    assert validate_burden(tmp_path) == []
+
+
+def test_an_unknown_comparator_is_left_to_the_column_check(tmp_path: Path) -> None:
+    """TBL004 reports a value outside the allowed set. Reporting it again here
+    would say the same thing twice; worse, indexing `_REQUIRED` with it would
+    raise `KeyError` and abort validation of every row below it in the file.
+
+    The second row proves the loop keeps going: without the `continue`, the
+    clean row after the bad one is never reached.
+    """
+    codes = _codes(tmp_path, {**_ROW, "comparator": "sibling_rate"}, {**_ROW, "gene": "HGNC:11603"})
+    assert [code for code in codes if code.startswith("BUR")] == []
