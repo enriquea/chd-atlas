@@ -12,24 +12,30 @@ no `<link>`, `<script src>` or `@import`, only an inline `<style>` block, so
 the page renders with no network request beyond the one that fetched it.
 
 Deterministic for the reason every other builder here is. No build timestamp;
-every number on the page is read from the `Corpus` and the `GeneValidity`
-mapping `build_site` already assembled for `build_genes`, never hardcoded.
-That guarantees each figure matches what this module was *handed* — it does
-not, on its own, guarantee that figure matches what another builder chose to
-*publish* from the same input. `len(validity)` is every gene either mirror
-curates, full stop; `build_genes` narrows that to genes carrying at least one
-curated assertion before anything reaches `genes/index.json` (`derive.py`'s
-`gene_facts` docstring: "a gene with nothing asserted has no confidence to
-display"). The two counts genuinely diverge — 154 mirrored genes against one
-published gene in the committed corpus — so this page computes its published-
-gene figure the same way `gene_facts` does, from the distinct genes named by
-`corpus.assertions`, rather than from `len(validity)`. The mirrored-validity
-count is kept, but labelled and placed so it cannot be read as coverage this
-site browses. `tests/unit/test_build_landing.py` recomputes the same numbers
-from the same fixture and compares them against the rendered text rather than
-against a literal, for exactly that reason — a hardcoded expectation in the
-test would only prove the two hardcodings agree with each other — and checks
-the published-gene figure against a real build's `genes/index.json` besides.
+every number on the page is read from what `build_site` already assembled for
+`build_genes`, never hardcoded. That guarantees each figure matches what this
+module was *handed* — it does not, on its own, guarantee that figure matches
+what another builder chose to *publish* from the same input. `len(validity)` is
+every gene either mirror curates, full stop; `genes/index.json` carries one row
+per member of `published`, D21's narrower population (a ClinGen expert panel
+calls the gene definitive for an in-scope disease). The two counts genuinely
+diverge — 154 mirrored genes against 23 published ones in the committed corpus
+— so this page takes its published-gene figure from the *same* `published` set
+`build_genes` was handed, not from `len(validity)` and not from a second
+derivation of its own: one object, so the front page and the browse payload
+cannot state different numbers. The mirrored-validity count is kept, but
+labelled and placed so it cannot be read as coverage this site browses.
+`tests/unit/test_build_landing.py` recomputes the same numbers from the same
+fixture and compares them against the rendered text rather than against a
+literal, for exactly that reason — a hardcoded expectation in the test would
+only prove the two hardcodings agree with each other — and checks the
+published-gene figure against a real build's `genes/index.json` besides.
+
+The count of curated assertions, and the sentence naming the genes that carry
+them, stay keyed on `corpus.assertions`. They are a different claim from
+"published": 22 of the 23 genes this site publishes carry no assertion at all,
+and a page that conflated the two would read as though every published gene had
+been curated here.
 
 Every value that reaches the page from curated or mirrored text — a gene
 symbol, an HGNC id — goes through `html.escape`. Nothing curated here is
@@ -43,7 +49,7 @@ between a string and a script tag.
 from __future__ import annotations
 
 import html
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import LANDING
@@ -82,15 +88,17 @@ def _asserted_genes(corpus: Corpus, symbols: Mapping[str, str]) -> str:
 
 
 def _render(
-    corpus: Corpus, symbols: Mapping[str, str], validity: Mapping[str, GeneValidity]
+    corpus: Corpus,
+    symbols: Mapping[str, str],
+    validity: Mapping[str, GeneValidity],
+    published: Collection[str],
 ) -> str:
     assertion_count = len(corpus.assertions)
-    # The same population `gene_facts` keys `genes/index.json` on: distinct
-    # genes named by a curated assertion. Deliberately not `len(validity)`,
-    # which counts every gene either mirror curates whether or not it is
-    # curated here — that count belongs to "Where this data comes from", not
-    # to what this build publishes.
-    published_gene_count = len({assertion.gene for assertion in corpus.assertions})
+    # The very set `gene_facts` keys `genes/index.json` on, not a recomputation
+    # of it. Deliberately not `len(validity)`, which counts every gene either
+    # mirror curates whether or not a panel calls it definitive — that count
+    # belongs to "Where this data comes from", not to what this build publishes.
+    published_gene_count = len(published)
     mirrored_gene_count = len(validity)
     asserted = _asserted_genes(corpus, symbols)
 
@@ -200,7 +208,7 @@ def _render(
     republished with its provenance intact. <a href="sources.json">sources.json</a> carries
     the licence and attribution terms each of these is mirrored under.</p>
   <dl>
-    <dt>Genes in scope with mirrored ClinGen/GenCC validity (browsable once curated)</dt>
+    <dt>Genes with mirrored validity in CHD scope (browsable once ClinGen grades it definitive)</dt>
     <dd>{mirrored_gene_count}</dd>
   </dl>
 
@@ -231,6 +239,7 @@ def build_landing(
     corpus: Corpus,
     symbols: Mapping[str, str],
     validity: Mapping[str, GeneValidity],
+    published: Collection[str],
     emitter: Emitter,
 ) -> None:
     """Emit `index.html`.
@@ -241,5 +250,14 @@ def build_landing(
     reduces through `derive.gene_facts` — read directly here rather than through
     that reduction, because this page wants only `len()`, not the per-gene
     fields `gene_facts` computes for a browse row.
+
+    `published` is the same object `build_genes` keys `genes/index.json` on, for
+    the reason that file exists to be counted rather than re-derived: the "Genes
+    published" figure on the front page is a claim about that payload, and the
+    only way it cannot contradict it is to count the set that produced it. Taken
+    as a `Collection` and counted with `len`, which is exact because
+    `build_genes` runs first in `build_site` and `Emitter` refuses to write one
+    bundle path twice — a `published` carrying a duplicate fails the build there
+    rather than inflating a figure here.
     """
-    emitter.write_text(LANDING, _render(corpus, symbols, validity))
+    emitter.write_text(LANDING, _render(corpus, symbols, validity, published))

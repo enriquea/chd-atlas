@@ -28,14 +28,25 @@ Revisit this when a dataset gains a title, or when the site gains a page for one
 to land on; today an indexed dataset would be a row labelled with an accession.
 
 Genes are drawn from the assertion set, so a gene carrying omics or variant
-evidence but no curated assertion is not searchable. That is `gene_facts`' rule —
-the atlas browses curated claims — and matching it here is more than consistency:
-`path` advertises `genes/<id>.json`, `build_genes` writes one bundle per gene
-`gene_facts` returns, and that is exactly the set below. Widening this to the
-gene registry would publish search hits whose only action is a fetch that 404s.
+evidence but no curated assertion is not searchable. Widening this to the gene
+registry would publish search hits whose only action is a fetch that 404s:
+`path` advertises `genes/<id>.json`, and `build_genes` writes one bundle per
+member of `published` — D21's population — and no others.
+
+Until D21 that population *was* the asserted genes, so the two sets were equal
+by construction and this docstring said so. They are no longer. The asserted
+genes are now a subset of what has a bundle for the committed corpus (1 gene of
+23), which is safe but narrow: 22 published genes are unfindable by search here
+while the browse index lists them. It is not safe in general — an assertion
+curated for a gene no ClinGen panel calls definitive would be indexed here and
+have no bundle behind it, the dead link this module exists to avoid. Nothing in
+the build catches that today; `tests/test_built_site_is_consumable.py` sweeps
+the real corpus, where no such gene exists. Widening this module to `published`
+is the change that closes both, and it is not made here.
+
 Amendment A29 records the sharper case, which this module does not change: a
-`FunctionalEvidence` record about a gene with no assertion reaches no published
-file at all, so nothing here can make it findable.
+`FunctionalEvidence` record about a gene outside `published` reaches no
+published file at all, so nothing here can make it findable.
 """
 
 from __future__ import annotations

@@ -331,14 +331,22 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
 
 
 def test_only_a_gene_carrying_an_assertion_is_searchable(tmp_path: Path) -> None:
-    """Searchable means curated, and it has to, because `path` is a promise.
+    """Searchable means curated, and `path` is a promise either way.
 
     A gene record advertises `genes/<id>.json`, and `build_genes` writes one
-    bundle per gene `gene_facts` returns — the genes carrying an assertion.
-    Drawing this list from the gene registry instead would publish search hits
-    whose only action is a fetch that 404s, and nothing downstream could catch
-    it: `Emitter.checksums` records what the build wrote, never what a payload
-    promised.
+    bundle per member of `published`. Drawing this list from the gene registry
+    instead would publish search hits whose only action is a fetch that 404s,
+    and nothing downstream could catch it: `Emitter.checksums` records what the
+    build wrote, never what a payload promised.
+
+    What this test pins is the *rule*, which is unchanged: the assertion set,
+    and nothing wider. D21 changed what that rule buys. It used to equal the set
+    with bundles; it is now a subset of it for the committed corpus, so no
+    published path dangles today — but the equality that made that true by
+    construction is gone, and a curated assertion for a gene outside `published`
+    would be indexed here with no bundle behind it. See `search.py`'s module
+    docstring; closing it means widening this module, which is a decision, not a
+    tidy-up.
 
     NKX2-5 below is mirrored but uncurated, the ordinary case — the registry
     holds every gene, the atlas curates a few. GATA4 carries functional evidence

@@ -56,7 +56,15 @@ from chd_atlas.corpus import Corpus
 # changed shape or left, so this is MINOR despite following a MAJOR release —
 # each release's letter is decided against what it changes, never against the
 # rung before it.
-SCHEMA_VERSION: Final = "2.1"
+#
+# 2.2 added `atlas_curation` to every gene index row and every gene bundle
+# (design decision D21/D22). The same release widened the published population
+# from the genes carrying a curated assertion to the genes a ClinGen expert
+# panel calls definitive — 1 row to 23 — which is not a schema change at all:
+# more rows of an unchanged shape. The new field is what stops that widening
+# being a silent one, since 22 of the 23 rows now describe a gene this atlas has
+# not curated. Additive, so MINOR: a 2.1 reader keeps working.
+SCHEMA_VERSION: Final = "2.2"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

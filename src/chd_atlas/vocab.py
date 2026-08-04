@@ -110,6 +110,24 @@ class ValidityState(StrEnum):
     UNCURATED = "uncurated"
 
 
+class AtlasCuration(StrEnum):
+    """Whether the atlas itself has curated evidence for a gene it publishes.
+
+    D21 publishes a gene on an expert panel's classification, which is not the
+    atlas's own work. 22 of the 23 genes published today carry no
+    `LesionAssertion` at all, so a consumer that read `headline_confidence`
+    alone would take a mirrored ClinGen call for curated atlas content.
+
+    Published as a field rather than left inferable from `assertion_count == 0`
+    for the reason `validity_state` is: a consumer filtering a browse list needs
+    one key to read, not an arithmetic rule to reimplement, and the two must not
+    be able to drift apart.
+    """
+
+    CURATED = "curated"
+    NOT_YET_CURATED = "not_yet_curated"
+
+
 class ValiditySource(StrEnum):
     CLINGEN = "clingen"
     GENCC = "gencc"

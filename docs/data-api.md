@@ -50,7 +50,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.1",
+  "schema_version": "2.2",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -69,8 +69,11 @@ wrong by the next one.
 - `source_commit` is `null` when the build was made outside a git checkout — an
   unpacked tarball still produces a complete site, just one that cannot state
   its provenance.
-- `counts` counts curated records, which is not the same as files. A gene with
-  no assertion contributes to no count and gets no bundle.
+- `counts` counts curated records, which is not the same as files. A gene the
+  atlas has not curated contributes to no count and still gets a bundle — 22 of
+  the 23 genes published today are in exactly that position, published on an
+  expert panel's classification rather than on curation done here. Read
+  `atlas_curation` on the browse row to tell the two apart.
 - `schema_version` is `major.minor`. **Minor** rises when a field is added and
   nothing is removed or repurposed, so a consumer written against an earlier
   version keeps working; **major** rises when a field changes shape or leaves.
@@ -80,7 +83,12 @@ wrong by the next one.
   of its own — and added the gene bundle's `validity` object in their place.
   The removal is what makes it major: a 1.x reader looking for a
   classification on the assertion now finds none. `2.1` added `status`,
-  purely additively.
+  purely additively. `2.2` added `atlas_curation` to every gene index row and
+  every gene bundle, also additively — in the release that widened the
+  published gene set from the genes this atlas has curated to the genes a
+  ClinGen expert panel calls definitive. More rows of an unchanged shape is not
+  a schema change; the new field is, and it is what tells the two kinds of row
+  apart.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -107,11 +115,21 @@ The browse payload. Downloaded by every visitor before they pick a gene, so it
 carries what ranks or filters a row and the path to fetch the rest — and none of
 the evidence itself.
 
+**Which genes are listed.** One row per gene a ClinGen expert panel classifies
+`Definitive` for a disease in this atlas's CHD scope (`curation/chd_scope.yaml`)
+— 23 genes today. That is a mirrored decision, not a curated one: 22 of the 23
+carry no assertion authored here, and `atlas_curation` is the field that says
+which. GenCC is not a route in: it aggregates submissions rather than
+adjudicating them, and the five in-scope genes it alone calls definitive
+include one whose submissions run from `Definitive` to `No Known Disease
+Relationship`.
+
 ```json
 {
   "genes": [
     {
       "assertion_count": 1,
+      "atlas_curation": "curated",
       "bundle": "genes/HGNC_11604.json",
       "confidence_by_lesion_group": { "septal": "definitive" },
       "conflicting_lesion_groups": [],
@@ -145,6 +163,15 @@ the evidence itself.
   classification is itself an assessed verdict ("a panel looked and found
   nothing"), and asserting it for a gene nobody has assessed would state a
   conclusion no authority reached.
+- `atlas_curation` is `"curated"` when the atlas holds at least one curated
+  assertion for the gene and `"not_yet_curated"` when it holds none — 22 of the
+  23 rows published today. It is about *this* resource's own work and says
+  nothing about the gene's validity: an uncurated row still carries a
+  `"definitive"` `headline_confidence`, because that is an expert panel's call
+  and is exactly why the gene is listed. Read this rather than testing
+  `assertion_count == 0`, so a browse filter does not have to reimplement the
+  rule. It appears on the browse row and in the bundle, written in one place so
+  the two cannot disagree.
 - `validity_state` says how well curated the gene is: `"expert_curated"` (an
   in-scope ClinGen record exists), `"submitter_curated"` (only GenCC has
   assessed it) or `"uncurated"` (neither mirror has). `headline_confidence` is
@@ -193,6 +220,7 @@ One gene's whole detail page, in one fetch.
   "symbol": "TBX5",
   "headline_confidence": "definitive",
   "validity_state": "expert_curated",
+  "atlas_curation": "curated",
   "has_conflicting_evidence": false,
   "has_source_discordance": false,
   "lesion_groups": ["septal"],
@@ -216,6 +244,12 @@ One gene's whole detail page, in one fetch.
   where the mirrored classification lives.
 - `functional` holds **every** functional record about the gene, not only those
   an assertion cites.
+- `atlas_curation` reads the same here as on the browse row. On the 22 genes
+  published today without curation here it is `"not_yet_curated"`, and
+  `assertions`, `publications` and `functional` are then empty arrays: the page
+  is the panel's classification plus whatever this atlas has recorded, which
+  may be nothing at all. An empty `assertions` array is a curation gap, never a
+  fetch that failed.
 - `omics` and `variants` are always present and may be empty. Read them without
   guarding for a missing key.
 - **`variants` are embedded; omics rows are linked.** That asymmetry is a
@@ -554,15 +588,25 @@ the browse row and the bundle, and is always written alongside
 *different* mirrored sources. A single source split against itself would set
 `has_conflicting_evidence` without setting this one — that is why the two
 fields are not redundant — but that split does not currently occur among the
-154 genes these mirrors curate within CHD scope. Measured against a real
-build: exactly one gene sets `has_conflicting_evidence` — LEFTY2 (HGNC:3122),
-where ClinGen's own `Disputed` call sits alongside GenCC's supportive one —
-and it is the same gene that sets `has_source_discordance`. The divergence
-this field exists to catch is real but currently unrealised in published
-data: ninety genes in the full, pre-scope ClinGen mirror carry both a
-supportive and a contesting call, but none of the diseases those ninety
-concern is in CHD scope (`build/validity.py`'s `_has_source_discordance`
-docstring has the measurement).
+154 genes these mirrors curate within CHD scope.
+
+**No row in `genes/index.json` sets either flag today, and that is not a reason
+to skip implementing them.** Measured against a real build (2026-08-04): of the
+154 mirrored genes, exactly one — LEFTY2, HGNC:3122, where ClinGen's own
+`Disputed` call sits alongside GenCC's supportive one — sets
+`has_conflicting_evidence`, and it is the same gene that sets
+`has_source_discordance`. It is not among the 23 published, because a gene is
+published on a ClinGen `Definitive` call and LEFTY2 does not have one. So a
+consumer testing their rendering against the live data will find nothing
+contested to look at. The first gene ClinGen both grades definitive for one
+in-scope disease and disputes for another will appear as an ordinary
+`"definitive"` row to any client that did not implement this, which is the
+failure this whole section exists to prevent. The divergence
+`has_source_discordance` catches is likewise real but unrealised: ninety genes
+in the full, pre-scope ClinGen mirror carry both a supportive and a contesting
+call, but none of the diseases those ninety concern is in CHD scope
+(`build/validity.py`'s `_has_source_discordance` docstring has the
+measurement).
 
 **A consumer must pair `headline_confidence` with `has_conflicting_evidence`
 and present a contested gene distinctly** — a badge, a different colour, an

@@ -263,9 +263,8 @@ def test_the_gate_refuses_on_an_error_and_builds_through_a_warning(
 def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_path: Path) -> None:
     """Symbol, approved name and aliases, from `mirrors/genes.tsv` to both payloads.
 
-    TBX5 is the only gene the build publishes — `gene_facts` keys on the genes
-    carrying an assertion, not on the registry — and its committed `aliases`
-    cell is null, so the split is exercised only if this test supplies one.
+    TBX5's committed `aliases` cell is null, so the split is exercised only if
+    this test supplies one.
     That matters more than it looks: the cell is pipe-separated and handing it
     over unsplit type-checks — `frame.to_dicts()` yields `dict[str, Any]`, and
     an `Any` satisfies `tuple[str, ...]` silently — so the mistake this asserts
@@ -301,7 +300,15 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
     build_site(repo, out)
 
     index = json.loads((out / "genes" / "index.json").read_text())
-    assert [entry["symbol"] for entry in index["genes"]] == ["TBX5"]
+    symbols = {entry["gene"]: entry["symbol"] for entry in index["genes"]}
+    assert symbols["HGNC:11604"] == "TBX5"
+    # Widened rather than dropped when D21 took the index from 1 row to 23: this
+    # line used to read `== ["TBX5"]`, which covered the one published gene there
+    # was. `bundles.py` falls back to the HGNC id for a gene absent from the
+    # registry, so a row whose symbol *is* its id is a label the mirror was
+    # supposed to hold and the site did not get — the same loss the assertion
+    # above pins for one gene, checked over every gene the build publishes.
+    assert [gene for gene, symbol in symbols.items() if symbol == gene] == []
 
     gene = next(record for record in _search_records(out) if record["kind"] == "gene")
     assert gene["label"] == "TBX5"

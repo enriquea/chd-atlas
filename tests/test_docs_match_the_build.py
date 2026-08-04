@@ -85,7 +85,17 @@ def _published(site: Path, kind: str) -> dict[str, Any]:
     if kind == "manifest":
         return dict(load("manifest.json"))
     if kind == "index_row":
-        return dict(load("genes/index.json")["genes"][0])
+        # TBX5 by id, not `genes[0]`. The example under that heading is TBX5's
+        # row and the first row is now TBX20 (HGNC:11598) -- D21 took the index
+        # from 1 gene to 23, sorted by HGNC id. Every row carries the same keys
+        # by construction (`bundles.py::_headline` plus one literal dict), so
+        # this test would still pass on the wrong row; selecting the documented
+        # gene is what keeps it checking the example against what the example
+        # claims to be.
+        row = next(
+            item for item in load("genes/index.json")["genes"] if item["gene"] == "HGNC:11604"
+        )
+        return dict(row)
     if kind == "publication":
         return dict(load("publications.json")["publications"][0])
     if kind == "featured":
@@ -146,7 +156,13 @@ def test_the_contested_example_is_labelled_with_the_payload_it_comes_from(site: 
     which is published. So the document has to say where the fields live.
     """
     bundle = json.loads((site / "genes" / "HGNC_11604.json").read_text())
-    index_row = json.loads((site / "genes" / "index.json").read_text())["genes"][0]
+    # By id, for the reason `_published` gives: `genes[0]` is TBX20 since D21,
+    # and the bundle this is compared against is TBX5's.
+    index_row = next(
+        item
+        for item in json.loads((site / "genes" / "index.json").read_text())["genes"]
+        if item["gene"] == "HGNC:11604"
+    )
 
     assert "conflicting_lesion_groups" in index_row
     assert "conflicting_lesion_groups" not in bundle, "if this changes, the doc must too"

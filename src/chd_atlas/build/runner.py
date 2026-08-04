@@ -30,7 +30,7 @@ from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
 from chd_atlas.build.search import GeneLabels, build_search
-from chd_atlas.build.validity import gene_validity
+from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.build.variants import build_variants
 from chd_atlas.corpus import load_curation
 from chd_atlas.tables import TABLE_SCHEMAS, read_table
@@ -192,6 +192,13 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # the mirror either — both project the same `genes` registry the same way.
     symbols = {gene: labels.symbol for gene, labels in genes.items()}
 
+    # D21's population, computed once for the same reason `symbols` is, and with
+    # more riding on it: `build_genes` publishes one index row and one bundle per
+    # member, and `build_landing` prints how many there are. Deriving it twice
+    # would let the front page state a figure the browse payload contradicts,
+    # which is the shape the "154 genes published" defect already had once.
+    published = published_genes(validity)
+
     emitter = Emitter(root=out)
     omics = build_omics(root, emitter)
     variants = build_variants(root, emitter)
@@ -202,6 +209,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         omics=omics,
         variants=variants,
         validity=validity,
+        published=published,
     )
     build_literature(corpus, emitter)
     # Read again rather than threaded down from the gate: `validate_repository`
@@ -211,7 +219,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     registry, _ = load_sources(root)
     build_sources(registry, emitter)
     build_search(corpus, emitter, genes=genes)
-    build_landing(corpus, symbols=symbols, validity=validity, emitter=emitter)
+    build_landing(corpus, symbols=symbols, validity=validity, published=published, emitter=emitter)
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))
     return dict(emitter.checksums)

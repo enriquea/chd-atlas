@@ -26,7 +26,14 @@ GATA4 = "HGNC:4173"
 # climb `tests/unit/test_build_runner.py` uses to find the committed corpus.
 REPO = Path(__file__).parent.parent.parent
 
-_MIRRORED_ROW_LABEL = "Genes in scope with mirrored ClinGen/GenCC validity (browsable once curated)"
+# The parenthetical said "browsable once curated" until D21, which made it
+# false: 23 of these 154 genes are browsable today and 22 of those carry no
+# curation from this atlas at all. What decides is ClinGen's grade, and that is
+# what it now says. The row's placement and label are pinned below for the
+# reason they always were -- this number must never read as published coverage.
+_MIRRORED_ROW_LABEL = (
+    "Genes with mirrored validity in CHD scope (browsable once ClinGen grades it definitive)"
+)
 
 
 def _evidence(**overrides: object) -> Evidence:
@@ -60,10 +67,32 @@ def _assertion(**overrides: object) -> LesionAssertion:
 
 
 def _build(
-    corpus: Corpus, symbols: dict[str, str], validity: dict[str, GeneValidity], tmp_path: Path
+    corpus: Corpus,
+    symbols: dict[str, str],
+    validity: dict[str, GeneValidity],
+    tmp_path: Path,
+    published: set[str] | None = None,
 ) -> str:
+    """Render the page.
+
+    `published` defaults to the genes the fixture asserts, which is what the
+    page said before D21 and is *not* what it says now -- the default only
+    keeps the tests that are about something else (escaping, pluralisation, the
+    research-use notice) from having to name a population they do not care
+    about. Every test that is about the published-gene figure passes it
+    explicitly, and one of them passes a set that disagrees with the assertions
+    on purpose.
+    """
     emitter = Emitter(root=tmp_path)
-    build_landing(corpus, symbols=symbols, validity=validity, emitter=emitter)
+    build_landing(
+        corpus,
+        symbols=symbols,
+        validity=validity,
+        published=(
+            {assertion.gene for assertion in corpus.assertions} if published is None else published
+        ),
+        emitter=emitter,
+    )
     return (tmp_path / LANDING).read_text(encoding="utf-8")
 
 
@@ -128,22 +157,34 @@ def test_the_page_is_published_through_write_text_and_reaches_the_checksums(
     emitter = Emitter(root=tmp_path)
     corpus = Corpus(root=Path("."), assertions=(_assertion(),))
 
-    build_landing(corpus, symbols={TBX5: "TBX5"}, validity={TBX5: uncurated()}, emitter=emitter)
+    build_landing(
+        corpus,
+        symbols={TBX5: "TBX5"},
+        validity={TBX5: uncurated()},
+        published={TBX5},
+        emitter=emitter,
+    )
 
     assert list(emitter.checksums) == ["index.html"]
     assert (tmp_path / "index.html").is_file()
 
 
 def test_the_published_and_mirrored_counts_are_derived_not_hardcoded(tmp_path: Path) -> None:
-    """Two different inputs must publish two different pages, for both gene counts.
+    """Three different inputs must publish three different numbers.
 
     A landing page whose numbers were hardcoded strings would pass a test built
     against one fixture and only that one; varying the fixture and checking the
     rendered counts move with it is what tells a literal from a derivation. Two
-    assertions on two different genes, and five mirrored genes -- none of which
-    match the committed corpus's one assertion on one gene, or its 154 mirrored
-    genes -- so a hardcoded "1"/"1"/"154" would fail here even though nothing
-    here matches those numbers.
+    assertions on two genes, three published genes and five mirrored ones --
+    none of which match the committed corpus's one assertion, its 23 published
+    genes or its 154 mirrored ones -- so a hardcoded "1"/"23"/"154" fails here.
+
+    The three fixture values are deliberately all different, and `published` is
+    deliberately not the asserted genes. Since D21 those are separate
+    populations -- 22 of the 23 genes the site publishes carry no assertion --
+    and the figure wired to the wrong one of the three is the mistake this
+    catches: the page used to count `{assertion.gene for ...}` under this very
+    label, which would render 2 here instead of 3.
     """
     corpus = Corpus(
         root=Path("."),
@@ -151,10 +192,16 @@ def test_the_published_and_mirrored_counts_are_derived_not_hardcoded(tmp_path: P
     )
     validity = {gene: uncurated() for gene in ("HGNC:1", "HGNC:2", "HGNC:3", "HGNC:4", "HGNC:5")}
 
-    text = _build(corpus, {TBX5: "TBX5", GATA4: "GATA4"}, validity, tmp_path)
+    text = _build(
+        corpus,
+        {TBX5: "TBX5", GATA4: "GATA4"},
+        validity,
+        tmp_path,
+        published={TBX5, GATA4, "HGNC:1"},
+    )
 
     assert re.search(r"<dt>Curated gene-disease assertions</dt>\s*<dd>2</dd>", text)
-    assert re.search(r"<dt>Genes published</dt>\s*<dd>2</dd>", text)
+    assert re.search(r"<dt>Genes published</dt>\s*<dd>3</dd>", text)
     assert re.search(
         rf"<dt>{re.escape(_MIRRORED_ROW_LABEL)}</dt>\s*<dd>5</dd>",
         text,
@@ -169,11 +216,12 @@ def test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json(
 
     This is the regression the false "154 genes" claim was: `mirrored_gene_count
     = len(validity)` counted every gene either mirror curates, not the genes the
-    build actually publishes. `genes/index.json` is keyed on genes carrying at
-    least one curated assertion (`derive.gene_facts`), which for the committed
-    corpus is one gene, not 154 — checked here against the real built file
-    rather than against a literal, so this fails the same way the original bug
-    would have if it recurred.
+    build actually publishes. `genes/index.json` is keyed on `published`
+    (`derive.gene_facts`), which for the committed corpus is 23 genes — not 154,
+    and no longer the 1 gene that carries an assertion either. Checked here
+    against the real built file rather than against a literal, so it fails the
+    same way the original bug would if it recurred, and so that widening the
+    gate again moves both numbers together or fails.
     """
     text = (real_build / "index.html").read_text(encoding="utf-8")
     genes_index = json.loads((real_build / "genes" / "index.json").read_text(encoding="utf-8"))
