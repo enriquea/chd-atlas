@@ -449,19 +449,45 @@ def build_gene_index_page(
     # a `set` of strings iterates in an order that varies with PYTHONHASHSEED,
     # and the option order is part of the page's bytes and therefore its
     # checksum.
+    # `aria-label` on every control, because the only other thing naming any of
+    # them is its own first option ("any lesion") or, for the search box, a
+    # placeholder. Neither is a label: a placeholder is announced inconsistently
+    # and disappears the moment a character is typed, and a `<select>`'s first
+    # option describes the *current value*, not what the control filters. A
+    # reader on a screen reader would meet five unlabelled controls. Raised by
+    # review on #14; the labels are literals here rather than derived from
+    # `label` so that "any lesion" stays the neutral option text while the
+    # control is announced as what it does.
     selects = "".join(
-        f'<select name="{name}"><option value="">{label}</option>'
+        f'<select name="{name}" aria-label="Filter by {aria}">'
+        f'<option value="">{label}</option>'
         + "".join(f'<option value="{value}">{value}</option>' for value in sorted(values))
         + "</select>"
-        for name, label, values in (
-            ("lesion", "any lesion", {g.value for f in facts.values() for g in f.lesion_groups}),
+        for name, label, aria, values in (
+            (
+                "lesion",
+                "any lesion",
+                "lesion group",
+                {g.value for f in facts.values() for g in f.lesion_groups},
+            ),
             (
                 "confidence",
                 "any confidence",
+                "mirrored confidence",
                 {f.headline_confidence.value for f in facts.values() if f.headline_confidence},
             ),
-            ("validity", "any validity", {f.validity_state.value for f in facts.values()}),
-            ("curation", "any curation", {f.atlas_curation.value for f in facts.values()}),
+            (
+                "validity",
+                "any validity",
+                "validity state",
+                {f.validity_state.value for f in facts.values()},
+            ),
+            (
+                "curation",
+                "any curation",
+                "atlas curation",
+                {f.atlas_curation.value for f in facts.values()},
+            ),
         )
     )
 
@@ -473,7 +499,8 @@ def build_gene_index_page(
         "atlas has curated a gene itself.</p>"
         f'<p>Showing <span id="shown">{len(rows)}</span> of {len(rows)} genes.</p>'
         '<form id="filters" class="filters">'
-        '<input name="q" type="search" placeholder="symbol or HGNC id">'
+        '<input name="q" type="search" aria-label="Search by gene symbol or HGNC id" '
+        'placeholder="symbol or HGNC id">'
         f"{selects}</form>"
         f"{data_table(_BROWSE_HEADERS, rows, table_id='gene-table')}"
     )

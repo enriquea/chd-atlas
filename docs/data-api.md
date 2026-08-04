@@ -385,14 +385,24 @@ their class, strength and summary, and the publications that evidence cites —
 or, for the 22 genes published today with no curation here, a paragraph saying
 exactly that:
 
-> The atlas has **not yet curated** evidence for this gene. The classification
-> above is an expert panel's, mirrored with its provenance intact; nothing on
-> this page is the atlas's own assessment.
+> The atlas has **not yet curated** a lesion assertion for this gene. The
+> classification above is an expert panel's, mirrored with its provenance
+> intact; no classification on this page is the atlas's own assessment.
 
 That paragraph is there instead of the section simply being absent. A missing
 evidence section is indistinguishable from "the atlas looked and found
 nothing", and a reader deciding what a gene means clinically must not have to
 infer which.
+
+Read both halves of that sentence precisely, because each is narrower than it
+first appears. **A lesion assertion** is what is absent, not evidence in
+general: `atlas_curation` is derived from curated `LesionAssertion` records
+alone, so a gene can carry functional-evidence records the atlas curated and
+still report `not_yet_curated`. Such a page adds a second paragraph naming
+those records as the atlas's own work, rather than leaving the first to deny
+them. And **no classification** is the atlas's own — not "nothing on this
+page", which would have denied that same curated work one column away from the
+rail counting it.
 
 A gene page carries no script at all — every value on it was rendered at build
 time — and, like the browse page, makes no external request. The bundle remains

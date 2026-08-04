@@ -17,6 +17,7 @@ So this is not a style check. It is the same guarantee the dead-link sweep gives
 the payloads, applied to the document a consumer builds against.
 """
 
+import html
 import json
 import re
 import shutil
@@ -61,6 +62,16 @@ def site(tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = base / "dist"
     build_site(root, out)
     return out
+
+
+def _text_of(page: str) -> str:
+    """One HTML page as its visible text, whitespace collapsed.
+
+    Tags stripped rather than parsed: the assertion is about a sentence a
+    reader sees, and `<strong>` inside it is exactly what a substring check on
+    the raw markup would trip over.
+    """
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page))).strip()
 
 
 def _example(heading: str) -> dict[str, Any]:
@@ -177,3 +188,42 @@ def test_the_contested_example_is_labelled_with_the_payload_it_comes_from(site: 
         "the section must say the per-group fields are browse-row only"
     )
     assert "conflicting_lesion_groups" in section
+
+
+def test_the_documented_uncurated_notice_is_the_sentence_the_page_actually_shows(
+    site: Path,
+) -> None:
+    """The doc quotes that paragraph verbatim, so drift makes the doc a lie.
+
+    Both of its clauses are narrower than the obvious wording, and both were
+    made narrower deliberately: "not yet curated **a lesion assertion**" rather
+    than "evidence", because `atlas_curation` is derived from `LesionAssertion`
+    records alone and a gene may carry curated functional evidence while
+    reporting `not_yet_curated`; and "**no classification** on this page is the
+    atlas's own" rather than "nothing on this page", which would deny that same
+    curated work one column from the rail counting it.
+
+    The document was written against the earlier, wider wording and kept it
+    through the fix, reintroducing in prose the ambiguity the code had just
+    removed. `EXHAUSTIVE` above pins documented *JSON* examples against the
+    build and had nothing to say about a quoted sentence; this closes that.
+    Raised by review on #14.
+
+    Compared against a real uncurated gene page rather than against
+    `pages._NOT_CURATED`, so the assertion fails if the constant stops reaching
+    the page at all -- comparing the doc to the constant would pass on a page
+    that renders neither.
+    """
+    page = (site / "genes" / "HGNC_4173.html").read_text()
+    assert "not_yet_curated" in page, "GATA4 must still be an uncurated gene for this to test"
+
+    text = DOC.read_text()
+    marker = "or, for the 22 genes published today with no curation here, a paragraph saying"
+    quote = text[text.index(marker) :]
+    quoted = " ".join(
+        line.lstrip("> ").strip() for line in quote.splitlines() if line.startswith(">")
+    )
+    assert quoted, "the doc must still quote the notice"
+    # `**bold**` in the quote is `<strong>` on the page; strip both to compare
+    # the sentence rather than its emphasis.
+    assert quoted.replace("**", "") in _text_of(page)

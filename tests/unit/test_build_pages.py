@@ -537,7 +537,7 @@ def test_browse_facet_options_are_ordered_against_a_literal(tmp_path: Path) -> N
     build_gene_index_page(facts, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
 
     facets = dict(
-        re.findall(r'<select name="([^"]+)">(.*?)</select>', _page(tmp_path, "index.html"))
+        re.findall(r'<select name="([^"]+)"[^>]*>(.*?)</select>', _page(tmp_path, "index.html"))
     )
     assert re.findall(r'<option value="([^"]*)">', facets["lesion"]) == [
         "",
@@ -629,10 +629,41 @@ def test_every_facet_names_a_data_attribute_the_filter_script_reads(
 
     page = _page(tmp_path, "index.html")
     assert 'name="q"' in page
-    facets = re.findall(r'<select name="([^"]+)">(.*?)</select>', page)
+    facets = re.findall(r'<select name="([^"]+)"[^>]*>(.*?)</select>', page)
     assert [name for name, _ in facets] == ["lesion", "confidence", "validity", "curation"]
     for _, options in facets:
         assert options.startswith('<option value="">')
     for row in re.findall(r"<tr((?: data-[^>]*)?)>", page):
         if row:
             assert set(re.findall(r"data-([a-z]+)=", row)) == {"search", *(n for n, _ in facets)}
+
+
+def test_every_browse_control_is_named_for_a_screen_reader(
+    tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    """Five form controls, five `aria-label`s. Raised by review on #14.
+
+    Nothing else names any of them. The search box carries only a placeholder,
+    which is announced inconsistently and disappears the moment a character is
+    typed; each `<select>` carries only its own first option, and "any lesion"
+    describes the control's *current value* rather than what it filters. A
+    reader on a screen reader would meet five controls that announce nothing.
+
+    Asserted against literals rather than against whatever the code emits,
+    because a test that reads the label out of the page and compares it to
+    itself would pass on an empty string. The labels differ deliberately from
+    the neutral option text -- "Filter by lesion group" against "any lesion" --
+    so an assertion that merely required *some* `aria-label` would not catch a
+    label wired to the wrong facet.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+
+    page = _page(tmp_path, "index.html")
+    assert 'aria-label="Search by gene symbol or HGNC id"' in page
+    assert re.findall(r'<select name="([^"]+)" aria-label="([^"]+)"', page) == [
+        ("lesion", "Filter by lesion group"),
+        ("confidence", "Filter by mirrored confidence"),
+        ("validity", "Filter by validity state"),
+        ("curation", "Filter by atlas curation"),
+    ]
