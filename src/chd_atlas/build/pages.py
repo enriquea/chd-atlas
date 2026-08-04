@@ -1,5 +1,5 @@
 # src/chd_atlas/build/pages.py
-"""One HTML page per published gene, rendered from what the bundle already holds.
+"""One HTML page per published gene, plus the browse page over all of them.
 
 Everything a gene page shows has been published as JSON since the validity
 backbone landed. `genes/HGNC_11604.json` carries seven mirrored validity
@@ -43,8 +43,9 @@ from typing import Final
 
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.paths import gene_bundle_path, gene_page_path
+from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
 from chd_atlas.build.render import (
+    FILTER_SCRIPT,
     Link,
     Row,
     chip,
@@ -80,6 +81,15 @@ _VALIDITY_HEADERS: Final = (
 _EVIDENCE_HEADERS: Final = ("class", "strength", "summary", "publication")
 
 _CITATION_HEADERS: Final = ("id", "title", "year")
+
+_BROWSE_HEADERS: Final = (
+    "gene",
+    "symbol",
+    "confidence",
+    "validity",
+    "atlas curation",
+    "lesion groups",
+)
 
 
 def _pubmed(pmid: str) -> str:
@@ -275,3 +285,98 @@ def build_gene_pages(
             gene_page_path(HgncId(gene)),
             document(title=f"{symbol} — CHD Atlas", root="../", body=body),
         )
+
+
+def build_gene_index_page(
+    facts: Mapping[str, GeneFacts], emitter: Emitter, *, symbols: Mapping[str, str]
+) -> None:
+    """Emit `genes/index.html`: every published gene, filterable in the browser.
+
+    Every row is rendered here, by the build. The inline script only *hides*
+    rows, so the page is complete to `curl`, to a crawler, and to a reader with
+    JavaScript disabled -- the alternative, an empty `<tbody>` populated from
+    `genes/index.json` at runtime, looks identical in a browser and serves
+    nothing to any of the three.
+
+    Sorted by HGNC id, the order `genes/index.json` publishes in, so the browse
+    page and the payload behind it agree on which gene comes first without
+    either reading the other.
+
+    Two couplings to `render.FILTER_SCRIPT` that nothing in the type system
+    holds, both pinned by
+    `test_every_facet_names_a_data_attribute_the_filter_script_reads`:
+
+    * each `<select>`'s `name` is resolved into an attribute by concatenation,
+      `row.getAttribute('data-' + select.name)`, so the four names below must
+      spell the four `attributes` keys exactly. A mismatch reads `null` and
+      hides every row the moment that facet is used, while the page looks
+      correct until someone touches it.
+    * the script matches a facet with `.split(' ').indexOf(want)`, so a value
+      carrying a space could never be selected. None can: measured 2026-08-04,
+      no member of `LesionGroup`, `Classification`, `ValidityState` or
+      `AtlasCuration` contains one. That is what lets `data-lesion` hold a whole
+      space-joined list and still match a single group.
+
+    Every `<option>` value comes from a vocabulary member -- an enum in
+    `vocab.py`, not a curated or mirrored string -- so nothing reaches the
+    `selects` markup below unescaped. Everything else on the page goes through
+    `render.py`, which escapes cells and attributes itself.
+    """
+    rows: list[Row] = []
+    for gene in sorted(facts):
+        fact = facts[gene]
+        symbol = symbols.get(gene, gene)
+        confidence = fact.headline_confidence.value if fact.headline_confidence else ""
+        groups = " ".join(group.value for group in fact.lesion_groups)
+        rows.append(
+            Row(
+                cells=(
+                    Link(text=gene, href=f"../{gene_page_path(HgncId(gene))}"),
+                    symbol,
+                    confidence or _EM_DASH,
+                    fact.validity_state.value,
+                    fact.atlas_curation.value,
+                    groups or _EM_DASH,
+                ),
+                attributes=(
+                    ("search", f"{gene} {symbol}".lower()),
+                    ("lesion", groups),
+                    ("confidence", confidence),
+                    ("validity", fact.validity_state.value),
+                    ("curation", fact.atlas_curation.value),
+                ),
+            )
+        )
+
+    # Sorted for the reason every other set-derived sequence in this build is:
+    # a `set` of strings iterates in an order that varies with PYTHONHASHSEED,
+    # and the option order is part of the page's bytes and therefore its
+    # checksum.
+    selects = "".join(
+        f'<select name="{name}"><option value="">{label}</option>'
+        + "".join(f'<option value="{value}">{value}</option>' for value in sorted(values))
+        + "</select>"
+        for name, label, values in (
+            ("lesion", "any lesion", {g.value for f in facts.values() for g in f.lesion_groups}),
+            (
+                "confidence",
+                "any confidence",
+                {f.headline_confidence.value for f in facts.values() if f.headline_confidence},
+            ),
+            ("validity", "any validity", {f.validity_state.value for f in facts.values()}),
+            ("curation", "any curation", {f.atlas_curation.value for f in facts.values()}),
+        )
+    )
+
+    body = (
+        "<h1>Genes</h1>"
+        f'<p>Showing <span id="shown">{len(rows)}</span> of {len(rows)} genes.</p>'
+        '<form id="filters" class="filters">'
+        '<input name="q" type="search" placeholder="symbol or HGNC id">'
+        f"{selects}</form>"
+        f"{data_table(_BROWSE_HEADERS, rows, table_id='gene-table')}"
+    )
+    emitter.write_text(
+        GENE_INDEX_PAGE,
+        document(title="Genes — CHD Atlas", root="../", body=body, script=FILTER_SCRIPT),
+    )

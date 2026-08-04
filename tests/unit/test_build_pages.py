@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.pages import build_gene_pages
+from chd_atlas.build.pages import build_gene_index_page, build_gene_pages
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.literature import Publication
@@ -329,3 +330,97 @@ def test_every_gene_in_the_facts_gets_exactly_one_page(
         "HGNC_11604.html",
         "HGNC_4173.html",
     ]
+
+
+def test_the_browse_table_is_complete_before_any_script_runs(
+    tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    """D29. The rows are rendered by the build, not fetched.
+
+    The mutant this kills is a page that ships an empty tbody and populates it
+    from genes/index.json at runtime: it looks identical in a browser and serves
+    nothing to curl, to a crawler, or to a reader with scripts disabled.
+
+    Measured 2026-08-04 by rendering `<tbody>` empty and appending the rows from
+    an inline `fetch('index.json')` instead: 3 failed, 609 passed. This test
+    failed first, on `"TBX5" in page` -- the symbol never reaches the markup at
+    all, so the later `fetch(` and `<script>`-ordering assertions are not what
+    catches this particular mutant; they catch the narrower one that renders the
+    rows *and* then re-fetches. The other two failures were the two browse tests
+    below, which is expected: an empty table has no order and no links.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+
+    page = _page(tmp_path, "index.html")
+    assert "TBX5" in page and "GATA4" in page
+    assert "fetch(" not in page
+    assert page.index("HGNC_11604.html") < page.index("<script>")
+
+
+def test_browse_rows_are_ordered_by_hgnc_id_against_a_literal(
+    tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    """Asserted against a literal, not by building twice and comparing.
+
+    PYTHONHASHSEED is fixed for the life of an interpreter, so a same-process
+    build-twice comparison cannot catch a dropped sort at any fixture size.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+
+    page = _page(tmp_path, "index.html")
+    assert page.index("HGNC_11604.html") < page.index("HGNC_4173.html")
+
+
+def test_every_browse_row_links_to_a_page_that_was_written(
+    tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        facts_two,
+        emitter,
+        symbols={},
+        validity={TBX5: _validity(), GATA4: _validity()},
+        assertions={},
+        publications={},
+    )
+    build_gene_index_page(facts_two, emitter, symbols={})
+
+    page = _page(tmp_path, "index.html")
+    for name in ("HGNC_11604.html", "HGNC_4173.html"):
+        assert name in page
+        assert f"genes/{name}" in emitter.checksums
+
+
+def test_every_facet_names_a_data_attribute_the_filter_script_reads(
+    tmp_path: Path, facts_two: dict[str, GeneFacts]
+) -> None:
+    """A facet whose name matches no `data-*` attribute filters nothing, silently.
+
+    `FILTER_SCRIPT` resolves each facet by string concatenation --
+    `row.getAttribute('data-' + select.name)` -- so a `<select name="lesions">`
+    over rows carrying `data-lesion` reads `null`, matches nothing, and hides
+    every row the moment a reader touches that facet. Nothing in the type system
+    couples the two spellings and no other test in this file reads either, so
+    this is the coupling. Not in the plan; added because the mismatch is exactly
+    the silent failure this project is written against.
+
+    The empty `<option value="">` is asserted for the same reason: the script
+    reads an empty select value as "no filter", so a facet lacking one has no
+    way back to showing every gene. `name="q"` likewise -- the script does
+    `form.querySelector('[name=q]').value`, which throws on a missing input and
+    leaves every filter dead.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"})
+
+    page = _page(tmp_path, "index.html")
+    assert 'name="q"' in page
+    facets = re.findall(r'<select name="([^"]+)">(.*?)</select>', page)
+    assert [name for name, _ in facets] == ["lesion", "confidence", "validity", "curation"]
+    for _, options in facets:
+        assert options.startswith('<option value="">')
+    for row in re.findall(r"<tr((?: data-[^>]*)?)>", page):
+        if row:
+            assert set(re.findall(r"data-([a-z]+)=", row)) == {"search", *(n for n, _ in facets)}
