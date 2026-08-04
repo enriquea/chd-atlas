@@ -14,6 +14,7 @@ import pytest
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.landing import build_landing
 from chd_atlas.build.paths import LANDING
+from chd_atlas.build.render import STYLESHEET
 from chd_atlas.build.runner import build_site
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.corpus import Corpus
@@ -230,6 +231,87 @@ def test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json(
     match = re.search(r"<dt>Genes published</dt>\s*<dd>(\d+)</dd>", text)
     assert match, "the page no longer publishes a 'Genes published' row"
     assert int(match.group(1)) == published
+
+
+def test_the_landing_page_distinguishes_published_from_curated(tmp_path: Path) -> None:
+    """The promotion review forced this distinction into prose once already.
+
+    23 genes are published on an expert panel's classification and 1 carries the
+    atlas's own evidence. A single "genes" count would read as coverage the site
+    does not have.
+
+    The fixture separates all three numbers that could be wired to this row --
+    two assertions, on one gene, against three published genes -- because the
+    two plausible miswirings both render a number that is *true of something*:
+    `len(corpus.assertions)` gives 2 and `len(published)` gives 3, and either
+    would pass a fixture where they happened to coincide. Only 1 is the genes
+    the atlas has curated.
+
+    The sentence naming those genes is checked here too: it and the row are one
+    derivation in `_render`, and a fixture with more assertions than genes is
+    where a second derivation would show up as "2 ... so far: TBX5" beside a
+    row saying 2.
+    """
+    corpus = Corpus(
+        root=Path("."),
+        assertions=(_assertion(), _assertion(id="CHDA:AST:0000002")),
+    )
+
+    text = _build(
+        corpus,
+        {TBX5: "TBX5"},
+        {TBX5: uncurated()},
+        tmp_path,
+        published={TBX5, GATA4, "HGNC:1"},
+    )
+    published_section = _section(text, "<h2>What's published</h2>")
+
+    assert re.search(r"<dt>Curated gene-disease assertions</dt>\s*<dd>2</dd>", published_section)
+    assert re.search(r"<dt>Genes published</dt>\s*<dd>3</dd>", published_section)
+    assert re.search(r"<dt>Genes the atlas has curated</dt>\s*<dd>1</dd>", published_section)
+    assert "2 curated gene-disease assertions so far: TBX5 (HGNC:11604)." in _prose(text)
+
+
+def test_the_page_shares_the_shell_and_the_stylesheet_every_other_page_uses(
+    tmp_path: Path,
+) -> None:
+    """The landing page carries no `<style>` of its own.
+
+    It had one until the gene pages arrived, and three page kinds each carrying
+    their own copy is three stylesheets that drift. `render.STYLESHEET` is now
+    the only one, so this asserts the rendered page contains it verbatim rather
+    than merely that some `<style>` block exists -- a landing page that grew a
+    second block back would still satisfy the weaker check.
+
+    The `<nav>` is the other half of the shell, and `root=""` is what makes its
+    links right from the site root: a landing page rendered with `"../"` would
+    point every visitor's "Genes" link above the deploy root.
+    """
+    corpus = Corpus(root=Path("."), assertions=(_assertion(),))
+
+    text = _build(corpus, {TBX5: "TBX5"}, {TBX5: uncurated()}, tmp_path)
+
+    assert f"<style>{STYLESHEET}</style>" in text
+    assert text.count("<style>") == 1
+    assert '<a href="index.html">CHD Atlas</a>' in text
+    assert '<a href="genes/index.html">Genes</a>' in text
+
+
+def test_the_front_page_links_to_the_browsable_gene_index(tmp_path: Path) -> None:
+    """ "Browse the data" must offer the page, not only the payload behind it.
+
+    A reader who opens `index.html` is not going to read `genes/index.json`.
+    Pinned inside the section rather than anywhere on the page, because the
+    `<nav>` links to the same file and would satisfy a bare substring check
+    while the browse list stayed JSON-only.
+    """
+    corpus = Corpus(root=Path("."), assertions=(_assertion(),))
+
+    text = _build(corpus, {TBX5: "TBX5"}, {TBX5: uncurated()}, tmp_path)
+    browse = _prose(_section(text, "<h2>Browse the data</h2>"))
+
+    assert 'href="genes/index.html"' in browse
+    assert "every gene the atlas publishes, with filters." in browse
 
 
 def test_the_relabelled_mirrored_validity_row_sits_outside_whats_published(
