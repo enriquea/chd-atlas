@@ -788,16 +788,18 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
     `str.contains`:
 
     1. Every non-null value of every pattern-bearing column in every committed
-       mirror table -- 98,538 values total (3,653 x 2 in `clingen_gene_validity.tsv`,
-       30,410 x 3 in `gencc_submissions.tsv`, 1 x 2 in `genes.tsv`) -- produces
+       mirror table -- 98,844 values total (3,653 x 2 in `clingen_gene_validity.tsv`,
+       30,410 x 3 in `gencc_submissions.tsv`, 154 x 2 in `genes.tsv`) -- produces
        the identical offender set (here, the empty set: curated data is clean)
        under both engines, for every pattern actually used in a schema:
-       `HGNC_PATTERN`, `MONDO_PATTERN`, and the inline `gencc_submissions.sgc_id`
-       pattern are exercised by the committed data directly;
-       `SEQUENCE_ONTOLOGY_PATTERN`, `MODIFICATION_PATTERN` and `UNIPROT_PATTERN`
-       have no non-null values in the committed corpus today (no variants or
-       PTM sites are curated yet), so they are additionally checked against the
-       adversarial set below.
+       `HGNC_PATTERN`, `MONDO_PATTERN`, `UNIPROT_PATTERN` and the inline
+       `gencc_submissions.sgc_id` pattern are exercised by the committed data
+       directly -- `UNIPROT_PATTERN` since `mirrors/genes.tsv` was widened from
+       TBX5 alone to all 154 in-scope genes, every one of which carries an
+       accession. `SEQUENCE_ONTOLOGY_PATTERN` and `MODIFICATION_PATTERN` still
+       have no non-null values in the committed corpus (no variants or PTM
+       sites are curated yet), so they are checked only against the adversarial
+       set below.
     2. An adversarial synthetic set -- trailing/leading/embedded newlines
        (`re.fullmatch`'s `$` allows a trailing newline that `str.contains`'s
        `$` does not; `fullmatch` requires consuming the whole string regardless,
@@ -879,7 +881,7 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
             assert py_offenders == pl_offenders, (path, column.name, column.pattern)
             total_compared += sum(1 for v in values if v is not None)
 
-    assert total_compared == 98_538
+    assert total_compared == 98_844
 
     for pattern in patterns:
         compiled = re.compile(pattern)

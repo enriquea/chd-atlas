@@ -263,24 +263,39 @@ def test_the_gate_refuses_on_an_error_and_builds_through_a_warning(
 def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_path: Path) -> None:
     """Symbol, approved name and aliases, from `mirrors/genes.tsv` to both payloads.
 
-    The committed mirror has a null `aliases` cell, so the split is exercised
-    only if this test supplies one. That matters more than it looks: the cell is
-    pipe-separated and handing it over unsplit type-checks — `frame.to_dicts()`
-    yields `dict[str, Any]`, and an `Any` satisfies `tuple[str, ...]` silently —
-    so the mistake this asserts against is one mypy cannot catch. A reader that
-    skipped the split publishes one term reading "T-box 5|Chr12q24.1", and a
-    reader that passed the raw string publishes a term per character.
+    TBX5 is the only gene the build publishes — `gene_facts` keys on the genes
+    carrying an assertion, not on the registry — and its committed `aliases`
+    cell is null, so the split is exercised only if this test supplies one.
+    That matters more than it looks: the cell is pipe-separated and handing it
+    over unsplit type-checks — `frame.to_dicts()` yields `dict[str, Any]`, and
+    an `Any` satisfies `tuple[str, ...]` silently — so the mistake this asserts
+    against is one mypy cannot catch. A reader that skipped the split publishes
+    one term reading "T-box 5|Chr12q24.1", and a reader that passed the raw
+    string publishes a term per character.
 
     The name is asserted because it is the column every valid mirror is required
     to have (TBL003) and the one A38 found unreachable: a visitor typing
     "T-box transcription factor" must find TBX5.
+
+    The row is located by id rather than taken as the first line, and the rest
+    of the mirror is left intact. Rewriting the file down to its first row
+    worked only while the registry held TBX5 alone; against the 154-gene mirror
+    it deleted the asserted gene and the build refused with REF001.
     """
     mirror = repo / "mirrors" / "genes.tsv"
-    header, row = mirror.read_text().splitlines()[:2]
-    columns = header.split("\t")
-    cells = row.split("\t")
-    cells[columns.index("aliases")] = "T-box 5|Chr12q24.1"
-    mirror.write_text("\t".join(columns) + "\n" + "\t".join(cells) + "\n")
+    header, *rows = mirror.read_text().splitlines()
+    aliases = header.split("\t").index("aliases")
+
+    def with_aliases(row: str) -> str:
+        cells = row.split("\t")
+        if cells[0] != "HGNC:11604":
+            return row
+        cells[aliases] = "T-box 5|Chr12q24.1"
+        return "\t".join(cells)
+
+    edited = [with_aliases(row) for row in rows]
+    assert edited != rows, "TBX5 left the registry; this test would assert nothing"
+    mirror.write_text("\n".join((header, *edited)) + "\n")
     out = tmp_path / "dist"
 
     build_site(repo, out)
