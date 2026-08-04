@@ -20,12 +20,14 @@ re-orders those on the way out regardless.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.vocab import (
+    AtlasCuration,
     Classification,
     EvidenceClass,
     LesionGroup,
@@ -83,6 +85,10 @@ class GeneFacts:
     conflicting_lesion_groups: tuple[LesionGroup, ...]
     evidence_counts: dict[EvidenceClass, int]
     assertion_count: int
+    # Whether the atlas has curated evidence of its own for this gene, as
+    # opposed to republishing an expert panel's classification. True of 1 of the
+    # 23 genes published today. See `vocab.AtlasCuration`.
+    atlas_curation: AtlasCuration
     # Every functional record about the gene, not only those an assertion cites.
     # `referential.py` requires a *cited* record to be about the asserting gene
     # (REF008) but never requires a curated record to be cited at all, so the two
@@ -93,20 +99,40 @@ class GeneFacts:
     publications: tuple[str, ...]
 
 
-def gene_facts(corpus: Corpus, validity: dict[str, GeneValidity]) -> dict[str, GeneFacts]:
-    """Derive one `GeneFacts` per gene that carries at least one assertion.
+def gene_facts(
+    corpus: Corpus,
+    validity: dict[str, GeneValidity],
+    published: Collection[str],
+) -> dict[str, GeneFacts]:
+    """Derive one `GeneFacts` per published gene.
 
-    Keyed on HGNC id. Genes present in `mirrors/genes.tsv` but carrying no
-    assertion are deliberately absent: the atlas browses curated claims, and a
-    gene with nothing asserted has no confidence to display.
+    Keyed on HGNC id. `published` is `build.validity.published_genes()`'s return
+    -- design decision D21: the atlas publishes a gene when a ClinGen expert
+    panel classifies it definitive for an in-scope disease.
 
-    `validity` is `build.validity.gene_validity()`'s return: one `GeneValidity`
-    per gene either mirror curates, within CHD scope. `headline_confidence`,
-    `has_conflicting_evidence`, `validity_state`, `has_source_discordance` and
-    the two lesion-group breakdowns all come from it rather than from any
-    curated assertion -- the atlas mirrors gene-disease validity, it does not
-    author it. A gene absent from `validity` gets `uncurated()`: no authority has
-    assessed it, which is a fact worth publishing rather than an absent key.
+    That population is neither the asserted genes nor the registry. This
+    function used to key on `{assertion.gene for assertion in corpus.assertions}`
+    and justify it with "a gene with nothing asserted has no confidence to
+    display". Since the validity backbone landed that sentence has been false:
+    every field below that carries a confidence -- `headline_confidence`,
+    `validity_state`, `has_conflicting_evidence`, `has_source_discordance` and
+    `confidence_by_lesion_group` -- comes from `validity`, and none of them from
+    a curated assertion. A gene an expert panel calls definitive has exactly a
+    confidence to display, and 22 of the 23 genes published today have no
+    assertion at all.
+
+    An asserted gene outside `published` gets no facts, so no bundle and no
+    page. That is D37: a curator's assertion does not admit a gene to the
+    definitive set, and candidate genes belong in their own labelled section.
+
+    `validity` is `build.validity.gene_validity()`'s return. A gene absent from
+    it gets `uncurated()`, which cannot happen for a member of `published` --
+    `published_genes` derives from the same mapping -- and is kept because a
+    caller may pass a wider population.
+
+    The three collection fields that come from assertions (`lesion_groups`,
+    `confidence_by_lesion_group`, `evidence_counts`) are empty for an uncurated
+    gene, which is the honest answer: the atlas has recorded no lesion for it.
     """
     by_gene: dict[str, list[LesionAssertion]] = {}
     for assertion in corpus.assertions:
@@ -120,14 +146,29 @@ def gene_facts(corpus: Corpus, validity: dict[str, GeneValidity]) -> dict[str, G
     functional_counts: Counter[str] = Counter(record.gene for record in corpus.functional)
 
     facts: dict[str, GeneFacts] = {}
-    # `sorted` rather than insertion order, which would follow `corpus.assertions`
-    # and so the filenames it was loaded from. That is stable, so this is not what
-    # keeps the build byte-identical today; it is what makes the ordering rule at
-    # the top of this module true of the returned dict as well, and what stops a
-    # consumer that iterates `facts.items()` into a JSON array having its gene
-    # index reordered by an unrelated file rename.
-    for gene in sorted(by_gene):
-        assertions = by_gene[gene]
+    # `sorted` rather than `published`'s own iteration order, which makes the
+    # returned mapping's key order a contract this function keeps rather than an
+    # accident of the `set[str]` `published_genes` hands it. That matters because
+    # the return is public: `build_genes` hands the same mapping to
+    # `build_gene_pages` and `build_gene_index_page`, and a caller is entitled to
+    # iterate it without sorting first.
+    #
+    # It is **not** what keeps the build byte-identical, and this comment claimed
+    # it was until the claim was measured. Every consumer that turns this mapping
+    # into published bytes re-sorts: `bundles.py::build_genes`, `build_gene_pages`
+    # and `build_gene_index_page` all iterate `sorted(facts)`, and the browse
+    # page's facets go through sets that `pages.py` sorts itself. Measured
+    # 2026-08-04, one process per seed with this `sorted` dropped: full builds
+    # under `PYTHONHASHSEED` 0, 2, 12345 and 99 were byte-identical to each other
+    # and to a sorted build, across all 57 emitted files. Keep the sort for the
+    # contract; do not cite it as the determinism guard, or removing a caller's
+    # `sorted` will look safe.
+    #
+    # Pinned by `test_assertions_are_counted_per_gene_and_the_genes_come_back_sorted`,
+    # which hands in a reverse-ordered `list` rather than a `set` so the mutant
+    # fails on every run instead of on a fraction of the seeds.
+    for gene in sorted(published):
+        assertions = by_gene.get(gene, [])
         gene_validity = validity.get(gene, uncurated())
         # Only a record with a mapped `classification` takes a side --
         # `Classification | None` on `ValidityRecord`, `None` where GenCC's
@@ -177,6 +218,7 @@ def gene_facts(corpus: Corpus, validity: dict[str, GeneValidity]) -> dict[str, G
                 item: counts[item] for item in sorted(counts, key=lambda item: item.value)
             },
             assertion_count=len(assertions),
+            atlas_curation=(AtlasCuration.CURATED if assertions else AtlasCuration.NOT_YET_CURATED),
             functional_count=functional_counts[gene],
             publications=tuple(sorted(publications)),
         )

@@ -56,7 +56,34 @@ from chd_atlas.corpus import Corpus
 # changed shape or left, so this is MINOR despite following a MAJOR release —
 # each release's letter is decided against what it changes, never against the
 # rung before it.
-SCHEMA_VERSION: Final = "2.1"
+#
+# 2.2 added `atlas_curation` to every gene index row and every gene bundle
+# (design decision D21/D22). The same release widened the published population
+# from the genes carrying a curated assertion to the genes a ClinGen expert
+# panel calls definitive — 1 row to 23 — which is not a schema change at all:
+# more rows of an unchanged shape. The new field is what stops that widening
+# being a silent one, since 22 of the 23 rows now describe a gene this atlas has
+# not curated. Additive, so MINOR: a 2.1 reader keeps working.
+#
+# That widening is also where the rule above had to be extended, because the
+# rule speaks only about fields and a release can change which *rows* appear
+# without touching one. A population change inside an unchanged shape stays
+# MINOR: a consumer's parsing is unaffected, since every row still carries every
+# field 2.1 published and none of them has changed shape. A consumer's
+# *display* is very much affected — 22 of the 23 rows describe a gene a 2.1
+# reader had never seen and would render as this atlas's own curated content —
+# so the warning belongs in `docs/data-api.md`, where a reader meets the file,
+# rather than in a version letter that cannot carry it. Read the letter for
+# "will my parser still work"; read the document for "does my page still say
+# something true".
+#
+# 2.2 also added `genes/index.html` and `genes/<slug>.html`, taking the site
+# from the single page 2.1 shipped — `index.html`, this build's first HTML
+# artifact — to 25 (measured 2026-08-04 against a build of the committed
+# corpus). Additive in a stronger sense than a field is: no consumer of the data
+# API is affected by a page appearing beside a payload, and every page is
+# checksummed into `files` like any other published byte.
+SCHEMA_VERSION: Final = "2.2"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

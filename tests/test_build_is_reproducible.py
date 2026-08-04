@@ -48,13 +48,21 @@ def test_two_builds_of_one_commit_are_byte_identical(
 
     **What this does not guard, so nobody deletes the guards that do.** It cannot
     detect hash-order nondeterminism — an array built from a `set` and published
-    unsorted — for two independent reasons, both measured. `PYTHONHASHSEED` is
-    fixed for the life of an interpreter, so two builds in one process iterate an
-    unsorted set identically; that is amendment A33/A34, and it holds at any
-    corpus size. And decisively, even across processes: the committed corpus has
-    one gene, one publication and two phenotypes, and a one-element set has one
-    iteration order under every seed. Dropping the gene sort in `search.py` and
+    unsorted — because `PYTHONHASHSEED` is fixed for the life of an interpreter,
+    so two builds in one process iterate an unsorted set identically. That is
+    amendment A33/A34, and it holds at any corpus size: this test builds twice in
+    one process, and nothing about the corpus can change that.
+
+    A second argument used to stand beside it and no longer does. It read that
+    the committed corpus has one gene, so a one-element set has one iteration
+    order under every seed, and that dropping the gene sort in `search.py` and
     building under `PYTHONHASHSEED` 0 and 12345 produced byte-identical output.
+    That was measured against a build whose search index was keyed on the
+    asserted genes. D31 rekeyed it on `published`, which is 23 genes, and the
+    same measurement rerun on 2026-08-04 now gives two different files —
+    `search/index.json.gz` and, through it, `manifest.json`. The corpus-size
+    escape hatch is gone; the in-process one above is the whole reason this test
+    cannot see hash order, which is why it is stated first.
 
     Hash order is guarded where a fixture can be sized to expose it —
     `test_build_search.py`, whose six-gene fixture kills that mutant on 30/30

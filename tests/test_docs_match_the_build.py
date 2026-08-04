@@ -17,6 +17,7 @@ So this is not a style check. It is the same guarantee the dead-link sweep gives
 the payloads, applied to the document a consumer builds against.
 """
 
+import html
 import json
 import re
 import shutil
@@ -63,6 +64,16 @@ def site(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return out
 
 
+def _text_of(page: str) -> str:
+    """One HTML page as its visible text, whitespace collapsed.
+
+    Tags stripped rather than parsed: the assertion is about a sentence a
+    reader sees, and `<strong>` inside it is exactly what a substring check on
+    the raw markup would trip over.
+    """
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page))).strip()
+
+
 def _example(heading: str) -> dict[str, Any]:
     """The first fenced JSON block under one heading, parsed."""
     text = DOC.read_text()
@@ -85,7 +96,17 @@ def _published(site: Path, kind: str) -> dict[str, Any]:
     if kind == "manifest":
         return dict(load("manifest.json"))
     if kind == "index_row":
-        return dict(load("genes/index.json")["genes"][0])
+        # TBX5 by id, not `genes[0]`. The example under that heading is TBX5's
+        # row and the first row is now TBX20 (HGNC:11598) -- D21 took the index
+        # from 1 gene to 23, sorted by HGNC id. Every row carries the same keys
+        # by construction (`bundles.py::_headline` plus one literal dict), so
+        # this test would still pass on the wrong row; selecting the documented
+        # gene is what keeps it checking the example against what the example
+        # claims to be.
+        row = next(
+            item for item in load("genes/index.json")["genes"] if item["gene"] == "HGNC:11604"
+        )
+        return dict(row)
     if kind == "publication":
         return dict(load("publications.json")["publications"][0])
     if kind == "featured":
@@ -146,7 +167,13 @@ def test_the_contested_example_is_labelled_with_the_payload_it_comes_from(site: 
     which is published. So the document has to say where the fields live.
     """
     bundle = json.loads((site / "genes" / "HGNC_11604.json").read_text())
-    index_row = json.loads((site / "genes" / "index.json").read_text())["genes"][0]
+    # By id, for the reason `_published` gives: `genes[0]` is TBX20 since D21,
+    # and the bundle this is compared against is TBX5's.
+    index_row = next(
+        item
+        for item in json.loads((site / "genes" / "index.json").read_text())["genes"]
+        if item["gene"] == "HGNC:11604"
+    )
 
     assert "conflicting_lesion_groups" in index_row
     assert "conflicting_lesion_groups" not in bundle, "if this changes, the doc must too"
@@ -161,3 +188,42 @@ def test_the_contested_example_is_labelled_with_the_payload_it_comes_from(site: 
         "the section must say the per-group fields are browse-row only"
     )
     assert "conflicting_lesion_groups" in section
+
+
+def test_the_documented_uncurated_notice_is_the_sentence_the_page_actually_shows(
+    site: Path,
+) -> None:
+    """The doc quotes that paragraph verbatim, so drift makes the doc a lie.
+
+    Both of its clauses are narrower than the obvious wording, and both were
+    made narrower deliberately: "not yet curated **a lesion assertion**" rather
+    than "evidence", because `atlas_curation` is derived from `LesionAssertion`
+    records alone and a gene may carry curated functional evidence while
+    reporting `not_yet_curated`; and "**no classification** on this page is the
+    atlas's own" rather than "nothing on this page", which would deny that same
+    curated work one column from the rail counting it.
+
+    The document was written against the earlier, wider wording and kept it
+    through the fix, reintroducing in prose the ambiguity the code had just
+    removed. `EXHAUSTIVE` above pins documented *JSON* examples against the
+    build and had nothing to say about a quoted sentence; this closes that.
+    Raised by review on #14.
+
+    Compared against a real uncurated gene page rather than against
+    `pages._NOT_CURATED`, so the assertion fails if the constant stops reaching
+    the page at all -- comparing the doc to the constant would pass on a page
+    that renders neither.
+    """
+    page = (site / "genes" / "HGNC_4173.html").read_text()
+    assert "not_yet_curated" in page, "GATA4 must still be an uncurated gene for this to test"
+
+    text = DOC.read_text()
+    marker = "or, for the 22 genes published today with no curation here, a paragraph saying"
+    quote = text[text.index(marker) :]
+    quoted = " ".join(
+        line.lstrip("> ").strip() for line in quote.splitlines() if line.startswith(">")
+    )
+    assert quoted, "the doc must still quote the notice"
+    # `**bold**` in the quote is `<strong>` on the page; strip both to compare
+    # the sentence rather than its emphasis.
+    assert quoted.replace("**", "") in _text_of(page)

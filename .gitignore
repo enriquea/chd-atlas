@@ -233,6 +233,10 @@ dist/
 # workflow instructions, so they stay out of the public repository.
 docs/superpowers/
 
+# Brainstorming session scratch — mockups written by the visual companion while
+# a design is being worked out. Same rule as docs/superpowers/: local only.
+.superpowers/
+
 # File-manager droppings. Never curated content; the stray-entry sweeps ignore
 # them too, see OS_METADATA in src/chd_atlas/fs.py.
 .DS_Store

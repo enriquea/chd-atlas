@@ -34,10 +34,14 @@ sources:
     redistribution: permitted
   - id: hgnc
     name: HUGO Gene Nomenclature Committee
-    # The REST service has no release identifier; `https://rest.genenames.org/info`
-    # reports lastModified 2026-07-31T11:49:58.141Z for the index queried here.
+    # `mirrors/genes.tsv` is now derived from the complete-set TSV rather than
+    # the REST service, and that file carries no release tag inside it. Both
+    # metadata the authority does publish agree on the same day and are
+    # recorded as the version: the download's own `last-modified` header reads
+    # Fri, 31 Jul 2026 12:53:50 GMT, and `https://rest.genenames.org/info`
+    # reports lastModified 2026-07-31T11:49:58.141Z.
     version: "2026-07-31"
-    retrieved_on: 2026-07-31
+    retrieved_on: 2026-08-04
     url: https://www.genenames.org/
     # "all data is released under the Creative Commons Public Domain (CC0)
     # License ... any form of reuse of the content is permitted"

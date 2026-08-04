@@ -100,9 +100,11 @@ def _functional(gene: str) -> FunctionalEvidence:
 def _corpus(**overrides: object) -> Corpus:
     payload: dict[str, object] = {
         "root": Path("."),
-        # One of each kind. A32: the assertion is what makes a gene record exist
-        # at all — `build_search` draws genes from `corpus.assertions`, so a
-        # fixture without one leaves every gene assertion in this file vacuous.
+        # One of each kind. The assertion no longer decides which genes are
+        # indexed — D31 rekeyed that loop on `published` — but it is kept here
+        # because several tests below hand the same gene to both, and a corpus
+        # whose assertions name a gene outside `published` is the case
+        # `test_only_a_published_gene_is_searchable` builds deliberately.
         "assertions": (_assertion(),),
         "publications": (_publication(),),
         "phenotypes": (_phenotype(),),
@@ -160,6 +162,7 @@ def test_each_kind_is_published_as_one_record_of_what_a_visitor_types(tmp_path: 
                 aliases=("T-box 5", "Holt-Oram syndrome 1"),
             )
         },
+        published={TBX5},
     )
 
     assert _records(tmp_path) == [
@@ -220,17 +223,26 @@ def test_each_kind_is_ordered_by_identifier(tmp_path: Path) -> None:
     also pin *lexical* rather than numeric order, the decision A25 recorded:
     PMID:10 and PMID:100 lead PMID:9, and `derive.py` orders them the same way.
 
-    Genes come from a set, so the mutant publishes hash order and the guard is
-    only as strong as the fixture is wide. Measured on these exact ids in this
-    exact corpus order, one process per seed over `PYTHONHASHSEED` 1-200,
-    counting the seeds on which set order already equals sorted order and the
-    mutant would therefore survive: 2 genes 97/200, 3 genes 49/200, 4 genes
-    27/200, 5 genes 0/200, 6 genes 0/200 (and 0/1000 over a wider sweep).
+    Genes come from a set — `published`, since D31 — so the mutant publishes
+    hash order and the guard is only as strong as the fixture is wide. Remeasured
+    2026-08-04 on `set(SIX_GENES[:n])`, the construction below, one process per
+    seed over `PYTHONHASHSEED` 1-200, counting the seeds on which set order
+    already equals sorted order and the mutant would therefore survive: 2 genes
+    97/200, 3 genes 49/200, 4 genes 30/200, 5 genes 0/200, 6 genes 0/200 (and
+    0/1000 over a wider sweep).
+
+    That is a remeasurement and not a copy. The ladder previously recorded 27/200
+    at four genes, measured when this loop built its set by comprehension over
+    `corpus.assertions`; `set(tuple)` presizes from the length hint where a
+    comprehension grows and resizes, so the two constructions do not share a
+    table size and do not iterate alike. Four of the five rungs came back
+    identical, which is exactly why the one that moved had to be run rather than
+    carried over.
 
     Do not read the ladder as permission to shrink this fixture. Four genes is
-    not a near-miss — it is a test that passes against a broken build on one run
-    in seven — and an earlier draft of this docstring claimed 1/200 there, a
-    figure carried over from A10's five-PMID measurement on a different id set.
+    not a near-miss — it is a test that passes against a broken build on three
+    runs in twenty — and an earlier draft of this docstring claimed 1/200 there,
+    a figure carried over from A10's five-PMID measurement on a different id set.
     Five is the first size that holds, and six is what A10 measured on the
     equivalent guard in `derive.py`; the margin is the point.
 
@@ -241,10 +253,9 @@ def test_each_kind_is_ordered_by_identifier(tmp_path: Path) -> None:
     be asserted against a literal, as below, not against a second run.
     """
     corpus = _corpus(
-        assertions=tuple(
-            _assertion(gene=gene, identifier=f"CHDA:AST:{index:07d}")
-            for index, gene in enumerate(SIX_GENES, start=1)
-        ),
+        # No assertions at all, which is now the ordinary case rather than a
+        # degenerate one: 22 of the 23 genes this site publishes carry none.
+        assertions=(),
         publications=(_publication("PMID:9"), _publication("PMID:10"), _publication("PMID:100")),
         phenotypes=(
             _phenotype("MONDO:0005453", "Atrioventricular septal defect"),
@@ -254,10 +265,10 @@ def test_each_kind_is_ordered_by_identifier(tmp_path: Path) -> None:
     )
     emitter = Emitter(root=tmp_path)
 
-    build_search(corpus, emitter, genes={})
+    build_search(corpus, emitter, genes={}, published=set(SIX_GENES))
 
     assert [record["id"] for record in _records(tmp_path)] == [
-        # Genes, by HGNC id. The corpus lists these in the reverse of this order.
+        # Genes, by HGNC id. `SIX_GENES` lists these in the reverse of this order.
         TBX5,
         "HGNC:12873",
         NKX2_5,
@@ -276,7 +287,7 @@ def test_each_kind_is_ordered_by_identifier(tmp_path: Path) -> None:
     ]
 
 
-def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
+def test_a_gene_never_repeats_a_term_and_never_publishes_a_blank_one(
     tmp_path: Path,
 ) -> None:
     """Two ways a term arrives twice, and the one that survives a green gate.
@@ -285,17 +296,15 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
     validates and no gate refuses — `mirrors/genes.tsv` is an upstream dump and
     the aliases cell is free text. GATA4 is the other way in: absent from the
     registry, its label falls back to the HGNC id, which `terms` already carries,
-    so the id would appear twice. That second case is unreachable behind
-    `build_site` — REF001 makes an asserted gene missing from the registry an
-    error — so it is the first that justifies deduplicating and the second that
-    comes along for free.
+    so the id would appear twice. Since D31 rekeyed the loop on `published`, that
+    second case is reachable behind a green gate too: REF001 covers an *asserted*
+    gene missing from the registry, and neither it nor any other rule pairs
+    `mirrors/clingen_gene_validity.tsv` with `mirrors/genes.tsv`. It used to be
+    the first case alone that justified deduplicating, with the second along for
+    free; both now stand on their own.
 
     Neither duplicate would change a query's outcome; both would publish bytes
     that say the atlas thinks "TBX5" is two different things you can search for.
-
-    Also pinned here: two assertions about one gene are one result. `id` is the
-    gene, not the assertion, so without the set a curator splitting one gene's
-    evidence across two records would double it in every search.
 
     And this is the only test that fails if an absent `name` is published rather
     than dropped. A `name` is required by TBL003, so it arrives falsy only
@@ -307,20 +316,21 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
     `mirrors/genes.tsv` would make that gene a hit for anything a visitor types.
     A truthiness check drops both; `is not None` drops only the first and passes
     every other test in this file.
+
+    The corpus is empty of assertions on purpose. Until D31 this test also
+    pinned "two assertions about one gene are one result", which the set
+    comprehension over `corpus.assertions` bought; that comprehension is gone,
+    so the claim is now about `published`'s own set-ness and belongs to
+    whoever builds it, not here.
     """
-    corpus = _corpus(
-        assertions=(
-            _assertion(gene=TBX5, identifier="CHDA:AST:0000001"),
-            _assertion(gene=TBX5, identifier="CHDA:AST:0000002"),
-            _assertion(gene=GATA4, identifier="CHDA:AST:0000003"),
-        ),
-        publications=(),
-        phenotypes=(),
-    )
+    corpus = _corpus(assertions=(), publications=(), phenotypes=())
     emitter = Emitter(root=tmp_path)
 
     build_search(
-        corpus, emitter, genes={TBX5: GeneLabels(symbol="TBX5", name="", aliases=("TBX5",))}
+        corpus,
+        emitter,
+        genes={TBX5: GeneLabels(symbol="TBX5", name="", aliases=("TBX5",))},
+        published={TBX5, GATA4},
     )
 
     records = _records(tmp_path)
@@ -330,25 +340,37 @@ def test_a_gene_is_one_record_however_many_assertions_and_never_repeats_a_term(
     assert records[1]["terms"] == [GATA4]
 
 
-def test_only_a_gene_carrying_an_assertion_is_searchable(tmp_path: Path) -> None:
-    """Searchable means curated, and it has to, because `path` is a promise.
+def test_only_a_published_gene_is_searchable(tmp_path: Path) -> None:
+    """`path` is a promise, and this is the direction that can dangle.
 
     A gene record advertises `genes/<id>.json`, and `build_genes` writes one
-    bundle per gene `gene_facts` returns — the genes carrying an assertion.
-    Drawing this list from the gene registry instead would publish search hits
-    whose only action is a fetch that 404s, and nothing downstream could catch
-    it: `Emitter.checksums` records what the build wrote, never what a payload
-    promised.
+    bundle per member of `published` and no others. Drawing this list from the
+    154-gene registry would publish 131 search hits whose only action is a fetch
+    that 404s, and drawing it from `corpus.assertions` would publish one for
+    every gene a curator has written about that no ClinGen panel calls
+    definitive. Nothing downstream catches either: `Emitter.checksums` records
+    what the build wrote, never what a payload promised.
 
-    NKX2-5 below is mirrored but uncurated, the ordinary case — the registry
-    holds every gene, the atlas curates a few. GATA4 carries functional evidence
-    and no assertion, which is A29's case: that record reaches no published file
-    at all, so its gene cannot be made findable here either. Both are excluded by
-    one rule, and this is the only test in the file that would notice if either
-    stopped being.
+    Both wrong populations are excluded here by one rule. NKX2-5 is mirrored but
+    unpublished, the ordinary case — the registry holds every gene, ClinGen has
+    called 23 of them definitive for CHD. GATA4 is the sharper one: it carries
+    both an assertion and a functional record and is still outside `published`,
+    so keying on the assertions would advertise `genes/HGNC_4173.json` for a
+    bundle no builder wrote. That case is legal under every validator in the
+    project — see `search.py`'s module docstring — which is why it is
+    constructed rather than waited for.
+
+    The opposite direction, a published gene that no assertion names, is
+    `test_every_published_gene_is_searchable`, and neither test subsumes the
+    other. Measured by applying each mutant and running this file: keyed on
+    `genes`, the whole registry, this test fails and that one passes; keyed on
+    `set(published) & {a.gene for a in corpus.assertions}` — every published
+    gene a curator has also written about, which is what the old rule amounted
+    to — that one fails and this one passes. Keyed on the assertions alone, both
+    fail.
     """
     corpus = _corpus(
-        assertions=(_assertion(gene=TBX5),),
+        assertions=(_assertion(gene=TBX5), _assertion(gene=GATA4, identifier="CHDA:AST:0000002")),
         functional=(_functional(GATA4),),
         publications=(),
         phenotypes=(),
@@ -363,9 +385,46 @@ def test_only_a_gene_carrying_an_assertion_is_searchable(tmp_path: Path) -> None
             GATA4: GeneLabels(symbol="GATA4"),
             NKX2_5: GeneLabels(symbol="NKX2-5", aliases=("CSX",)),
         },
+        published={TBX5},
     )
 
     assert [record["id"] for record in _records(tmp_path)] == [TBX5]
+
+
+def test_every_published_gene_is_searchable(tmp_path: Path) -> None:
+    """D31. 22 of 23 pages would otherwise be unreachable from the search box.
+
+    Not covered by the dead-link sweep in `tests/test_built_site_is_consumable.py`:
+    that walks every published `path` and checks a file exists, so a *missing*
+    record breaks nothing and the sweep stays green while a visitor typing GATA4
+    gets no result and `genes/HGNC_4173.json` sits on the site.
+
+    GATA4 below carries no assertion, which is the ordinary case rather than a
+    contrived one: on the committed corpus 22 of the 23 published genes carry
+    none. Its `terms` are asserted as well as its presence, because a record
+    published with an empty `terms` list is findable by nothing typed and would
+    satisfy a test that only counted records.
+    """
+    corpus = _corpus(assertions=(_assertion(gene=TBX5),), publications=(), phenotypes=())
+    emitter = Emitter(root=tmp_path)
+
+    build_search(
+        corpus,
+        emitter,
+        genes={
+            TBX5: GeneLabels(symbol="TBX5", name="T-box transcription factor 5"),
+            GATA4: GeneLabels(symbol="GATA4", name="GATA binding protein 4"),
+        },
+        published={TBX5, GATA4},
+    )
+
+    genes = [record for record in _records(tmp_path) if record["kind"] == "gene"]
+    assert [record["label"] for record in genes] == ["TBX5", "GATA4"]
+    assert [record["path"] for record in genes] == [
+        "genes/HGNC_11604.json",
+        "genes/HGNC_4173.json",
+    ]
+    assert genes[1]["terms"] == ["GATA4", GATA4, "GATA binding protein 4"]
 
 
 def test_an_empty_corpus_still_publishes_one_gzipped_index_at_a_fixed_path(
@@ -383,7 +442,7 @@ def test_an_empty_corpus_still_publishes_one_gzipped_index_at_a_fixed_path(
     """
     emitter = Emitter(root=tmp_path)
 
-    build_search(Corpus(root=Path(".")), emitter, genes={})
+    build_search(Corpus(root=Path(".")), emitter, genes={}, published=set())
 
     assert set(emitter.checksums) == {"search/index.json.gz"}
     written = (tmp_path / "search" / "index.json.gz").read_bytes()
