@@ -3,11 +3,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 import pytest
 
-from chd_atlas.build.validity import GeneValidity, gene_validity, uncurated
-from chd_atlas.vocab import ValiditySource, ValidityState
+from chd_atlas.build.validity import (
+    GeneValidity,
+    ValidityRecord,
+    gene_validity,
+    published_genes,
+    uncurated,
+)
+from chd_atlas.corpus import load_curation
+from chd_atlas.tables import TABLE_SCHEMAS, read_table
+from chd_atlas.vocab import Classification, ValiditySource, ValidityState
 
 _CLINGEN_COLUMNS = (
     "gene",
@@ -76,6 +86,26 @@ def _gencc_row(**overrides: object) -> dict[str, object]:
     }
     row.update(overrides)
     return row
+
+
+@pytest.fixture(scope="module")
+def repository_validity() -> dict[str, GeneValidity]:
+    """`gene_validity()` over the committed mirrors and scope file.
+
+    Module-scoped: the GenCC mirror is 30,410 rows, and one call costs 0.22s
+    (mean of 5 warmed runs, measured 2026-08-04) -- more than a third of what
+    this whole module currently takes to run.
+    """
+    root = Path(__file__).parent.parent.parent
+    corpus, _ = load_curation(root)
+    clingen, _ = read_table(
+        root / "mirrors" / "clingen_gene_validity.tsv", TABLE_SCHEMAS["clingen_validity"]
+    )
+    gencc, _ = read_table(
+        root / "mirrors" / "gencc_submissions.tsv", TABLE_SCHEMAS["gencc_submissions"]
+    )
+    assert clingen is not None and gencc is not None
+    return gene_validity(clingen, gencc, in_scope={str(entry.id) for entry in corpus.chd_scope})
 
 
 def _clingen_frame(*rows: dict[str, object]) -> pl.DataFrame:
@@ -317,3 +347,103 @@ def test_uncurated_is_the_shape_for_no_authority_and_a_fresh_instance_each_call(
         state=ValidityState.UNCURATED, records=(), has_source_discordance=False
     )
     assert first is not second
+
+
+def test_only_a_clingen_definitive_record_publishes_a_gene() -> None:
+    """D21, and the reason it is not spelled as "headline definitive".
+
+    On the mirrors as committed the two rules select the identical 23 genes,
+    which is exactly why the distinction has to be pinned here rather than left
+    to coincidence. `strong` is not definitive; a GenCC `definitive` is not an
+    expert panel's; and a gene ClinGen graded `limited` must not be admitted by
+    a submitter who graded it `definitive`.
+    """
+    published = published_genes(
+        {
+            "HGNC:1": GeneValidity(
+                records=(
+                    ValidityRecord(
+                        source=ValiditySource.CLINGEN,
+                        classification=Classification.DEFINITIVE,
+                        classification_term="Definitive",
+                        disease="MONDO:0007732",
+                        disease_label="Holt-Oram syndrome",
+                        moi="AD",
+                        report_url=None,
+                    ),
+                ),
+                state=ValidityState.EXPERT_CURATED,
+                has_source_discordance=False,
+            ),
+            "HGNC:2": GeneValidity(
+                records=(
+                    ValidityRecord(
+                        source=ValiditySource.CLINGEN,
+                        classification=Classification.STRONG,
+                        classification_term="Strong",
+                        disease="MONDO:0007732",
+                        disease_label="Holt-Oram syndrome",
+                        moi="AD",
+                        report_url=None,
+                    ),
+                ),
+                state=ValidityState.EXPERT_CURATED,
+                has_source_discordance=False,
+            ),
+            "HGNC:3": GeneValidity(
+                records=(
+                    ValidityRecord(
+                        source=ValiditySource.GENCC,
+                        classification=Classification.DEFINITIVE,
+                        classification_term="Definitive",
+                        disease="MONDO:0007732",
+                        disease_label="Holt-Oram syndrome",
+                        moi="Autosomal dominant",
+                        report_url=None,
+                        submitter="Ambry Genetics",
+                    ),
+                ),
+                state=ValidityState.SUBMITTER_CURATED,
+                has_source_discordance=False,
+            ),
+            "HGNC:4": GeneValidity(
+                records=(
+                    ValidityRecord(
+                        source=ValiditySource.CLINGEN,
+                        classification=Classification.LIMITED,
+                        classification_term="Limited",
+                        disease="MONDO:0007732",
+                        disease_label="Holt-Oram syndrome",
+                        moi="AD",
+                        report_url=None,
+                    ),
+                    ValidityRecord(
+                        source=ValiditySource.GENCC,
+                        classification=Classification.DEFINITIVE,
+                        classification_term="Definitive",
+                        disease="MONDO:0007732",
+                        disease_label="Holt-Oram syndrome",
+                        moi="Autosomal dominant",
+                        report_url=None,
+                        submitter="G2P",
+                    ),
+                ),
+                state=ValidityState.EXPERT_CURATED,
+                has_source_discordance=False,
+            ),
+        }
+    )
+    assert published == {"HGNC:1"}
+
+
+def test_the_committed_mirrors_publish_twenty_three_genes(
+    repository_validity: dict[str, GeneValidity],
+) -> None:
+    """A regression pin on the live corpus, not a restatement of the rule above.
+
+    23 is what `docs/data-api.md`, `index.html`'s counts and the manifest's file
+    list are all written against. A scope-file edit or a mirror refresh that
+    moves this number should fail here and be looked at, not discovered in a
+    deployed site.
+    """
+    assert len(published_genes(repository_validity)) == 23

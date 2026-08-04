@@ -31,6 +31,7 @@ differently between processes unless this module sorts it before returning.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import polars as pl
@@ -280,3 +281,40 @@ def gene_validity(
             has_source_discordance=_has_source_discordance(records),
         )
     return result
+
+
+def published_genes(validity: Mapping[str, GeneValidity]) -> set[str]:
+    """The genes the atlas publishes a page for. Design decision D21.
+
+    A gene qualifies when some mirrored record carries `source == CLINGEN` and
+    `classification == DEFINITIVE`. Every record reaching here already names a
+    disease listed in `curation/chd_scope.yaml` -- `gene_validity` filters on
+    that -- so this does not re-check scope.
+
+    **Not** "headline confidence is definitive and validity state is expert
+    curated." Measured on the mirrors as committed (2026-08-04), the two rules
+    select the identical 23 genes, which is precisely why the difference has to
+    be written down. `state` records only that ClinGen has *a* row for the gene,
+    never what that row says, so the second rule admits a gene ClinGen graded
+    `Limited` on the strength of a GenCC submitter grading it `Definitive`. No
+    such gene is in scope today. `test_build_validity.py` constructs one.
+
+    GenCC is excluded because it aggregates rather than adjudicates and says so
+    itself. The five in-scope genes it alone calls definitive -- ELN, GDF1,
+    MMP21, PKD1L1, TBX1 -- have no ClinGen curation for any disease at all
+    except ELN, curated only for cutis laxa, so this is not a gap in the scope
+    file that a curator could close. GDF1 is the case that settles it: its
+    in-scope submissions run from G2P's `Definitive` to Illumina's `No Known
+    Disease Relationship`, and `has_conflicting_evidence` reports `False` for
+    that pair because `no_known_association` belongs to neither side of its test
+    (spec D34). A 28-gene gate would publish it as settled.
+    """
+    return {
+        gene
+        for gene, entry in validity.items()
+        if any(
+            record.source is ValiditySource.CLINGEN
+            and record.classification is Classification.DEFINITIVE
+            for record in entry.records
+        )
+    }
