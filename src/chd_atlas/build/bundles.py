@@ -203,8 +203,19 @@ def build_genes(
     variants: Mapping[str, list[dict[str, Any]]],
     validity: dict[str, GeneValidity],
     published: Collection[str],
-) -> None:
-    """Emit `genes/index.json` and one bundle per published gene.
+) -> dict[str, GeneFacts]:
+    """Emit `genes/index.json` and one bundle per published gene, and return the facts.
+
+    The return is `gene_facts`' mapping, handed back rather than discarded so
+    that `build_gene_pages` and `build_gene_index_page` render from the same
+    derivation these bundles were written from. Deriving it a second time in the
+    runner would type-check, cost another pass over the corpus, and leave two
+    call sites free to drift apart — a page and the bundle it links to
+    disagreeing about a gene's confidence is exactly the failure `_headline`
+    exists to make unrepresentable within one payload, and it would reappear
+    between payloads. Returning it does not widen what this function promises:
+    the mapping is `gene_facts`' own return, keyed on the same population, and
+    this function does not mutate it.
 
     `published` is D21's population: `build.validity.published_genes()`'s
     return, the genes a ClinGen expert panel classifies definitive for an
@@ -339,3 +350,4 @@ def build_genes(
     # "no genes curated yet" from "wrong URL" by reading a 404 will get it wrong,
     # and this is the first thing the browse page fetches.
     emitter.write_json("genes/index.json", {"genes": index})
+    return facts

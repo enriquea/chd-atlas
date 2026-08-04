@@ -386,6 +386,53 @@ def test_the_site_publishes_exactly_the_genes_the_gate_selects(repo: Path, tmp_p
     }
 
 
+def test_a_built_site_carries_a_page_for_every_published_gene(repo: Path, tmp_path: Path) -> None:
+    """`build_site` is the only place the published population reaches the page builders.
+
+    Nothing in `src/` imported `pages.py` until this call existed — only its own
+    unit test did — while `build_landing` and the shared `<nav>` already linked
+    to `genes/index.html`. That is a green build with every checksum verifying
+    and every visitor who clicks "Genes" served a 404: the work reaching no
+    page, which is the failure this project is written against.
+
+    Both directions are asserted. A missing page is a dead link from a row the
+    browse payload published; an extra page is a gene reachable by URL that the
+    index does not list, which is how a de-published gene stays up. The expected
+    names are derived from each row's own `bundle` rather than from a second
+    `slug()` call, so the test cannot reproduce a page-naming bug and agree with
+    it.
+
+    The count is deliberately not re-pinned here — `test_build_validity.py` and
+    `test_build_landing.py` already hold the figure of 23, and a third copy would
+    fail as a mirror refresh rather than as a defect. What is guarded instead is
+    that the index is non-empty, without which every assertion below is vacuous.
+
+    Mutation matrix, measured 2026-08-04 against the full suite (616 tests), one
+    fresh process per mutant. Each was killed by this test and by no other:
+
+    * `build_gene_pages` dropped from `build_site` — 1 failed, 615 passed.
+    * `build_gene_index_page` dropped from `build_site` — 1 failed, 615 passed.
+    * `symbols={}` passed to `build_gene_index_page` — 1 failed, 615 passed,
+      which is what earns the symbol loop its place beside the file-set
+      assertion. `test_every_gene_label_the_registry_holds_reaches_the_site`
+      does not cover it: that one reads `genes/index.json` and the search index,
+      neither of which this builder writes.
+    """
+    out = tmp_path / "dist"
+
+    build_site(repo, out)
+
+    index = json.loads((out / "genes" / "index.json").read_text())["genes"]
+    assert index, "an empty index would make every assertion below assert nothing"
+
+    expected = {Path(row["bundle"]).name.replace(".json", ".html") for row in index}
+    assert {path.name for path in (out / "genes").glob("*.html")} == expected | {"index.html"}
+
+    browse = (out / "genes" / "index.html").read_text(encoding="utf-8")
+    for row in index:
+        assert row["symbol"] in browse, f"{row['symbol']} is published but is not browsable"
+
+
 def test_the_site_carries_the_terms_of_everything_it_republishes(
     repo: Path, tmp_path: Path
 ) -> None:
