@@ -64,6 +64,22 @@ class ValidityRecord:
     getting separate record types, because every consumer of `records` wants
     one homogeneous list to sort, filter and render, not a union type to match
     on first.
+
+    **`submitted_on` and `sgc_id` are read from the GenCC mirror and
+    deliberately not fields here, so they reach no published byte.** This is a
+    scope decision, recorded because its symptom is indistinguishable from the
+    silent evidence loss `CLAUDE.md` calls this project's characteristic
+    failure: `tables.py::GENCC_SUBMISSIONS` declares and validates both columns,
+    so a reader who finds them in `mirrors/gencc_submissions.tsv` and not in a
+    bundle has no way to tell a decision from a dropped join. Measured
+    2026-08-04 against a real build: of the 142 validity records the 23
+    published bundles carry, 119 are GenCC, and all 119 have a non-null
+    `submitted_on` and a non-null `sgc_id` in the mirror. The consequence is
+    that a GenCC record publishes no date at all -- `classification_date` is
+    ClinGen's and is `None` on every one of the 119 -- and no stable identifier,
+    leaving `(source, disease, moi, submitter)` as the only key distinguishing
+    it, the same tuple `_sort_key` orders on. Publishing them would be purely
+    additive and so a `schema_version` minor bump; it is queued, not refused.
     """
 
     source: ValiditySource

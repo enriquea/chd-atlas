@@ -21,6 +21,17 @@ this build turns data into script -- `bundles.py` and `search.py` already treat
 curator- and mirror-supplied strings as data for the same reason -- and taking
 pre-rendered HTML would move that decision to every caller. `Link` exists so a
 cell can carry a URL without any caller needing to write an `<a>` tag.
+
+`document` renders `RESEARCH_USE_NOTICE` itself, so the statement is on the page
+before any caller's body is. It used to live in `landing.py`, which meant it
+reached `index.html` and nothing else: measured 2026-08-04 against a real build,
+`grep -l "not a clinical decision-support tool" ` matched 1 of the 25 HTML files
+the build writes, and the 24 that carry a gene-level classification -- 23 gene
+pages and the browse page -- carried no research-use statement at all. A
+clinician arriving at `genes/HGNC_4173.html` from a search engine met `GATA4`, an
+HGNC id and a green `definitive` chip, first in DOM order and filling the first
+screen under 46rem. Putting it here is what makes it structurally impossible to
+add a page kind without it.
 """
 
 from __future__ import annotations
@@ -60,13 +71,15 @@ STYLESHEET: Final = """
   .tagline { color: var(--muted); margin-top: 0; }
   h2 { margin-top: 2.25rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
   .notice {
+    max-width: 58rem; margin: 0 auto 1.5rem;
     border: 1px solid var(--notice-border); background: var(--notice-bg);
-    border-radius: 6px; padding: 1rem 1.25rem; margin: 1.5rem 0;
+    border-radius: 6px; padding: 0.65rem 0.9rem; font-size: 0.9rem;
   }
-  .notice h2 { margin: 0 0 0.5rem; border: none; padding: 0; font-size: 1.05rem; }
+  .notice p { margin: 0; }
+  .scope-rule { color: var(--muted); font-size: 0.9rem; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; margin: 0; }
   dt { color: var(--muted); }
-  dd { margin: 0; }
+  dd { margin: 0; overflow-wrap: break-word; }
   a { color: var(--link); }
   code { background: var(--chip-bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
   ul.links { list-style: none; padding: 0; margin: 0; }
@@ -125,6 +138,23 @@ FILTER_SCRIPT: Final = """
   apply();
 })();
 """
+
+
+# The project owner's own words, and the one string in this build that must
+# reach a reader character for character. Kept as a single line with single
+# spaces so a check for it is a plain substring check on the page's bytes rather
+# than one that has to normalise a source wrap away first; `<strong>` is markup
+# from this module, in the same class as `FILTER_SCRIPT` above, never a value
+# from a caller.
+#
+# Do not reword, shorten or split this sentence. It is the site's only statement
+# about what the atlas may and may not be used for, and every page now carries
+# it, so a change here changes 25 pages at once.
+RESEARCH_USE_NOTICE: Final = (
+    "This atlas is under active development. It is "
+    "<strong>not a clinical decision-support tool</strong> and must not be used to make "
+    "or guide a diagnostic, treatment or any other clinical decision."
+)
 
 
 @dataclass(frozen=True)
@@ -201,6 +231,14 @@ def document(*, title: str, root: str, body: str, script: str = "") -> str:
     `body` is HTML the caller has already assembled from the primitives above;
     it is the one argument not escaped here, which is why every primitive exists.
     `script` is likewise inlined verbatim and must be a literal from this module.
+
+    `RESEARCH_USE_NOTICE` is emitted **before** `<main>`, so it precedes whatever
+    the caller assembled in DOM order, in reading order and in the order a screen
+    reader reaches it -- on a gene page that means it comes before the symbol,
+    the HGNC id and the `definitive` chip rather than after them. It carries
+    `role="note"` and no heading of its own: a gene page's `<h1>` lives inside
+    `pages._rail`, and a heading here would put an `<h2>` above every `<h1>` on
+    the site.
     """
     tail = f"<script>{script}</script>" if script else ""
     # Assembled ahead of the template only to keep the line under 100 characters;
@@ -210,6 +248,7 @@ def document(*, title: str, root: str, body: str, script: str = "") -> str:
         f'<nav><a href="{home}index.html">CHD Atlas</a> &middot; '
         f'<a href="{home}genes/index.html">Genes</a></nav>'
     )
+    notice = f'<div class="notice" role="note"><p>{RESEARCH_USE_NOTICE}</p></div>'
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -220,6 +259,7 @@ def document(*, title: str, root: str, body: str, script: str = "") -> str:
 </head>
 <body>
 {nav}
+{notice}
 <main>
 {body}
 </main>

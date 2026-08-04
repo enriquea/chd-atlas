@@ -81,6 +81,27 @@ from chd_atlas.corpus import Corpus
 # one.
 _REPOSITORY_URL = "https://github.com/enriquea/chd-atlas"
 
+# A caption that told a reader to wait for something that had already happened.
+#
+# It read "(browsable once ClinGen grades it definitive)", and the gate is not
+# "definitive" -- it is definitive *for one of the diseases this atlas calls
+# CHD*. `validity.published_genes` requires a ClinGen `Definitive` record, and
+# `gene_validity` has already dropped every record naming an out-of-scope
+# disease before that test runs. Measured 2026-08-04 against the committed
+# mirrors: of the 154 genes counted by this row, **20** already carry a ClinGen
+# `Definitive` grade and are still not browsable, because the grade is for a
+# disease outside CHD scope -- ACTC1, ACVR1, ANKRD11, BMPR1A, BMPR2, COL1A2,
+# ELN, FLNA, FOXP1, KDR, MED13L, MYBPC3, MYH11, MYH7, NOTCH1, PDGFRA, POPDC1,
+# RECQL4, SCN5A, SMAD6. ELN was graded Definitive in 2024, for cutis laxa.
+#
+# A constant rather than a literal in the template because the label must render
+# on one line for the row to read as one label, and the sentence no longer fits
+# in 100 characters of source.
+_MIRRORED_ROW_LABEL = (
+    "Genes with mirrored validity in CHD scope "
+    "(browsable once ClinGen grades it definitive for a disease in that scope)"
+)
+
 
 def _plural(count: int, noun: str) -> str:
     """The only pluralisation this page needs: `1 assertion` vs `2 assertions`."""
@@ -131,13 +152,6 @@ def _render(
   <p class="tagline">Curated evidence linking genes, variants and proteins to congenital
     heart disease.</p>
 
-  <section class="notice">
-    <h2>Development status &amp; research use</h2>
-    <p>This atlas is under active development. It is
-      <strong>not a clinical decision-support tool</strong> and must not be used to make
-      or guide a diagnostic, treatment or any other clinical decision.</p>
-  </section>
-
   <h2>What this is</h2>
   <p>A curator reads the primary literature and mirrors upstream reference sources —
     ClinGen, GenCC, HPO — to build a static, queryable record of the evidence behind a
@@ -174,7 +188,7 @@ def _render(
     republished with its provenance intact. <a href="sources.json">sources.json</a> carries
     the licence and attribution terms each of these is mirrored under.</p>
   <dl>
-    <dt>Genes with mirrored validity in CHD scope (browsable once ClinGen grades it definitive)</dt>
+    <dt>{_MIRRORED_ROW_LABEL}</dt>
     <dd>{mirrored_gene_count}</dd>
   </dl>
 

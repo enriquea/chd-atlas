@@ -14,7 +14,7 @@ import pytest
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.landing import build_landing
 from chd_atlas.build.paths import LANDING
-from chd_atlas.build.render import STYLESHEET
+from chd_atlas.build.render import RESEARCH_USE_NOTICE, STYLESHEET
 from chd_atlas.build.runner import build_site
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.corpus import Corpus
@@ -32,8 +32,21 @@ REPO = Path(__file__).parent.parent.parent
 # curation from this atlas at all. What decides is ClinGen's grade, and that is
 # what it now says. The row's placement and label are pinned below for the
 # reason they always were -- this number must never read as published coverage.
+#
+# It then said "(browsable once ClinGen grades it definitive)", which was false
+# in the other direction: measured 2026-08-04 against the committed mirrors, 20
+# of these 154 genes already carry a ClinGen `Definitive` grade and are still
+# not browsable, because the grade names a disease outside CHD scope -- ELN was
+# graded Definitive in 2024, for cutis laxa. The caption told a reader to wait
+# for something that had already happened. The gate is definitive **for a
+# disease in that scope**, which is what `published_genes` actually tests.
+#
+# A literal here rather than an import of `landing._MIRRORED_ROW_LABEL`: a test
+# that reads the label out of the module and compares it to itself passes on any
+# wording at all, including the one this replaces.
 _MIRRORED_ROW_LABEL = (
-    "Genes with mirrored validity in CHD scope (browsable once ClinGen grades it definitive)"
+    "Genes with mirrored validity in CHD scope "
+    "(browsable once ClinGen grades it definitive for a disease in that scope)"
 )
 
 
@@ -362,37 +375,39 @@ def test_no_assertions_yet_reads_as_none_rather_than_as_an_empty_list(tmp_path: 
     assert re.search(r"<dt>Genes published</dt>\s*<dd>0</dd>", text)
 
 
-def test_the_research_use_statement_is_exactly_the_two_sentences_specified(
+def test_the_research_use_statement_reaches_the_front_page_exactly_once(
     tmp_path: Path,
 ) -> None:
-    """The development-status notice: exactly two sentences, nothing else.
+    """The development-status notice: exactly two sentences, once, and no more.
 
     The paragraph this notice used to carry beneath them -- "Today it holds {N}
     curated gene-disease assertion..." -- editorialised with a claim false for
     100% of described genes ("almost every gene this site describes carries an
     upstream expert panel's or submitter's classification and nothing this
     atlas has independently curated"): the committed corpus describes one gene,
-    and it is the curated one. That paragraph is gone; this test pins the
-    notice section down to the two sentences that replace it, so it cannot grow
-    a new editorial claim unnoticed.
+    and it is the curated one. That paragraph is gone, and this page has no
+    editorial prose left between the notice and "What this is".
+
+    The notice itself now belongs to `render.document`, which puts it on all 25
+    pages instead of this one (see `test_build_render.py`). What is still this
+    file's business is that the landing page did not keep a second copy: the
+    section that used to hold it was removed here rather than left to render
+    alongside the shared one, and two copies of the site's only research-use
+    statement is how one of them comes to be edited and the other not.
+
+    Counted on `RESEARCH_USE_NOTICE` rather than on the substring "not a
+    clinical decision-support tool", because the emphasis markup is part of what
+    the owner specified and a page carrying the sentence with the `<strong>`
+    dropped would satisfy the looser check.
     """
     corpus = Corpus(root=Path("."), assertions=(_assertion(),))
 
     text = _build(corpus, {TBX5: "TBX5"}, {TBX5: uncurated()}, tmp_path)
-    notice = _prose(_section(text, "<h2>Development status &amp; research use</h2>"))
 
-    expected = (
-        "This atlas is under active development. It is "
-        "<strong>not a clinical decision-support tool</strong> and must not be used to make "
-        "or guide a diagnostic, treatment or any other clinical decision."
-    )
-    # `_section` stops at the next `<h2>`, which for the notice is `</section>` first
-    # -- strip everything from the closing tag on, so this compares the paragraph
-    # only, not the section wrapper around it.
-    notice = notice[: notice.index("</section>")]
-    assert expected in notice
-    assert "Today it holds" not in notice
-    assert "independently curated" not in notice
+    assert text.count(RESEARCH_USE_NOTICE) == 1
+    assert "<h2>Development status &amp; research use</h2>" not in text
+    assert "Today it holds" not in text
+    assert "independently curated" not in text
 
 
 def test_a_gene_symbol_is_escaped_before_it_reaches_the_page(tmp_path: Path) -> None:

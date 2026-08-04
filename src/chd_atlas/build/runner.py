@@ -271,7 +271,11 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         assertions=_assertions_by_gene(corpus),
         publications={publication.id: publication for publication in corpus.publications},
     )
-    build_gene_index_page(facts, emitter, symbols=symbols)
+    # `validity` again, and the same object `build_gene_pages` was handed: the
+    # browse row's `definitive for` cell and the gene page's `definitive for`
+    # rail row must name one disease, and they do because both read this mapping
+    # rather than either re-deriving it from the mirrors.
+    build_gene_index_page(facts, emitter, symbols=symbols, validity=validity)
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))
     return dict(emitter.checksums)

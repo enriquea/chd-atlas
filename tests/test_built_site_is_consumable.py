@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from chd_atlas.build.render import RESEARCH_USE_NOTICE
 from chd_atlas.build.runner import build_site
 
 REPO = Path(__file__).parent.parent
@@ -101,6 +102,32 @@ def test_every_path_the_site_advertises_resolves(site: Path) -> None:
     for source, relative in references:
         assert site.joinpath(*relative.split("/")).is_file(), (
             f"{source} advertises {relative}, which was never written"
+        )
+
+
+def test_every_html_page_the_build_writes_carries_the_research_use_notice(site: Path) -> None:
+    """Not one page kind. Every page, counted off the filesystem.
+
+    `test_build_render.py` pins the sentence and pins that `document` emits it.
+    This is the different question, and the one the defect actually was: *does
+    every page the real build writes go through `document`?* Measured 2026-08-04
+    on the build immediately before this change, the answer was no in effect --
+    the notice lived in `landing.py`, so `grep -l` matched 1 of 25 files and the
+    24 carrying gene-level classifications matched none.
+
+    Enumerated with `rglob("*.html")` rather than against a list of expected
+    paths, so a page kind added later is covered without anyone remembering to
+    add it here -- which is the failure mode this replaces. The count is asserted
+    too: an `rglob` that matched nothing would satisfy an all-pages loop
+    vacuously, and 25 is what the committed corpus publishes (1 landing + 1
+    browse + 23 gene pages).
+    """
+    pages = sorted(site.rglob("*.html"))
+
+    assert len(pages) == 25, f"expected 25 HTML pages, found {len(pages)}"
+    for page in pages:
+        assert RESEARCH_USE_NOTICE in page.read_text(encoding="utf-8"), (
+            f"{page.relative_to(site)} carries no research-use notice"
         )
 
 

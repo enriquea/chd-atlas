@@ -1,7 +1,60 @@
 # tests/unit/test_build_render.py
 """The shell every page shares, and the escaping every page depends on."""
 
-from chd_atlas.build.render import Link, Row, chip, data_table, definition_list, document
+from chd_atlas.build.render import (
+    RESEARCH_USE_NOTICE,
+    Link,
+    Row,
+    chip,
+    data_table,
+    definition_list,
+    document,
+)
+
+
+def test_the_research_use_notice_is_the_owner_s_sentence_character_for_character() -> None:
+    """The one string in this build that may not be reworded, shortened or split.
+
+    Asserted against a literal written out here rather than against
+    `RESEARCH_USE_NOTICE` itself, because a test that compares the constant to
+    itself passes on every possible wording -- including a "shortened for the
+    gene pages" variant, which is exactly the edit this forbids. The `<strong>`
+    is part of what was specified and is compared with the rest of it.
+    """
+    assert RESEARCH_USE_NOTICE == (
+        "This atlas is under active development. It is "
+        "<strong>not a clinical decision-support tool</strong> and must not be used to make "
+        "or guide a diagnostic, treatment or any other clinical decision."
+    )
+
+
+def test_every_page_carries_the_research_use_notice_before_its_own_content() -> None:
+    """It reached 1 of the 25 pages the build writes, and it was not a gene page.
+
+    Measured 2026-08-04 against a real build: `grep -l "not a clinical
+    decision-support tool"` matched `index.html` alone. The 24 pages that carry a
+    gene-level classification -- 23 gene pages and `genes/index.html` -- carried
+    no research-use statement at all, so a clinician arriving at
+    `genes/HGNC_4173.html` from a search engine met `GATA4`, an HGNC id and a
+    green `definitive` chip and nothing else above the fold.
+
+    `document` is where it lives now, which is what makes it structurally
+    impossible to add a page kind without it: `landing.py` and `pages.py` both
+    render through this function and neither mentions the notice.
+
+    **Position is asserted, not merely presence.** A notice in the footer is a
+    notice the reader meets after the classification it qualifies, and on a gene
+    page the classification is the first thing in `<main>`. `body` here stands in
+    for a gene page's rail, and the assertion is that the sentence precedes it in
+    DOM order -- which is reading order, screen-reader order and, on a viewport
+    under 46rem where `.layout` collapses to one column, painting order too.
+    """
+    page = document(title="GATA4 — CHD Atlas", root="../", body="<h1>GATA4</h1>")
+
+    assert page.count(RESEARCH_USE_NOTICE) == 1
+    assert f'<div class="notice" role="note"><p>{RESEARCH_USE_NOTICE}</p></div>' in page
+    assert page.index(RESEARCH_USE_NOTICE) < page.index("<main>")
+    assert page.index(RESEARCH_USE_NOTICE) < page.index("<h1>GATA4</h1>")
 
 
 def test_a_document_is_self_contained_and_carries_no_external_reference() -> None:
