@@ -16,7 +16,7 @@ from chd_atlas.tables import (
     unexpected_mirror_entries,
     validate_table,
 )
-from chd_atlas.validate.burden import validate_burden
+from chd_atlas.validate.burden import validate_burden, validate_burden_references
 from chd_atlas.validate.ids import load_id_registry, validate_ids
 from chd_atlas.validate.ontology import (
     OntologyRegistry,
@@ -277,6 +277,19 @@ def validate_repository(root: Path) -> ValidationReport:
             )
         issues.extend(validate_references(corpus, known_genes=known_genes))
         issues.extend(validate_mirror_references(root, corpus))
+        # Deliberately not folded into the `validate_burden` call above: these
+        # need registries a failed corpus load empties, and the comparator rules
+        # must keep running when that happens. `known_genes` is already None on
+        # an unreadable registry, and `corpus.cohorts`/`corpus.publications` are
+        # only reachable here because `corpus_issues` was empty.
+        issues.extend(
+            validate_burden_references(
+                root,
+                known_cohorts={str(cohort.id) for cohort in corpus.cohorts},
+                known_genes=known_genes,
+                known_studies={str(publication.id) for publication in corpus.publications},
+            )
+        )
         # Inside the same branch as the two above, and for the same reason: it
         # reads the gene registry, so on a corpus that failed to load it would
         # report a missing accession for every gene at once.

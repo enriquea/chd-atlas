@@ -32,3 +32,55 @@ publications:
     study_type: family_linkage
     doi: 10.1038/ng0197-30
     own_lab: false
+  - id: PMID:42230622
+    title: >-
+      Assessing the contribution of rare variants to congenital heart disease
+      through a large-scale case-control exome study.
+    journal: NPJ genomic medicine
+    year: 2026
+    authors:
+      - Audain E
+      - Wilsdon A
+      - Dombrowsky G
+      - Sifrim A
+      - Breckpot J
+      - Perez-Riverol Y
+      - Loughna S
+      - Daly A
+      - Antoniou P
+      - Hofmann P
+      - Perez-Riverol A
+      - Kahlert AK
+      - Bauer U
+      - Pickardt T
+      - Klaassen S
+      - Berger F
+      - Daehnert I
+      - Dittrich S
+      - Stiller B
+      - Abdul-Khaliq H
+      - Bu'lock F
+      - Uebing A
+      - Kramer HH
+      - Iyer V
+      - Larsen LA
+      - Brook JD
+      - Hitz MP
+    # Unrelated CHD cases compared against an unrelated control cohort, gene by
+    # gene, by Fisher's exact test. Read off the paper, per this file's rule.
+    study_type: case_control
+    doi: 10.1038/s41525-026-00582-z
+    pmcid: PMC13230774
+    own_lab: true
+    # 3,876, not the 4,747 the abstract reports. The abstract figure is the
+    # recruited set; 3,876 is the post-QC set every row of `mirrors/burden.tsv`
+    # is denominated on (1,471 syndromic + 2,405 non-syndromic), and it is the
+    # number the published odds ratios were computed from. Recording the larger
+    # one here would put a denominator on the page that no statistic beside it
+    # used.
+    cohort_size: 3876
+    # "Our cohort was predominantly of European ancestry (~92%), with limited
+    # representation from other ancestries, which constrains the
+    # generalisability of allele frequency estimates and genetic associations."
+    ancestry:
+      - predominantly European (~92%)

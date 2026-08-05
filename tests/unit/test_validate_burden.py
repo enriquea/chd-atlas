@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from chd_atlas.tables import BURDEN
-from chd_atlas.validate.burden import validate_burden
+from chd_atlas.validate.burden import validate_burden, validate_burden_references
 
 _ROW: dict[str, str] = {
     "study": "PMID:42230622",
@@ -265,6 +265,83 @@ def test_an_absent_or_unreadable_table_reports_nothing_and_does_not_raise(
 
     (tmp_path / "mirrors" / "burden.tsv").write_text("gene\tstudy\nHGNC:4174\tPMID:1\n")
     assert validate_burden(tmp_path) == []
+
+
+_KNOWN = {
+    "known_cohorts": {"cnchd", "ddd", "nottingham", "ukbb"},
+    "known_genes": {"HGNC:4174", "HGNC:11603"},
+    "known_studies": {"PMID:42230622"},
+}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        pytest.param("case_cohorts", "cnchd;pcgc", "BUR009", id="unknown-case-cohort"),
+        pytest.param("control_cohorts", "gnomad", "BUR009", id="unknown-control-cohort"),
+        pytest.param("study", "PMID:99999999", "BUR010", id="unknown-study"),
+        pytest.param("gene", "HGNC:99999", "BUR011", id="unknown-gene"),
+    ],
+)
+def test_a_row_pointing_at_something_no_registry_defines_is_reported(
+    tmp_path: Path, field: str, value: str, code: str
+) -> None:
+    """Each dangling reference has its own code because each is fixed elsewhere.
+
+    The gene case is the one on this project's characteristic failure: a burden
+    row for a gene `mirrors/genes.tsv` does not carry can never reach a page,
+    however the publication gate later widens, because `build_genes` iterates the
+    registry. It costs nothing to hold and reaches no reader.
+
+    The `case_cohorts` case also proves the `;` split: `cnchd` resolves and
+    `pcgc` does not, so a check that compared the whole cell against the registry
+    would report both or neither.
+    """
+    root = _write(tmp_path, {**_ROW, field: value})
+    issues = validate_burden_references(root, **_KNOWN)  # type: ignore[arg-type]
+
+    assert [issue.code for issue in issues] == [code]
+
+
+def test_a_registry_that_could_not_be_read_skips_its_own_check_only(tmp_path: Path) -> None:
+    """`None` means "could not be read" and is deliberately not the empty set.
+
+    Against an empty registry every row reports a dangling reference -- hundreds
+    of issues naming the symptom, none naming the cause, which is the cascade
+    `_known_genes` and `_mirrored_validity` return `None` to prevent. The second
+    assertion is what stops a lazy `if not known_genes: return []`: an unreadable
+    gene registry must not also silence the cohort and study checks.
+    """
+    root = _write(tmp_path, {**_ROW, "gene": "HGNC:99999", "study": "PMID:99999999"})
+
+    assert validate_burden_references(
+        root, known_cohorts=None, known_genes=None, known_studies=None
+    ) == []
+
+    codes = [
+        issue.code
+        for issue in validate_burden_references(
+            root,
+            known_cohorts=_KNOWN["known_cohorts"],  # type: ignore[arg-type]
+            known_genes=None,
+            known_studies=_KNOWN["known_studies"],  # type: ignore[arg-type]
+        )
+    ]
+    assert codes == ["BUR010"]
+
+
+def test_one_unknown_cohort_is_reported_once_however_many_rows_cite_it(
+    tmp_path: Path,
+) -> None:
+    """The mirror will carry thousands of rows drawn from one supplement, so a
+    per-row report would bury every other issue in the file under one repeated
+    line. Same reasoning as `validate_mirror_references`' distinct-pair check.
+    """
+    rows = [{**_ROW, "gene": gene, "case_cohorts": "pcgc"} for gene in ("HGNC:4174", "HGNC:11603")]
+    issues = validate_burden_references(_write(tmp_path, *rows), **_KNOWN)  # type: ignore[arg-type]
+
+    assert len(issues) == 1
+    assert "pcgc" in issues[0].message
 
 
 def test_an_unknown_comparator_is_left_to_the_column_check(tmp_path: Path) -> None:

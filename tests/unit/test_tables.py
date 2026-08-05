@@ -789,8 +789,8 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
     `str.contains`:
 
     1. Every non-null value of every pattern-bearing column in every committed
-       mirror table -- 98,844 values total (3,653 x 2 in `clingen_gene_validity.tsv`,
-       30,410 x 3 in `gencc_submissions.tsv`, 154 x 2 in `genes.tsv`) -- produces
+       mirror table -- 103,612 values total, counted per table beside the
+       assertion below -- produces
        the identical offender set (here, the empty set: curated data is clean)
        under both engines, for every pattern actually used in a schema:
        `HGNC_PATTERN`, `MONDO_PATTERN`, `UNIPROT_PATTERN` and the inline
@@ -910,7 +910,12 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
             assert py_offenders == pl_offenders, (path, column.name, column.pattern)
             total_compared += sum(1 for v in values if v is not None)
 
-    assert total_compared == 98_844
+    # 3,653 x 2 in `clingen_gene_validity.tsv`, 30,410 x 3 in
+    # `gencc_submissions.tsv`, 154 x 2 in `genes.tsv`, and 1,192 x 4 in
+    # `burden.tsv` (`study`, `gene`, `case_cohorts`, `control_cohorts` -- every
+    # burden row today is case-control, so `control_cohorts` is non-null on all
+    # of them and contributes a full column rather than a partial one).
+    assert total_compared == 103_612
 
     for pattern in patterns:
         compiled = re.compile(pattern)

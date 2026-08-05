@@ -2,6 +2,25 @@
 # and the licence that governs republishing it. Verified against each authority
 # on the `retrieved_on` date recorded below.
 sources:
+  - id: audain2026_sd3
+    name: >-
+      Audain et al. 2026, npj Genomic Medicine 11, Supplementary Data 3
+      (per-gene rare variant burden, aCHD / sCHD / nsCHD versus controls)
+    # A journal supplement carries no release tag, so the file's own sha256 is
+    # the version -- and unlike a `retrieved_on` date it is checkable: a curator
+    # can prove they hold the identical workbook these 1,192 rows came from.
+    # The file itself is NOT committed (`local/` is gitignored): it is 11 MB,
+    # its redistribution terms are the article's, and the reviewable artifact is
+    # `mirrors/burden.tsv`. Reproduce with `scripts/convert_burden.py`.
+    version: "sha256:8ebb6fdceb38b0099d6229a1ebf4d77db9f9492a62cfafb569d2865f9645ee2b"
+    retrieved_on: 2026-08-04
+    url: https://static-content.springer.com/esm/art%3A10.1038%2Fs41525-026-00582-z/MediaObjects/41525_2026_582_MOESM4_ESM.xlsx
+    # "This article is licensed under a Creative Commons Attribution 4.0
+    # International License ... To view a copy of this licence, visit
+    # http://creativecommons.org/licenses/by/4.0/" -- the article's own licence
+    # statement, which covers its supplementary material.
+    licence: CC-BY-4.0
+    redistribution: permitted_with_attribution
   - id: clingen
     name: Clinical Genome Resource (ClinGen) Gene-Disease Validity
     # The bulk CSV carries no version tag. Its banner stamps the date the file

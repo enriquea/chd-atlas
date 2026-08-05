@@ -1,0 +1,65 @@
+# The sample collections the burden mirror's rows draw on.
+#
+# WHY THIS FILE EXISTS: the atlas publishes per-study burden rows and computes no
+# meta-statistic, because the CHD literature reuses cohorts and a pooled p-value
+# would count the same children twice. But a reader looking at four rows will
+# meta-analyse them in their head regardless. Naming the cohorts is what turns
+# that from an invisible trap into a fact a page can state: two rows citing `ddd`
+# share samples, and it says so.
+#
+# There is no `role` field. A collection is cases in one study and could be
+# controls in another, so which it was is a property of the burden row -- the
+# column it appears in -- not of the collection.
+#
+# A NOTE ON THE AUDAIN 2026 CASE COHORTS (PMID:42230622). Its cohort description
+# reads: "CHD cases were mainly sequenced as part of an initiative from the
+# German Competence Network for Congenital Heart Defects, the Deciphering
+# Developmental Disorder (DDD) project and the University of Nottingham (UK)".
+# The word "mainly" is load-bearing and the paper does not resolve it: the ethics
+# statement additionally lists the University of Leuven, Belgium (B322201010111 /
+# S52853), so some Belgian samples are very likely in the case set. The burden
+# rows name the three collections the cohort description names and no more,
+# because inventing a fourth from an ethics approval would be the atlas asserting
+# something the study did not.
+cohorts:
+  - id: cnchd
+    name: German Competence Network for Congenital Heart Defects
+    description: >-
+      National German registry and biobank for congenital heart disease, based in
+      Berlin, which recruits patients from paediatric cardiology centres across
+      Germany and holds the associated German Heart Registry consent. Named in
+      PMID:42230622 as one of the three collections its CHD cases were drawn from.
+    url: https://www.kompetenznetz-ahf.de/en/
+  - id: ddd
+    name: Deciphering Developmental Disorders (DDD)
+    description: >-
+      UK-wide study of children with severe undiagnosed developmental disorders,
+      recruited through the NHS regional genetics services and sequenced at the
+      Wellcome Sanger Institute. Cases are ascertained on developmental disorder
+      rather than on heart disease, so its contribution is enriched for syndromic
+      CHD. Individual-level data are under controlled access via the EGA. DDD
+      samples appear in more than one study this atlas cites, which is the reuse
+      the cohort columns exist to make visible.
+    url: https://www.ddduk.org/
+  - id: nottingham
+    name: University of Nottingham congenital heart disease collection
+    description: >-
+      Congenital heart disease cases recruited and sequenced at the University of
+      Nottingham, UK, under East Midlands-Leicester Research Ethics Committee
+      approval 6721. Named in PMID:42230622 as one of the three collections its
+      CHD cases were drawn from.
+    url: https://www.nottingham.ac.uk/life-sciences/
+  - id: ukbb
+    name: UK Biobank (whole-exome sequencing)
+    description: >-
+      Population cohort of ~500,000 UK adults recruited at ages 40-69, used as the
+      control set in PMID:42230622 under approved application 44165. Participants
+      labelled with schizophrenia, bipolar disorder, developmental delay or other
+      congenital anomalies were excluded from that analysis. TWO CAVEATS QUALIFY
+      EVERY ODDS RATIO COMPUTED AGAINST IT, both stated by the study itself: the
+      controls are adults while a substantial proportion of the CHD cases were
+      enrolled in childhood, so rare variants causing severe CHD may be
+      under-represented among controls through survivorship; and the combined
+      cohort is ~92% European ancestry, which limits how far its allele-frequency
+      estimates generalise.
+    url: https://www.ukbiobank.ac.uk/

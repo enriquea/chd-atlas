@@ -172,6 +172,68 @@ def validate_burden(root: Path) -> list[ValidationIssue]:
     return issues
 
 
+def validate_burden_references(
+    root: Path,
+    *,
+    known_cohorts: set[str] | None,
+    known_genes: set[str] | None,
+    known_studies: set[str] | None,
+) -> list[ValidationIssue]:
+    """Check that every burden row points at something that exists.
+
+    Kept separate from `validate_burden` because the two need different inputs
+    and must fail independently: the comparator rules read nothing but the table
+    and so must still run when the corpus fails to load, while these need
+    registries that a failed load empties. Merging them would make one bad
+    publication file silently take the comparator checks with it.
+
+    Each registry is `None` when it could not be read, which is deliberately
+    distinct from empty -- the same rule `_known_genes` follows in the runner.
+    Checking thousands of rows against an empty registry would report one issue
+    per row and bury the single error that caused it.
+
+    Distinct values are checked once rather than per row, so a table with one
+    unknown cohort yields one issue and not one per row that names it.
+    """
+    path = root / "mirrors" / "burden.tsv"
+    if not path.is_file():
+        return []
+    frame, _ = read_table(path, BURDEN)
+    if frame is None:
+        return []
+
+    issues: list[ValidationIssue] = []
+
+    def report(code: str, message: str) -> None:
+        issues.append(ValidationIssue(code, Severity.ERROR, str(path), message))
+
+    if known_cohorts is not None and {"case_cohorts", "control_cohorts"} <= set(frame.columns):
+        cited: set[str] = set()
+        for column in ("case_cohorts", "control_cohorts"):
+            for value in frame[column].to_list():
+                if value is None:
+                    continue
+                cited.update(part for part in str(value).split(";") if part)
+        for cohort in sorted(cited - known_cohorts):
+            report("BUR009", f"cohort '{cohort}' is not in curation/cohorts.yaml")
+
+    if known_studies is not None and "study" in frame.columns:
+        studies = {str(v) for v in frame["study"].to_list() if v is not None}
+        for study in sorted(studies - known_studies):
+            report("BUR010", f"study {study} is not in curation/publications.yaml")
+
+    # A burden row for a gene the registry does not carry can never reach a
+    # page, however the publication gate later widens -- `build_genes` iterates
+    # the registry. That is this project's characteristic failure: curated work
+    # that costs nothing to hold and reaches no reader.
+    if known_genes is not None and "gene" in frame.columns:
+        genes = {str(v) for v in frame["gene"].to_list() if v is not None}
+        for gene in sorted(genes - known_genes):
+            report("BUR011", f"gene {gene} is not in mirrors/genes.tsv")
+
+    return issues
+
+
 def _effect_issues(
     row: dict[str, Any], comparator: BurdenComparator, line: int, path: Path
 ) -> list[ValidationIssue]:
