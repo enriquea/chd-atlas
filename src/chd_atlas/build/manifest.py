@@ -86,9 +86,15 @@ from chd_atlas.corpus import Corpus
 #
 # 2.3 adds `burden` to every gene bundle and `burden_row_count` to every
 # `genes/index.json` row: the per-study rare-variant burden statistics from
-# `mirrors/burden.tsv`, 1,192 rows covering 145 genes including all 23 the site
-# publishes. Additive, so MINOR — a 2.2 reader keeps working, and both keys are
-# always present (an empty array and a zero for a gene no study reported), so a
+# `mirrors/burden.tsv` -- 1,192 rows over 145 genes *at that version*, from one
+# study. The mirror has grown twice since (1,475 rows, 150 genes, three studies);
+# these figures describe what 2.3 shipped and are deliberately not updated,
+# because a changelog entry that tracks the present tells a reader nothing about
+# the version it names. Current counts live in `docs/data-api.md`, where
+# `tests/test_docs_match_the_build.py` measures them against a real build.
+#
+# Additive, so MINOR — a 2.2 reader keeps working, and both keys are always
+# present (an empty array and a zero for a gene no study reported), so a
 # consumer never has to guard for a missing one.
 #
 # The display warning that accompanied 2.2's population change applies here in a

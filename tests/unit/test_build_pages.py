@@ -1168,26 +1168,60 @@ def test_two_studies_sharing_a_cohort_are_declared_not_independent(
     assert "Deciphering Developmental Disorders (DDD)" in page
 
 
-def test_the_section_says_what_a_missing_row_means_and_what_synonymous_is_for(
+def test_the_section_says_what_a_missing_row_means_without_asserting_why(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
-    """Two sentences that are the difference between a table and a trap.
+    """The sentence that is the difference between a table and a trap -- and the
+    mechanism it must NOT assert.
 
-    The burden matrix is sparse -- 42 of the 145 genes in the committed mirror
-    are missing at least one (stratum, consequence) cell -- and a reader meeting
-    a gap will read it as "not tested" unless told. Zero of the 1,192 rows have
-    no carrier in both groups, so an absent cell means exactly "nobody carried
-    one", which is a much stronger statement.
+    The burden matrix is sparse, and a reader meeting a gap will read it as "not
+    tested" unless told. So the page says an absent cell is one the study did not
+    report.
 
-    The synonymous sentence is the other half: a reader who does not know it is
-    the negative control reads a null result as a null finding rather than as
-    the calibration check it is.
+    **It must not say why.** Until 2026-08-05 it asserted "no variant of that
+    class was seen in either group, so there was nothing to compare" -- measured
+    over PMID:42230622 alone, where 0 of 1,192 rows have no carrier on either
+    side. That is false for the other two studies now rendering tables beside it:
+    PMID:34324492 tests one consequence class by construction, and PMID:40127276
+    observed 14,364 synonymous variants (its own Dataset S4) and published no
+    synonymous row because its gene-level table covers only damaging classes. A
+    reader told "no variant of that class was seen" would conclude that study
+    found none.
     """
     page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    section = page[page.index("Rare variant burden") :]
 
-    assert "not a null result" in page
-    assert "negative control" in page
-    assert "uncorrected" in page
+    assert "did not report" in section
+    assert "does not always mean" in section
+    # The refuted mechanism, in the exact words that were wrong.
+    assert "no variant of that class was seen in either group" not in section
+
+
+def test_the_synonymous_negative_control_is_explained_only_where_one_exists(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Conditional, for the reason `_POOLING_NOTICE` and `_composite_note` are.
+
+    A reader who does not know the synonymous row is a negative control reads a
+    null result as a null finding rather than as the calibration check it is --
+    so where one exists, the page says so.
+
+    Where none exists, the page must not tell a reader to weigh one. Measured
+    2026-08-05: 69 of the 290 published burden rows are synonymous and **every
+    one comes from PMID:42230622**; the other two studies publish no negative
+    control at all. Rendered unconditionally, this paragraph promised a check
+    that two of the three tables on the page cannot offer.
+    """
+    without = _burden_page(tmp_path, facts_uncurated, [_burden_row(consequence_class="lof")])
+    assert "negative control" not in without
+
+    with_syn = _burden_page(
+        tmp_path / "syn",
+        facts_uncurated,
+        [_burden_row(consequence_class="lof"), _burden_row(consequence_class="synonymous")],
+    )
+    assert "negative control" in with_syn
+    assert "uncorrected" in with_syn
 
 
 def test_the_page_names_how_many_tests_the_study_ran(
@@ -1207,10 +1241,18 @@ def test_the_page_names_how_many_tests_the_study_ran(
     as the arithmetic it is, not as a threshold the study endorsed.
     """
     page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    # Scoped to the method line. This asserted `"uncorrected" in page` until
+    # 2026-08-05 and passed on the word from the *synonymous* paragraph, which is
+    # a different sentence entirely -- the trap
+    # `test_the_consequence_column_is_headed_for_the_column_it_renders` records.
+    # When that paragraph became conditional the assertion failed, which is the
+    # only reason the mis-scoping was found.
+    method = page[page.index('<p class="method">') :]
+    method = method[: method.index("</p>")]
 
-    assert "138,609" in page
-    assert "uncorrected" in page
-    assert "3.6e-07" in page
+    assert "138,609" in method
+    assert "3.6e-07" in method
+    assert "judge the raw one against the whole scan" in method
 
 
 def test_the_cohort_caveats_a_curator_wrote_reach_the_reader(
@@ -1264,9 +1306,18 @@ def test_a_study_by_an_author_of_this_atlas_says_so(
 ) -> None:
     """`own_lab` reached `publications.json` and zero HTML files.
 
-    Every burden table on the site today comes from one study whose first author
-    is this repository's author. A reader being asked to weigh those numbers
-    should not have to cross-reference a JSON payload to learn that.
+    Two of the three studies published today are by this repository's author, and
+    a reader being asked to weigh their numbers should not have to
+    cross-reference a JSON payload to learn that.
+
+    This said "every burden table on the site today comes from one study whose
+    first author is this repository's author" until 2026-08-05. PMID:40127276
+    (Sierant MC et al., `own_lab: false`) made that false for 15 of the 23
+    published gene pages, 8 of which now render three studies with the
+    declaration on two of them. The sentence was the written record of when the
+    line applies, so a stale version of it is worse than none -- it describes a
+    corpus that no longer exists and invites the conclusion that the disclosure
+    is unconditional.
     """
     page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
     assert "this study is by an author of this atlas" in page

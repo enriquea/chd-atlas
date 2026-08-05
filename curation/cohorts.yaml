@@ -116,18 +116,22 @@ cohorts:
   - id: gnomad_controls
     name: gnomAD exomes and genomes, excluding TopMed
     description: >-
-      133,743 individuals with exome or genome sequence from the gnomAD
-      database after removing samples also present in TopMed, used as the
-      control set for the case-control arm of PMID:40127276. THREE CAVEATS
-      QUALIFY EVERY STATISTIC COMPUTED AGAINST IT. It is a population reference
-      rather than a screened control group -- gnomAD excludes individuals with
-      severe paediatric disease at the cohort level but does not ascertain heart
+      The gnomAD population reference, restricted by PMID:40127276 to samples
+      with exome or genome sequence and not also present in TopMed. The study
+      states this control set as 133,743 samples; the per-gene control
+      denominators it publishes are ALLELE counts and run as high as 271,354,
+      which is above twice that figure on 22 of the 90 rows mirrored here. The
+      two are not reconcilable from what the paper reports, so the atlas
+      republishes both and asserts neither -- treat the row's own denominator as
+      the one its statistic was computed from. THREE FURTHER CAVEATS QUALIFY
+      EVERY STATISTIC COMPUTED AGAINST IT. It is a population reference rather
+      than a screened control group -- gnomAD excludes individuals with severe
+      paediatric disease at the cohort level but does not ascertain heart
       phenotypes, so an adult with an undiagnosed lesion counts as a control.
-      Its denominators are ALLELE counts rather than numbers of people, and vary
-      gene by gene with sequencing coverage, so a control carrying two
-      qualifying variants is counted twice. And no parental or sample-level data
-      were available to the study, so the control side has no transmission
-      information to match the case side's.
+      Allele denominators vary gene by gene with sequencing coverage, and a
+      control carrying two qualifying variants is counted twice. And no parental
+      or sample-level data were available to the study, so the control side has
+      no transmission information to match the case side's.
     url: https://gnomad.broadinstitute.org/
   - id: ukbb
     name: UK Biobank (whole-exome sequencing)

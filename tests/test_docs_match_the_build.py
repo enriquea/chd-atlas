@@ -227,3 +227,69 @@ def test_the_documented_uncurated_notice_is_the_sentence_the_page_actually_shows
     # `**bold**` in the quote is `<strong>` on the page; strip both to compare
     # the sentence rather than its emphasis.
     assert quoted.replace("**", "") in _text_of(page)
+
+
+def test_the_burden_census_in_the_doc_is_the_census_the_build_publishes(site: Path) -> None:
+    """Every count in the `burden` section, asserted against a real build.
+
+    **This is the guard for the failure that actually happened.** Commit 770aa2a
+    added a third study to the mirror -- 180 rows, 90 of them published, the
+    first `mutation_model` comparator the atlas has ever carried -- and edited
+    `docs/data-api.md` only to add the `count_unit` table. Every census figure in
+    that section, and the sentence "Only `control_cohort` appears today", went on
+    describing the two-study corpus. An adversarial review of the promotion diff
+    measured them all false before the deploy.
+
+    The numbers were internally consistent with each other, which is what made it
+    survive reading: they were exactly the pre-Sierant subset. Only measurement
+    catches that, so the doc's counts are now measured rather than read.
+
+    The mirror figures are counted from the file rather than the build because
+    the whole point of the paragraph is the gap between them -- the mirror is
+    deliberately wider than the publication gate.
+    """
+    import csv
+
+    doc = DOC.read_text()
+    start = doc.index("### The bundle's `burden` array")
+    # Whitespace collapsed: these are claims in prose, and where a sentence
+    # happens to wrap is not part of the claim. Asserting against the raw text
+    # would make this test fail on a reflow and pass on a wrong number.
+    section = re.sub(r"\s+", " ", doc[start : doc.index("\n## ", start)])
+
+    published = [
+        row
+        for path in sorted((site / "genes").glob("HGNC_*.json"))
+        for row in json.loads(path.read_text()).get("burden", [])
+    ]
+    mirror = list(csv.DictReader((REPO / "mirrors" / "burden.tsv").open(), delimiter="\t"))
+
+    studies = sorted({row["study"] for row in published})
+    comparators = {
+        c: sum(1 for r in published if r["comparator"] == c)
+        for c in {r["comparator"] for r in published}
+    }
+    synonymous = sum(1 for r in published if r["consequence_class"] == "synonymous")
+    lof = sum(1 for r in published if r["consequence_class"] == "lof")
+    composite = sum(1 for r in published if r["consequence_class"] == "damaging")
+    unbounded = sum(1 for r in published if r["effect_bound"] is not None)
+
+    # Each claim, in the exact spelling the document uses.
+    assert f"**{len(published)} rows reach the API**" in section
+    assert f"{len(studies)} studies ({', '.join(studies)})" in section
+    assert f"holds {len(mirror):,} rows for {len({r['gene'] for r in mirror})} genes" in section
+    assert f"the other {len(mirror) - len(published):,}" in section
+
+    # The sentence a consumer writes code against. It read "Only
+    # `control_cohort` appears today" while 45 rows were `mutation_model`.
+    assert f"`control_cohort` ({comparators['control_cohort']} rows)" in section
+    assert f"`mutation_model` ({comparators['mutation_model']} rows)" in section
+
+    assert f"{unbounded} published rows today" in section
+    assert f"{synonymous} of the {len(published)} published rows are synonymous" in section
+    assert f"loss-of-function is {lof} and synonymous {synonymous}" in section
+    assert f"{composite} of the {len(published)} rows" in section
+
+    # And the claim that the composite is a union rather than a partition, which
+    # is what stops a consumer double-counting when it aggregates.
+    assert "double-counts" in section
