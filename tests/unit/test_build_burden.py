@@ -37,6 +37,8 @@ _BASE: dict[str, str] = {
     "ci_high": "",
     "pvalue": "2.45e-07",
     "pvalue_test": "fisher_exact",
+    "pvalue_adjusted": "",
+    "pvalue_adjustment": "",
     "case_cohorts": "cnchd;ddd;nottingham",
     "control_cohorts": "ukbb",
     "method_note": "",
@@ -159,6 +161,8 @@ def _row(**overrides: object) -> BurdenRow:
         "ci_high": None,
         "pvalue": 2.45e-07,
         "pvalue_test": "fisher_exact",
+        "pvalue_adjusted": None,
+        "pvalue_adjustment": None,
         "case_cohorts": ("cnchd",),
         "control_cohorts": ("ukbb",),
         "method_note": None,
@@ -193,7 +197,7 @@ def test_every_published_row_carries_every_key_whatever_its_comparator() -> None
     payload = burden_payload([case_control, de_novo])
 
     assert set(payload[0]) == set(payload[1])  # type: ignore[arg-type]
-    assert len(payload[0]) == 24  # type: ignore[arg-type]
+    assert len(payload[0]) == 26  # type: ignore[arg-type]
     assert payload[1]["expected_count"] == 0.42  # type: ignore[index,call-overload]
     assert payload[1]["n_controls"] is None  # type: ignore[index,call-overload]
 

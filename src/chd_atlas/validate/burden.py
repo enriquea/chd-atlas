@@ -223,6 +223,33 @@ def validate_burden(root: Path) -> list[ValidationIssue]:
                 f"cohort(s) {sorted(overlap)} appear as both cases and controls in one comparison",
             )
 
+        # BUR018 -- a corrected p-value must name its correction, and must have
+        # a raw p-value to correct. Same pairing rule as BUR005 one line below,
+        # and for a sharper reason: `0.99` means "not significant after
+        # family-wise correction over 11,515 permutation tests" and `0.99` with
+        # no method named means nothing at all. A corrected p is also never
+        # smaller than its raw p, which is arithmetic, not an assumption.
+        adjusted, method = row["pvalue_adjusted"], row["pvalue_adjustment"]
+        if _blank(adjusted) != _blank(method):
+            error(
+                "BUR018",
+                line,
+                f"'pvalue_adjusted' ({adjusted!r}) and 'pvalue_adjustment' "
+                f"({method!r}) must be given together",
+            )
+        if adjusted is not None and _blank(row["pvalue"]):
+            error(
+                "BUR018",
+                line,
+                f"'pvalue_adjusted' is {adjusted} with no 'pvalue' to correct",
+            )
+        if adjusted is not None and row["pvalue"] is not None and adjusted < row["pvalue"]:
+            error(
+                "BUR018",
+                line,
+                f"corrected p {adjusted} is smaller than the raw p {row['pvalue']} it corrects",
+            )
+
         # Neither direction alone is publishable: a p-value whose test is unnamed
         # cannot be interpreted, and a named test with no p-value is a column
         # that lost its number in transcription.

@@ -38,6 +38,7 @@ from chd_atlas.vocab import (
     EffectBound,
     EffectMeasure,
     LesionGroup,
+    PvalueAdjustment,
     SourceTier,
     StatisticalTest,
     VariantClass,
@@ -593,6 +594,7 @@ _COMPARATORS = frozenset(item.value for item in BurdenComparator)
 _EFFECT_MEASURES = frozenset(item.value for item in EffectMeasure)
 _EFFECT_BOUNDS = frozenset(item.value for item in EffectBound)
 _STATISTICAL_TESTS = frozenset(item.value for item in StatisticalTest)
+_PVALUE_ADJUSTMENTS = frozenset(item.value for item in PvalueAdjustment)
 _LESION_GROUPS = frozenset(item.value for item in LesionGroup)
 
 BURDEN = TableSchema(
@@ -644,6 +646,13 @@ BURDEN = TableSchema(
         Column("ci_high", pl.Float64, nullable=True, minimum=0),
         Column("pvalue", pl.Float64, nullable=True, minimum=0, maximum=1),
         Column("pvalue_test", pl.String, nullable=True, allowed=_STATISTICAL_TESTS),
+        # A corrected p-value the *study* published, never one the atlas
+        # computed. Added 2026-08-05: the review found gene pages showing
+        # uncorrected p-values with nothing to judge them against, and
+        # PMID:34324492 publishes a correction beside every raw p. Dropping it
+        # would discard the one number that answers that.
+        Column("pvalue_adjusted", pl.Float64, nullable=True, minimum=0, maximum=1),
+        Column("pvalue_adjustment", pl.String, nullable=True, allowed=_PVALUE_ADJUSTMENTS),
         # Provenance. Cohort membership is what makes overlap between studies
         # visible: DDD contributes cases to more than one paper here, so two rows
         # a reader would otherwise mentally meta-analyse can be shown to share

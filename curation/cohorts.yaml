@@ -50,6 +50,53 @@ cohorts:
       approval 6721. Named in PMID:42230622 as one of the three collections its
       CHD cases were drawn from.
     url: https://www.nottingham.ac.uk/life-sciences/
+  - id: signature
+    name: Signature Genomics / PerkinElmer diagnostic CNV series
+    description: >-
+      1,615 individuals with congenital heart disease ascertained through
+      clinical diagnostic array testing, the largest single contributor to the
+      CNV case set of PMID:34324492. Diagnostic ascertainment enriches for
+      severe and syndromic presentations relative to a population series.
+  - id: decipher
+    name: DECIPHER
+    description: >-
+      1,221 CHD cases from the DECIPHER database of submitted patient
+      genotype-phenotype data. Submitted by clinical genetics centres, so
+      ascertained on a diagnostic question rather than on heart disease.
+    url: https://www.deciphergenomics.org/
+  - id: isca
+    name: International Standards for Cytogenomic Arrays (ISCA)
+    description: >-
+      629 CHD cases from the ISCA consortium's shared clinical array data.
+    url: https://clinicalgenome.org/
+  - id: taa_cases
+    name: Sporadic thoracic aortic aneurysm case series (PMID 21092924)
+    description: >-
+      777 individuals with sporadic thoracic aortic aneurysm, included in the
+      CNV case set of PMID:34324492 alongside the CHD cases. TAA IS NOT
+      CONGENITAL HEART DISEASE and is explicitly out of this atlas's scope
+      (curation/chd_scope.yaml puts aortopathy outside it). The study says so
+      in its own abstract -- "probands with CHD including cases with sporadic
+      thoracic aortic aneurysm" -- and its S8 table reports the CHD-only
+      contribution separately. Any row naming this cohort has a case set that
+      is about 10% non-CHD (777 of 7,958), and the page must say so.
+  - id: gain_controls
+    name: Genetic Association Information Network (GAIN) controls
+    description: >-
+      7,993 population controls genotyped on Illumina and CGH arrays, the
+      largest control contributor to PMID:34324492. Not screened for
+      congenital heart disease, so a control carrying an undiagnosed lesion is
+      counted as a control.
+    url: https://fnih.org/what-we-do/major-completed-programs/genetic-association-information-network
+  - id: wtccc_controls
+    name: Wellcome Trust Case Control Consortium controls
+    description: >-
+      4,385 UK population controls. Not screened for congenital heart disease.
+  - id: ottawa_controls
+    name: Ottawa Heart Institute controls
+    description: >-
+      1,704 controls from the Ottawa Heart Institute series. Not screened for
+      congenital heart disease.
   - id: ukbb
     name: UK Biobank (whole-exome sequencing)
     description: >-

@@ -84,6 +84,8 @@ class BurdenRow:
     ci_high: float | None
     pvalue: float | None
     pvalue_test: str | None
+    pvalue_adjusted: float | None
+    pvalue_adjustment: str | None
     case_cohorts: tuple[str, ...]
     control_cohorts: tuple[str, ...]
     method_note: str | None
@@ -173,6 +175,8 @@ def load_burden(root: Path) -> dict[str, list[BurdenRow]]:
             ci_high=record["ci_high"],
             pvalue=record["pvalue"],
             pvalue_test=record["pvalue_test"],
+            pvalue_adjusted=record["pvalue_adjusted"],
+            pvalue_adjustment=record["pvalue_adjustment"],
             case_cohorts=_cohorts(record["case_cohorts"]),
             control_cohorts=_cohorts(record["control_cohorts"]),
             method_note=record["method_note"],
@@ -252,6 +256,8 @@ def burden_payload(rows: Iterable[BurdenRow]) -> list[Json]:
             "ci_high": row.ci_high,
             "pvalue": row.pvalue,
             "pvalue_test": row.pvalue_test,
+            "pvalue_adjusted": row.pvalue_adjusted,
+            "pvalue_adjustment": row.pvalue_adjustment,
             "case_cohorts": list(row.case_cohorts),
             "control_cohorts": list(row.control_cohorts),
             "method_note": row.method_note,

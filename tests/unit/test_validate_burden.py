@@ -39,6 +39,8 @@ _ROW: dict[str, str] = {
     "ci_high": "",
     "pvalue": "1.05e-06",
     "pvalue_test": "fisher_exact",
+    "pvalue_adjusted": "",
+    "pvalue_adjustment": "",
     "case_cohorts": "cnchd;ddd;nottingham",
     "control_cohorts": "ukbb",
     "method_note": "",
@@ -462,3 +464,40 @@ def test_both_validators_split_a_cohort_cell_the_same_way(tmp_path: Path) -> Non
     )
 
     assert [issue.message for issue in issues] == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param({"pvalue_adjusted": "0.9"}, id="corrected-p-with-no-method"),
+        pytest.param({"pvalue_adjustment": "bonferroni"}, id="method-with-no-corrected-p"),
+        pytest.param(
+            {
+                "pvalue": "",
+                "pvalue_test": "",
+                "pvalue_adjusted": "0.9",
+                "pvalue_adjustment": "bonferroni",
+            },
+            id="corrected-p-with-nothing-to-correct",
+        ),
+        pytest.param(
+            {"pvalue": "0.5", "pvalue_adjusted": "0.01", "pvalue_adjustment": "bonferroni"},
+            id="correction-made-the-p-smaller",
+        ),
+    ],
+)
+def test_a_corrected_p_value_must_name_its_method_and_exceed_its_raw_p(
+    tmp_path: Path, mutation: dict[str, str]
+) -> None:
+    """BUR018. `0.99` with no method named means nothing at all.
+
+    The pairing rule is BUR005's, applied one column over, and for a sharper
+    reason: a family-wise permutation correction over 11,515 tests and a
+    Bonferroni factor are different claims, and the number alone does not say
+    which. A correction is also never *smaller* than the p it corrects, which is
+    arithmetic rather than an assumption -- the signature of the two columns
+    being transposed.
+
+    Zero of the 1,295 committed rows violate any of these.
+    """
+    assert "BUR018" in _codes(tmp_path, {**_ROW, **mutation})
