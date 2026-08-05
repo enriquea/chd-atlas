@@ -150,6 +150,50 @@ def test_a_documented_example_carries_every_field_the_build_publishes(
     assert not invented, f"{heading}: the doc shows {invented}, the build does not publish it"
 
 
+def test_the_documented_manifest_census_is_the_census_the_build_publishes(site: Path) -> None:
+    """`counts` and `schema_version`, in the doc, measured against a real build.
+
+    Values rather than key sets, unlike the shape test above, and deliberately:
+    the `manifest.json` block is the one example in this document whose numbers a
+    reader takes as a *census of the atlas* rather than as an illustration. It
+    said `"publications": 1` for a corpus holding 4 — true when it was written,
+    false for three releases after — and nothing could see it, because a wrong
+    census stays internally consistent (CLAUDE.md section 4.24).
+
+    `schema_version` is pinned here as well as in `test_build_manifest.py`. That
+    file compares the published value against a literal; this one checks the
+    *document* names the same version, which is the claim a consumer branches on
+    after reading it. A release that bumps the constant and not the prose leaves
+    the two disagreeing with nothing to notice.
+
+    Checksums and the commit stay placeholders and are not asserted: both change
+    with every commit, so pinning them would guarantee this document is wrong by
+    the next one.
+
+    **Parsed, not substring-matched, and the difference is not cosmetic.** The
+    first version of this test asserted `f'"{key}": {value}' in section`, which
+    is unanchored: with the build at `burden_rows: 29` and the doc still saying
+    `290`, the needle `"burden_rows": 29` is a substring of `"burden_rows": 290`
+    and the test passes. Any documented figure having the build's figure as a
+    prefix slips through — exactly the stale-census failure this guard exists to
+    catch. Found by review 2026-08-06. `_example` already parses the fenced
+    block, so comparing dicts is both stronger and less code.
+
+    The whole `counts` object is compared, not key by key, so a key the document
+    invents or drops fails here too.
+    """
+    doc = DOC.read_text()
+    start = doc.index("## `manifest.json`")
+    section = doc[start : doc.index("\n## ", start)]
+    documented = _example("## `manifest.json`")
+    manifest = json.loads((site / "manifest.json").read_text())
+
+    assert f'"schema_version": "{manifest["schema_version"]}"' in section
+    assert documented["counts"] == manifest["counts"], (
+        f"the build counts {manifest['counts']}; the documented example says {documented['counts']}"
+    )
+
+
 def test_the_contested_example_is_labelled_with_the_payload_it_comes_from(site: Path) -> None:
     """`confidence_by_lesion_group` and its flag are browse-row fields only.
 

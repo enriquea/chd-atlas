@@ -45,14 +45,15 @@ What the build produced, and a checksum for every file in it.
 ```json
 {
   "counts": {
-    "assertions": 1, "datasets": 0, "featured": 1,
-    "functional": 0, "phenotypes": 3, "publications": 1
+    "assertions": 1, "burden_rows": 290, "cohort_families": 3,
+    "datasets": 0, "featured": 1, "functional": 0,
+    "genes": 23, "phenotypes": 3, "publications": 4
   },
   "files": {
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.6",
+  "schema_version": "2.7",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -71,11 +72,35 @@ wrong by the next one.
 - `source_commit` is `null` when the build was made outside a git checkout — an
   unpacked tarball still produces a complete site, just one that cannot state
   its provenance.
-- `counts` counts curated records, which is not the same as files. A gene the
-  atlas has not curated contributes to no count and still gets a bundle — 22 of
-  the 23 genes published today are in exactly that position, published on an
-  expert panel's classification rather than on curation done here. Read
+- `counts` is a census of **what this build published**, which is not the same as
+  a count of files and — since `2.7` — no longer only a count of curated records.
+  Six of its keys count a curated collection: `assertions`, `datasets` (omics),
+  `featured`, `functional`, `phenotypes`, `publications`. A gene the atlas has
+  not curated contributes to none of them and still gets a bundle — 22 of the 23
+  genes published today are in exactly that position, published on an expert
+  panel's classification rather than on curation done here. Read
   `atlas_curation` on the browse row to tell the two apart.
+
+  Three keys count the build instead, and were added because the object read as
+  a census of the atlas while describing only its curation: through `2.6` it
+  published `assertions: 1, datasets: 0, functional: 0` for a site serving 23
+  genes and 290 burden statistics, and named neither.
+
+  - `genes` is the published population — the number of gene bundles, and the
+    length of `genes/index.json`'s `genes` array.
+  - `burden_rows` is the number of burden statistics reaching a bundle, which is
+    exactly the sum of every browse row's `burden_row_count`. It counts what a
+    consumer can fetch, **not** what `mirrors/burden.tsv` holds: that file is
+    deliberately wider than the publication gate, and today 127 of its 150 genes
+    publish no page.
+  - `cohort_families` is the number of independent cohort families, the length
+    of any bundle's `independent_datasets.families` array — the same for every
+    gene by construction. It is deliberately not named `independent_datasets`,
+    because `datasets` above already means omics datasets and two adjacent keys
+    reading `datasets: 0` and `independent_datasets: 3` invite a misreading.
+
+  `index.html` states the same three figures in prose. They are derived once in
+  the build and handed to both, so the page and this object cannot disagree.
 - `schema_version` is `major.minor`. **Minor** rises when a field is added and
   nothing is removed or repurposed, so a consumer written against an earlier
   version keeps working; **major** rises when a field changes shape or leaves.
@@ -104,6 +129,9 @@ wrong by the next one.
   a verdict beside a mirrored ClinGen `definitive` tells a clinician something
   the data do not say. See
   [`independent_datasets`](#independent_datasets-a-count-of-datasets-never-a-verdict).
+  `2.7` added `genes`, `burden_rows` and `cohort_families` to `counts`, described
+  above. Additive: every `2.6` key is present and unchanged, so the only thing a
+  `2.6` reader misses is the half of the census that was never there.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -117,13 +145,18 @@ wrong by the next one.
 The page a person opens directly rather than fetches as JSON, and the entry
 point to the other 24. It states what the atlas is, the same development-status
 and research-use statement `status` above is the machine-readable half of, and
-the real counts behind it — curated assertions, genes with mirrored
-ClinGen/GenCC validity, and the rest of `counts` — read from the same build
-that produced this document's other examples rather than written by hand. It
-links to `genes/index.html`, `genes/index.json`, `manifest.json`,
-`sources.json` and the repository. Self-contained: no external request, no
-build timestamp, byte-identical between two builds of one commit like
-everything else here.
+the real counts behind it — every key of `counts`, plus three figures that are
+not manifest keys: the genes carrying mirrored ClinGen/GenCC validity, the genes
+carrying burden evidence, and the genes this atlas has itself curated. All are
+read from the same build that produced this document's other examples rather
+than written by hand. It links to
+`genes/index.html`, `genes/index.json`, `manifest.json`, `sources.json` and the
+repository. Self-contained: no external request, no build timestamp,
+byte-identical between two builds of one commit like everything else here.
+
+It also carries a key to the four evidence glyphs, built from the same constant
+as the browse page's strip legend and the gene page's matrix legend. The three
+cannot come to describe the same four states in different words.
 
 **Every page is checksummed in `manifest.json` exactly like a payload.** The
 build behind this document publishes 25 of them — this one, `genes/index.html`

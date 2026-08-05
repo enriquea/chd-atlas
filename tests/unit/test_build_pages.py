@@ -1927,6 +1927,55 @@ def test_the_gene_and_its_symbol_both_link_to_the_page_and_the_strip_does_not(
     assert "strip-tally" in strip
 
 
+def test_the_browse_strips_four_glyphs_are_all_named_in_its_legend(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """A key naming three of four states leaves the fourth as an unexplained mark.
+
+    Measured by mutation 2026-08-05: replacing every label in `_STRIP_LEGEND`
+    with a single letter survived this whole file. The gene page's matrix legend
+    was guarded and the browse page's strip legend was not, which is the same
+    asymmetry — and the same direction — as the missing matrix caption an
+    adversarial review caught one release earlier.
+
+    **Literals, and each caption asserted adjacent to its own glyph.** The
+    original version of this test read the captions out of
+    `EVIDENCE_STATE_LABELS` and checked membership, which passes under any
+    permutation of that constant because the needles come from the thing being
+    permuted. Measured 2026-08-06: swapping two entries survived all 787 tests
+    and published a browse page whose key captions the untested glyph "tested,
+    no enrichment detected" -- the `not_tested`-reads-as-`no_enrichment`
+    collapse this project forbids, on a green build.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity=validity_two,
+        burden_counts={},
+        concordance={
+            gene: {"tested": 0, "enriched": 0, "corrected": 0, "families": []} for gene in facts_two
+        },
+    )
+    page = _page(tmp_path, "index.html")
+    legend = page[page.index("</table>") :]
+
+    for css, caption in (
+        ("dot full", "enriched, and survives that study&#x27;s own correction"),
+        ("dot half", "enriched nominally, or no correction published"),
+        ("dot none", "tested, no enrichment detected"),
+        ("dot untested", "not tested by that dataset"),
+    ):
+        pair = re.search(rf'<span class="{re.escape(css)}">[^<]*</span>\s*([^<]+)<', legend)
+        assert pair, f"the strip legend no longer draws {css!r} with a caption"
+        assert pair.group(1).strip() == caption, (
+            f"{css!r} is captioned {pair.group(1).strip()!r}, expected {caption!r}"
+        )
+
+
 def test_the_matrix_cell_drops_the_interval_but_never_the_measure(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
@@ -2043,8 +2092,19 @@ def test_the_gene_page_matrix_carries_its_own_key_and_caption(
     # The caption that stops an empty matrix reading as a verdict.
     assert "not evidence against a gene" in section
     # And a key, so the four states are nameable rather than only coloured.
-    assert "tested, no enrichment detected" in section
-    assert "not tested by that dataset" in section
+    # Each swatch beside its own caption, not merely both strings present: a
+    # membership check passes with the two swapped, and a swapped key on this
+    # page tells a reader an untested cell was tested and found nothing. No
+    # assertion named `cell-key` existed at all until review 2026-08-06.
+    for css, caption in (
+        ("cell-key no-enrichment", "tested, no enrichment detected"),
+        ("cell-key not-tested", "not tested by that dataset"),
+    ):
+        pair = re.search(rf'<span class="{re.escape(css)}">[^<]*</span>\s*([^<]+)<', section)
+        assert pair, f"the matrix key no longer draws {css!r} with a caption"
+        assert pair.group(1).strip() == caption, (
+            f"{css!r} is captioned {pair.group(1).strip()!r}, expected {caption!r}"
+        )
     # It sits with the matrix, not at the far end of the page.
     assert section.index("</table>") < section.index("not evidence against a gene")
 

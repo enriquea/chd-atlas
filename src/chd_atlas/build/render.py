@@ -144,6 +144,12 @@ STYLESHEET: Final = """
     font-variant-numeric: tabular-nums; white-space: nowrap;
   }
   .strip-legend { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
+  /* One legend entry -- a glyph and the sentence it captions -- as a single
+     unbreakable unit. Without this the line can break immediately after the
+     glyph, orphaning "not tested by that dataset" from any mark at ordinary
+     desktop widths. `&nbsp;` does not fix it: `.dot` is `display: inline-grid`,
+     an atomic inline box, and the break opportunity after it survives. */
+  .legend-item { display: inline-block; }
   /* The matrix key: a swatch per state, drawn from the same rules as the cells
      so the key cannot drift from what it describes. */
   .cell-key {
@@ -178,6 +184,47 @@ STYLESHEET: Final = """
     border: 1px dashed var(--border); color: var(--muted); font-size: 0.76rem;
   }
   .cell .sub { font-size: 0.72rem; opacity: 0.85; }
+
+  /* The front page's hero band, census cards and call to action. Every rule
+     below is written against a token declared above, so the dark theme is
+     covered by construction rather than by a second media query that someone
+     has to remember to update. */
+  .hero {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.3rem 1.4rem; margin: 1.5rem 0 0;
+  }
+  .figures { display: flex; flex-wrap: wrap; gap: 1.1rem 2.75rem; margin: 0 0 1rem; }
+  .figure { display: flex; flex-direction: column; }
+  .figure-value {
+    font-size: 2.2rem; line-height: 1.05; font-weight: 600;
+    font-variant-numeric: tabular-nums; color: var(--evidence);
+  }
+  .figure-label { font-size: 0.85rem; color: var(--muted); }
+  .hero-note { margin: 0 0 1rem; font-size: 0.9rem; color: var(--muted); }
+  .cta {
+    display: inline-block; background: var(--evidence); color: var(--on-evidence);
+    text-decoration: none; border-radius: 5px; padding: 0.45rem 0.95rem;
+  }
+  .cta:hover { text-decoration: underline; }
+  .cta:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  /* A `<dl>` because it is one -- label and value -- restyled from the base
+     two-column list into cards. `dl.stats` is (0,1,1) and the base `dl` rule
+     below is (0,0,1), so the two do not fight over `grid-template-columns`.
+     Each pair is wrapped in a `.stat` div, which HTML5 permits inside a `<dl>`
+     and which is what lets one label and its value be one card. */
+  dl.stats {
+    grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+    gap: 0.6rem; margin: 1rem 0;
+  }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.6rem 0.75rem;
+  }
+  .stat dt { font-size: 0.82rem; line-height: 1.3; }
+  .stat dd {
+    font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums;
+    margin-top: 0.15rem;
+  }
 
   .reading-notes { margin: 1rem 0; }
   .reading-notes summary { cursor: pointer; color: var(--muted); }
@@ -265,6 +312,92 @@ RESEARCH_USE_NOTICE: Final = (
     "<strong>not a clinical decision-support tool</strong> and must not be used to make "
     "or guide a diagnostic, treatment or any other clinical decision."
 )
+
+
+# What each of the four `FamilyState`s means, keyed by the state's own name and
+# ordered as `concordance` ranks them: strongest support first, absence last.
+#
+# **One definition, three legends.** The browse page's dot strip, the gene
+# page's evidence matrix and the front page's key all caption the same four
+# states. They draw different markup -- `.dot` glyphs, `.cell-key` swatches --
+# but must describe the states in the same words, and this project's single most
+# repeated defect is duplicated prose going stale in one copy while staying
+# internally consistent (CLAUDE.md section 4.24).
+#
+# **Keyed by state, never positional, and that is load-bearing.** The first
+# version of this constant was a 4-tuple zipped against a separate glyph tuple
+# at each call site, which made the caption-to-glyph pairing a relation between
+# four independently reorderable sequences. Measured 2026-08-06 by mutation:
+# swapping two entries survives all 787 tests, and the build then publishes a
+# gene page whose key says the `not-tested` swatch means "tested, no enrichment
+# detected" while that same page's cells say "this dataset did not test this
+# gene". That is exactly the `not_tested`-reads-as-`no_enrichment` collapse this
+# project forbids, on a green build. `zip(strict=True)` does not help: it checks
+# length, not order.
+#
+# Keying by state makes the mispairing unrepresentable rather than merely
+# detectable, which is the same reason `pages._STATE_TITLE` and
+# `pages._STATE_GLYPH` are dicts. Reordering this mapping now changes only the
+# order states are listed in; a caption cannot leave its state.
+#
+# The apostrophe is `&#x27;` rather than a literal, because these strings are
+# interpolated into HTML by three call sites and one of them may one day put one
+# inside an attribute. `render` is where escaping decisions live.
+EVIDENCE_STATE_LABELS: Final[dict[str, str]] = {
+    "corrected": "enriched, and survives that study&#x27;s own correction",
+    "nominal": "enriched nominally, or no correction published",
+    "no_enrichment": "tested, no enrichment detected",
+    "not_tested": "not tested by that dataset",
+}
+
+# The glyph each state draws, per legend kind, keyed by the same state names.
+# A state missing from either mapping raises `KeyError` in `evidence_legend`
+# rather than rendering a legend one row short.
+_DOT_GLYPHS: Final[dict[str, tuple[str, str]]] = {
+    "corrected": ("dot full", ""),
+    "nominal": ("dot half", ""),
+    "no_enrichment": ("dot none", ""),
+    "not_tested": ("dot untested", "&ndash;"),
+}
+_SWATCH_GLYPHS: Final[dict[str, tuple[str, str]]] = {
+    "corrected": ("cell-key corrected", ""),
+    "nominal": ("cell-key nominal", ""),
+    "no_enrichment": ("cell-key no-enrichment", ""),
+    "not_tested": ("cell-key not-tested", ""),
+}
+
+# The sentence that stops an empty matrix or a hollow strip reading as a verdict.
+#
+# Byte-identical in `_MATRIX_LEGEND` and `_STRIP_LEGEND` before this constant
+# existed, which is the duplication the paragraph above says to avoid. It is the
+# most load-bearing sentence the concordance layer publishes: KDM6A is ClinGen
+# definitive, causes Kabuki syndrome, and shows nothing in either dataset that
+# tested it.
+EVIDENCE_POWER_CAVEAT: Final = (
+    "<strong>No enrichment at these cohort sizes is not evidence against a gene</strong> "
+    "&mdash; burden tests routinely detect nothing for genes with overwhelming family and "
+    "functional evidence."
+)
+
+
+def evidence_legend(*, swatches: bool) -> str:
+    """The four-state key, as one `<p>`. `swatches` picks square keys over dots.
+
+    Every item is wrapped in a `.legend-item`, which the stylesheet makes
+    `inline-block` so a line break cannot fall between a glyph and its own
+    caption. `&nbsp;` does not achieve this and was measured not to: `.dot` is
+    `display: inline-grid`, an atomic inline box, and a browser takes a break
+    opportunity after it regardless of the whitespace that follows. Without the
+    wrapper the front page orphaned "not tested by that dataset" from any glyph
+    at ordinary desktop widths.
+    """
+    glyphs = _SWATCH_GLYPHS if swatches else _DOT_GLYPHS
+    items = " &nbsp; ".join(
+        f'<span class="legend-item"><span class="{glyphs[state][0]}">{glyphs[state][1]}</span>'
+        f" {label}</span>"
+        for state, label in EVIDENCE_STATE_LABELS.items()
+    )
+    return f'<p class="strip-legend">{items}</p>'
 
 
 @dataclass(frozen=True)
