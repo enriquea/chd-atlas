@@ -69,7 +69,7 @@ from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
 from chd_atlas.build.render import (
-    EVIDENCE_STATE_LABELS,
+    EVIDENCE_POWER_CAVEAT,
     FILTER_SCRIPT,
     Cell,
     Link,
@@ -79,6 +79,7 @@ from chd_atlas.build.render import (
     data_table,
     definition_list,
     document,
+    evidence_legend,
 )
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.identifiers import HgncId
@@ -211,39 +212,19 @@ _STRATUM_LABEL: Final[dict[str, str]] = {
 # green `definitive` chip with nothing to explain it. Found by review before the
 # deploy, on the page where the omission would have done the damage.
 _MATRIX_LEGEND: Final = (
-    '<p class="strip-legend">'
-    + " &nbsp; ".join(
-        f'<span class="cell-key {css}"></span> {label}'
-        for css, label in zip(
-            ("corrected", "nominal", "no-enrichment", "not-tested"),
-            EVIDENCE_STATE_LABELS,
-            strict=True,
-        )
-    )
-    + "</p>"
-    '<p class="strip-legend">Rows are <strong>independent cohort families</strong>, not '
+    evidence_legend(swatches=True)
+    + '<p class="strip-legend">Rows are <strong>independent cohort families</strong>, not '
     "studies: two papers sharing a sample collection describe the same people and appear "
-    "once. <strong>No enrichment at these cohort sizes is not evidence against a gene</strong> "
-    "&mdash; burden tests routinely detect nothing for genes with overwhelming family and "
-    "functional evidence.</p>"
+    "once. " + EVIDENCE_POWER_CAVEAT + "</p>"
 )
 
 _STRIP_LEGEND: Final = (
-    '<p class="strip-legend">'
-    + " &nbsp; ".join(
-        f'<span class="dot {css}">{glyph}</span> {label}'
-        for (css, glyph), label in zip(
-            (("full", ""), ("half", ""), ("none", ""), ("untested", "&ndash;")),
-            EVIDENCE_STATE_LABELS,
-            strict=True,
-        )
-    )
-    + "</p>"
-    '<p class="strip-legend">One glyph per <strong>independent cohort family</strong>, not '
+    evidence_legend(swatches=False)
+    + '<p class="strip-legend">One glyph per <strong>independent cohort family</strong>, not '
     "per study: two papers sharing a sample collection describe the same people and count "
-    "once. <strong>No enrichment at these cohort sizes is not evidence against a gene</strong> "
-    "&mdash; burden tests routinely detect nothing for genes with overwhelming family and "
-    "functional evidence. The tally reads <em>enriched</em> of <em>tested</em>: the first "
+    "once. "
+    + EVIDENCE_POWER_CAVEAT
+    + " The tally reads <em>enriched</em> of <em>tested</em>: the first "
     "number counts datasets that found something, the second counts datasets that looked. "
     "Neither is a verdict on the gene.</p>"
 )

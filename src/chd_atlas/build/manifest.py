@@ -161,7 +161,7 @@ from chd_atlas.corpus import Corpus
 # 290 burden statistics, and named neither. A consumer summarising the atlas from
 # this object reported an empty one. `index.html` had the same omission and is
 # fixed in the same release, because `docs/data-api.md` describes the page as
-# stating "the rest of `counts`" -- they are one census in two formats and must
+# stating "every key of `counts`" -- they are one census in two formats and must
 # not be able to disagree.
 #
 # So `counts` is now a census of what the build *published*, not of what the

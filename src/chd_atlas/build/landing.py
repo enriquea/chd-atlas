@@ -80,7 +80,7 @@ from typing import Final
 from chd_atlas.build.burden import BurdenCensus
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import LANDING
-from chd_atlas.build.render import EVIDENCE_STATE_LABELS, document
+from chd_atlas.build.render import EVIDENCE_POWER_CAVEAT, document, evidence_legend
 from chd_atlas.build.validity import GeneValidity
 from chd_atlas.corpus import Corpus
 
@@ -112,26 +112,23 @@ _MIRRORED_ROW_LABEL = (
     "(browsable once ClinGen grades it definitive for a disease in that scope)"
 )
 
-# The same four glyphs the browse page's strip uses, captioned with the same
-# sentences -- `EVIDENCE_STATE_LABELS` is shared so the three legends on this
-# site cannot come to describe the same states differently.
+# The same four glyphs the browse page's strip uses, from the same keyed
+# definition, so the three legends on this site cannot come to describe the same
+# states differently or attach a caption to the wrong glyph.
 #
 # On the front page rather than only on the pages that use them, because this is
 # where a first-time reader is: the dot strip is this atlas's one invented
 # notation, and meeting it cold on a browse row is what made the live site "hard
-# to follow". `.dot` and `.strip-legend` are existing rules; this element adds no
-# CSS of its own.
-_GLYPH_KEY: Final = (
-    '<p class="strip-legend">'
-    + " &nbsp; ".join(
-        f'<span class="dot {css}">{glyph}</span> {label}'
-        for (css, glyph), label in zip(
-            (("full", ""), ("half", ""), ("none", ""), ("untested", "&ndash;")),
-            EVIDENCE_STATE_LABELS,
-            strict=True,
-        )
-    )
-    + "</p>"
+# to follow".
+#
+# `EVIDENCE_POWER_CAVEAT` comes with it, and that is not decoration. Review
+# 2026-08-06 found the front page teaching `no enrichment detected` with no
+# statement that no enrichment is not evidence against a gene -- the one sentence
+# both other legends carry. Teaching a notation without the caveat that makes it
+# readable sets exactly the prior the caveat exists to prevent, and this page is
+# where the notation is taught.
+_GLYPH_KEY: Final = evidence_legend(swatches=False) + (
+    f'<p class="strip-legend">{EVIDENCE_POWER_CAVEAT}</p>'
 )
 
 
@@ -206,11 +203,20 @@ def _render(
     curated_genes = sorted({assertion.gene for assertion in corpus.assertions})
     asserted = _asserted_genes(curated_genes, symbols)
 
-    # Ordered by what the site actually holds, not by when a row was added. The
-    # published order used to lead with "Curated gene-disease assertions: 1" and
-    # "Genes the atlas has curated: 1" and reach 23 third, which is how a page
-    # whose every number is true composes a false picture -- a reader met two 1s
-    # and two 0s before anything substantial.
+    # Ordered by what the site actually holds, not by when a row was added.
+    #
+    # Measured against `origin/main` rather than remembered, after review found
+    # this comment inventing a history: it claimed the old order reached 23
+    # third behind two 1s and two 0s. It did not. The real order was
+    # `assertions 1`, `genes published 23`, `genes curated 1`, `functional 0`,
+    # then publications, phenotypes, featured, omics -- so a reader met one `1`
+    # before the first substantial figure, not four small ones.
+    #
+    # The ordering was therefore never the defect, and saying it was made the
+    # weaker argument. The defect was that **no burden figure appeared at all**:
+    # 290 statistics over 23 genes from 3 independent datasets, and the census
+    # named none of them. This order exists so the three new figures sit with
+    # the population they describe rather than below four curation counts.
     stats = "".join(
         (
             _stat("Genes published", _number(published_gene_count)),
