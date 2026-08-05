@@ -45,11 +45,15 @@ one derivation is what stops the page and the payload disagreeing.
 
 `tests/unit/test_build_landing.py` guards those three against each other by
 fixture rather than by recomputation, and the description here said otherwise
-until it was checked. Exactly one of its tests recomputes a number and compares
-it against the rendered text —
+until it was checked. **This sentence used to say "exactly one of its tests
+recomputes a number", and the burden census made that false in the same commit
+that added it** — a docstring counting the tests in another file goes stale the
+moment someone writes one, which is why the count is gone rather than corrected.
+Measured 2026-08-05, three of its tests read a real build:
 `test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json`,
-which reads `len(genes/index.json["genes"])` off a real build. Every other
-count assertion in the file is a literal.
+`test_the_page_and_the_manifest_publish_one_census_of_a_real_build` and
+`test_the_manifest_gene_count_is_the_population_not_the_genes_carrying_burden`.
+Every other count assertion in the file is a literal.
 
 They are literals on purpose, and the fixture is what makes them strong: it is
 hand-sized so that all three populations differ — two assertions, on one gene,
