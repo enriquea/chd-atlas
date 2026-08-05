@@ -911,13 +911,22 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
             total_compared += sum(1 for v in values if v is not None)
 
     # 3,653 x 2 in `clingen_gene_validity.tsv`, 30,410 x 3 in
-    # `gencc_submissions.tsv`, 154 x 2 in `genes.tsv`, and 1,295 x 4 in
-    # `burden.tsv` (`study`, `gene`, `case_cohorts`, `control_cohorts` -- every
-    # burden row across both studies is case-control, so `control_cohorts` is
-    # non-null on all of them and contributes a full column rather than a
-    # partial one). The burden figure rose from 1,192 x 4 when PMID:34324492
-    # added 103 rows.
-    assert total_compared == 104_024
+    # `gencc_submissions.tsv`, 154 x 2 in `genes.tsv`, and 4,425 + 1,385 in
+    # `burden.tsv`: 1,475 rows x 3 always-present columns (`study`, `gene`,
+    # `case_cohorts`) plus `control_cohorts`, which is non-null on only 1,385.
+    #
+    # **`control_cohorts` stopped being a full column on 2026-08-05**, and the
+    # comment here asserted that it was one until then: "every burden row across
+    # both studies is case-control, so `control_cohorts` is non-null on all of
+    # them". PMID:40127276 contributes the mirror's first `mutation_model` rows,
+    # 90 of them, whose comparator is a mutability model and which therefore
+    # carry no control cohort at all -- BUR001 refuses one that does. The
+    # arithmetic is what caught the stale sentence: 1,475 x 4 is 5,900, and the
+    # measured figure is 5,810.
+    #
+    # The burden figure has now risen twice: from 1,192 x 4 when PMID:34324492
+    # added 103 rows, and again here.
+    assert total_compared == 104_654
 
     for pattern in patterns:
         compiled = re.compile(pattern)

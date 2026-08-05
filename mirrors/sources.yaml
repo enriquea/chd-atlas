@@ -21,6 +21,29 @@ sources:
     # statement, which covers its supplementary material.
     licence: CC-BY-4.0
     redistribution: permitted_with_attribution
+  - id: sierant2025_ds6
+    name: >-
+      Sierant et al. 2025, PNAS 122(13) e2420343122, Dataset S6
+      (gene-level meta-analysis over all 248 MIPseq panel genes: Poisson de novo
+      enrichment in trios, and Fisher case-control of ultra-rare TUVs against
+      gnomAD)
+    version: "sha256:d8e9f7777b329c810adde8b9f4a0f91a4d1a6211b760daeb9329ae6f36606daa"
+    retrieved_on: 2026-08-05
+    # The canonical location. RETRIEVED VIA PMC, not from here: pnas.org answers
+    # 403 to a scripted request, so the workbook was taken from the Europe PMC
+    # open-access supplementary bundle for PMC12002227 and its sha256 recorded
+    # above. The two are the same file; the sha256 is what lets a curator prove
+    # it, which is the reason this field is a checksum rather than a date.
+    url: https://www.pnas.org/doi/suppl/10.1073/pnas.2420343122/suppl_file/pnas.2420343122.sd06.xlsx
+    # "Copyright (c) 2025 the Author(s). Published by PNAS. This open access
+    # article is distributed under Creative Commons Attribution License 4.0
+    # (CC BY)." -- the article's own permissions statement, which covers its
+    # supplementary material. Confirmed independently three ways on 2026-08-05,
+    # because PNAS uses CC BY-NC-ND on some content: the article statement
+    # above, Crossref's licence record for the DOI, and NCBI's own OA service,
+    # which returns `license="CC BY"` for PMC12002227.
+    licence: CC-BY-4.0
+    redistribution: permitted_with_attribution
   - id: audain2021_s6
     name: >-
       Audain et al. 2021, PLoS Genetics 17(7) e1009679, S6 Table Sheet A

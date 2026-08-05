@@ -24,7 +24,13 @@ from typing import Any
 
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import BURDEN, read_table
-from chd_atlas.vocab import EFFECT_MEASURES, BurdenComparator, EffectBound
+from chd_atlas.vocab import (
+    EFFECT_MEASURES,
+    BurdenComparator,
+    CountUnit,
+    EffectBound,
+    VariantOrigin,
+)
 
 # What each comparator requires and what it forbids. Read as: a case-control row
 # must carry both control columns and must not carry a modelled expectation,
@@ -248,6 +254,28 @@ def validate_burden(root: Path) -> list[ValidationIssue]:
                 "BUR018",
                 line,
                 f"corrected p {adjusted} is smaller than the raw p {row['pvalue']} it corrects",
+            )
+
+        # BUR019 -- a row counting de novo mutations must be counting a de novo
+        # variant set. This is the *only* implication `count_unit` supports, and
+        # the narrowness is deliberate: a case-control study may legitimately
+        # count people (PMID:42230622) or alleles (PMID:40127276), and a de novo
+        # analysis may legitimately count carriers rather than mutations, so
+        # every richer rule available here would encode a convention this
+        # project has not measured -- the reason `StatisticalTest` declines to
+        # constrain itself against `comparator`. What cannot happen is a de novo
+        # mutation count over a set that was never restricted to de novo
+        # variants: the numerator would be counting something the row's own
+        # `origin` says was not selected for.
+        if row["count_unit"] == CountUnit.DE_NOVO_MUTATIONS and row["origin"] != (
+            VariantOrigin.DE_NOVO
+        ):
+            error(
+                "BUR019",
+                line,
+                f"'count_unit' is {CountUnit.DE_NOVO_MUTATIONS.value!r} but 'origin' is "
+                f"{row['origin']!r}; de novo mutations cannot be counted in a variant set "
+                f"that was not restricted to them",
             )
 
         # Neither direction alone is publishable: a p-value whose test is unnamed

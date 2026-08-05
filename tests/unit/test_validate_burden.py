@@ -26,6 +26,7 @@ _ROW: dict[str, str] = {
     "consequence_class": "lof",
     "origin": "any",
     "maf_max": "0.001",
+    "count_unit": "individuals",
     "n_case_carriers": "4",
     "n_cases": "1471",
     "comparator": "control_cohort",
@@ -501,3 +502,28 @@ def test_a_corrected_p_value_must_name_its_method_and_exceed_its_raw_p(
     Zero of the 1,295 committed rows violate any of these.
     """
     assert "BUR018" in _codes(tmp_path, {**_ROW, **mutation})
+
+
+def test_de_novo_mutations_cannot_be_counted_in_a_set_that_is_not_de_novo(
+    tmp_path: Path,
+) -> None:
+    """BUR019, and the *only* rule `count_unit` supports.
+
+    A numerator counting de novo mutations over a variant set the row's own
+    `origin` says was never restricted to de novo variants is counting something
+    that was not selected for. Every other pairing this column suggests is a
+    convention rather than an implication -- a case-control study may count
+    people (PMID:42230622) or alleles (PMID:40127276), and a de novo analysis may
+    count carriers rather than mutations -- so asserting more here would encode a
+    rule this project has not measured, the reason `StatisticalTest` declines to
+    constrain itself against `comparator`.
+
+    The negative half is what makes that narrowness real: the same unit with a
+    de novo origin is clean, and so is every other unit against every origin.
+    """
+    offending = {**_ROW, "count_unit": "de_novo_mutations", "origin": "any"}
+    assert "BUR019" in _codes(tmp_path, offending)
+
+    assert "BUR019" not in _codes(tmp_path, {**offending, "origin": "de_novo"})
+    assert "BUR019" not in _codes(tmp_path, {**_ROW, "count_unit": "alleles"})
+    assert "BUR019" not in _codes(tmp_path, {**_ROW, "count_unit": "individuals"})

@@ -42,7 +42,15 @@ STRATUM_ORDER: Final[tuple[str, ...]] = ("all", "syndromic", "nonsyndromic")
 # calibrates them. `synonymous` last is a deliberate reading order rather than an
 # ordering of importance -- it is the row that tells you whether to believe the
 # two above it.
+#
+# `damaging` is first because it is the *composite* of `lof` and
+# `missense_damaging`, and the primary analysis of the study that reports it
+# (PMID:40127276 defines its 60 genes by it). Putting the union above its two
+# components makes them read as a breakdown of the headline; putting it after
+# them, or alphabetically -- where it would land first anyway, by coincidence --
+# would make three rows read as three independent findings.
 CONSEQUENCE_ORDER: Final[tuple[str, ...]] = (
+    "damaging",
     "lof",
     "missense_damaging",
     "missense_all",
@@ -71,6 +79,7 @@ class BurdenRow:
     consequence_class: str
     origin: str
     maf_max: float | None
+    count_unit: str
     n_case_carriers: int
     n_cases: int
     comparator: str
@@ -162,6 +171,7 @@ def load_burden(root: Path) -> dict[str, list[BurdenRow]]:
             consequence_class=str(record["consequence_class"]),
             origin=str(record["origin"]),
             maf_max=record["maf_max"],
+            count_unit=str(record["count_unit"]),
             n_case_carriers=int(record["n_case_carriers"]),
             n_cases=int(record["n_cases"]),
             comparator=str(record["comparator"]),
@@ -243,6 +253,11 @@ def burden_payload(rows: Iterable[BurdenRow]) -> list[Json]:
             "consequence_class": row.consequence_class,
             "origin": row.origin,
             "maf_max": row.maf_max,
+            # Qualifies all four count keys below. A consumer reading
+            # `n_case_carriers` off two studies and comparing them is doing
+            # arithmetic on alleles and people unless this key is there to stop
+            # it -- the same defect the gene page carried until 2026-08-05.
+            "count_unit": row.count_unit,
             "n_case_carriers": row.n_case_carriers,
             "n_cases": row.n_cases,
             "comparator": row.comparator,

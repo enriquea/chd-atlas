@@ -110,6 +110,7 @@ _ORDER: Final[tuple[str, ...]] = (
     "consequence_class",
     "origin",
     "maf_max",
+    "count_unit",
     "n_case_carriers",
     "n_cases",
     "comparator",
@@ -165,7 +166,31 @@ def _column_index(reference: str) -> int:
 
 
 def read_sheet(path: Path, name: str) -> list[dict[str, str]]:
-    """One worksheet as a list of dicts keyed on its header row."""
+    """One worksheet as a list of dicts keyed on its header row.
+
+    Only correct for a sheet whose first row *is* the header. PNAS supplements
+    put a title, a caption and a three-level header above the data, which keys
+    every column on `""`; those callers use `read_sheet_rows` and index by
+    position. See `convert_sierant2025.py`, which checks the header row it
+    indexes against rather than trusting it.
+    """
+    rows = read_sheet_rows(path, name)
+    header = rows[0]
+    return [
+        {name: (row[i] if i < len(row) else "") for i, name in enumerate(header)}
+        for row in rows[1:]
+    ]
+
+
+def read_sheet_rows(path: Path, name: str) -> list[list[str]]:
+    """One worksheet as raw rows of cell text, blanks preserved by position.
+
+    Position is the point: a sheet with a merged multi-level header has no row
+    that can key a dict, and the columns still have to be addressable. Cells are
+    placed by their `r` reference rather than by order of appearance, because a
+    sparse row omits its empty cells entirely -- so a run of blanks in the middle
+    of a row would otherwise shift every column after it left.
+    """
     with zipfile.ZipFile(path) as archive:
         workbook = ET.fromstring(archive.read("xl/workbook.xml"))
         workbook_ns = _namespace(workbook)
@@ -227,11 +252,7 @@ def read_sheet(path: Path, name: str) -> list[dict[str, str]]:
                 cells[index] = value
             rows.append([cells.get(i, "") for i in range(max(cells) + 1 if cells else 0)])
 
-    header = rows[0]
-    return [
-        {name: (row[i] if i < len(row) else "") for i, name in enumerate(header)}
-        for row in rows[1:]
-    ]
+    return rows
 
 
 def _number(value: str) -> str:
@@ -282,6 +303,11 @@ def convert(source: Path, symbols: dict[str, str]) -> tuple[list[dict[str, str]]
                     # they were inherited; it is not a de novo test.
                     "origin": "any",
                     "maf_max": _number(record["maf"]),
+                    # The supplement's `n_het_*` columns count individuals
+                    # carrying at least one qualifying variant, which is why
+                    # this study's denominators are its sample sizes rather than
+                    # twice them.
+                    "count_unit": "individuals",
                     "n_case_carriers": record[carriers],
                     "n_cases": record[denominator],
                     "comparator": "control_cohort",

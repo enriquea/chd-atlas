@@ -52,7 +52,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.4",
+  "schema_version": "2.5",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -93,6 +93,12 @@ wrong by the next one.
   apart. `2.3` added `burden` to every gene bundle and `burden_row_count` to
   every gene index row, again additively; both keys are always present, so a
   2.2 reader keeps working and a 2.3 reader never guards for a missing one.
+  `2.4` added `pvalue_adjusted` and `pvalue_adjustment` to every burden object,
+  and `2.5` added `count_unit`. Both additive, both always present. Both carry a
+  *display* obligation heavier than the parsing one, described with the
+  [`burden` array](#the-bundles-burden-array-per-study-never-pooled) below: a raw
+  and a corrected p can point opposite ways, and two rows counting different
+  units are not comparable at all.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -445,6 +451,7 @@ same reason `mirrors/genes.tsv` registers 154 genes and 23 publish.
   "consequence_class": "lof",
   "origin": "any",
   "maf_max": 0.001,
+  "count_unit": "individuals",
   "n_case_carriers": 5,
   "n_cases": 1471,
   "comparator": "control_cohort",
@@ -469,6 +476,21 @@ same reason `mirrors/genes.tsv` registers 154 genes and 23 publish.
 
 Every key is present on every object, `null` where the row's comparator does
 not populate it, so a consumer never has to guard for a missing one.
+
+**`count_unit` qualifies all four count keys, and they are not comparable
+without it.** The four studies this schema was designed against do not count the
+same thing:
+
+| `count_unit` | numerator | denominator |
+| --- | --- | --- |
+| `individuals` | people carrying at least one qualifying variant | people sequenced |
+| `alleles` | qualifying alleles observed | alleles called — roughly twice the people, and varying per gene with coverage |
+| `de_novo_mutations` | de novo mutations observed | **trios**, not alleles and not people |
+
+A consumer dividing `n_case_carriers` by `n_cases` across studies without
+reading this key is doing arithmetic on three different quantities. Someone
+carrying two qualifying variants counts once under `individuals` and twice under
+`alleles`.
 
 **`comparator` is the field the whole array turns on.** The published burden
 literature answers one question — is this gene hit more often than expected? —

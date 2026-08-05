@@ -150,6 +150,10 @@ def convert(source: Path, symbols: dict[str, str]) -> tuple[list[dict[str, str]]
                 "origin": "any",
                 # "Rare CNV deletions (MAF 0.01)" -- S15 Table's own title.
                 "maf_max": "0.01",
+                # PLINK's CNV association counts individuals carrying a deletion
+                # that overlaps the gene, not alleles and not deletions: a
+                # proband with two overlapping deletions is one case.
+                "count_unit": "individuals",
                 "n_case_carriers": record["case"],
                 "n_cases": str(N_CASES),
                 "comparator": "control_cohort",

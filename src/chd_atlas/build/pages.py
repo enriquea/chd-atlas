@@ -153,12 +153,26 @@ _EVIDENCE_HEADERS: Final = ("class", "strength", "summary", "publication")
 _BURDEN_HEADERS: Final = (
     "case group",
     "consequence",
-    "cases (carriers / n)",
-    "controls (carriers / n)",
+    # Not "cases (carriers / n)". The unit is a property of the *row*, not of
+    # the column -- one study's table can hold a de novo arm counting mutations
+    # and a case-control arm counting alleles -- so it is rendered per cell by
+    # `_count` and the header names only what the column is.
+    "cases",
+    "controls",
     "effect",
     "p",
     "corrected p",
 )
+
+# The word for each count unit, as (numerator, denominator suffix). The
+# denominator of a de novo row is *trios*, not alleles or people, because a trio
+# is what it takes to call one -- so this pairs both halves rather than labelling
+# the numerator and leaving the reader to assume the other matches.
+_COUNT_UNIT_LABEL: Final[dict[str, tuple[str, str]]] = {
+    "individuals": ("carriers", ""),
+    "alleles": ("alleles", ""),
+    "de_novo_mutations": ("de novo", " trios"),
+}
 
 # How a published correction is named in the cell, so a reader is never left to
 # guess what "0.99" was corrected against.
@@ -175,6 +189,10 @@ _STRATUM_LABEL: Final[dict[str, str]] = {
 }
 
 _CONSEQUENCE_LABEL: Final[dict[str, str]] = {
+    # Names its two components rather than saying "damaging", so a reader who
+    # meets this row first is told what it is the union of before they reach the
+    # two rows below it. `_composite_note` says the rest.
+    "damaging": "damaging (LOF + missense)",
     "lof": "loss-of-function",
     "missense_damaging": "missense (damaging)",
     "missense_all": "missense (all)",
@@ -205,6 +223,15 @@ _ORIGIN_LABEL: Final[dict[str, str]] = {
     "de_novo": "de novo only",
     "inherited": "inherited only",
     "any": "any inheritance (not a de novo test)",
+    # Says what was excluded and what is unknown, because that is the whole
+    # content of the value: de novo variants were removed, and most of what
+    # remains was never phased. "inherited" would claim transmission the study
+    # did not observe for the singleton majority.
+    # No internal semicolon: `_method_line` joins its parts with "; " and the
+    # origin labels within a part with ", ", so a label containing one produced
+    # "de novo excluded; transmission otherwise known or unknown, de novo only"
+    # -- which reads as three clauses at two nesting levels and parses as none.
+    "transmitted_or_unphased": "de novo excluded (transmission otherwise known or unknown)",
 }
 
 _LESION_LABEL: Final[dict[str, str]] = {}
@@ -236,8 +263,12 @@ _POOLING_NOTICE: Final = (
 
 # What the numbers do not say. Every clause was measured; see `_burden_section`.
 _BURDEN_PREAMBLE: Final = (
-    "<p><code>cases</code> and <code>controls</code> each show <em>carriers / total "
-    "sequenced</em>. A consequence class missing from a study's table is <strong>not a "
+    "<p><code>cases</code> and <code>controls</code> each show <em>observed / total</em>, "
+    "and <strong>every cell names what it counted</strong> &mdash; carriers, alleles, or "
+    "de novo mutations. The three are not interchangeable: a study counting alleles "
+    "counts a person with two qualifying variants twice, and its denominator is roughly "
+    "twice the number of people sequenced. "
+    "A consequence class missing from a study's table is <strong>not a "
     "null result</strong>: no variant of that class was seen in either group, so there "
     "was nothing to compare and the study reported no row for it.</p>"
     "<p>The <strong>synonymous</strong> row is the study's own negative control &mdash; "
@@ -564,17 +595,27 @@ def _study_label(pmid: str, publications: Mapping[str, Publication]) -> str:
     return f"{author} et al. {publication.year}"
 
 
-def _count(carriers: int | None, total: int | None) -> str:
-    """ "6 / 3,876" -- the numerator with the denominator it was measured against.
+def _count(carriers: int | None, total: int | None, unit: str) -> str:
+    """ "6 carriers / 3,876" -- a numerator, its denominator, and their unit.
 
     Never the numerator alone. Six carriers is a different claim in 3,876 cases
     than in 45,082, and the two columns of this table hold exactly that contrast.
     The separator is a literal `,` via `:,`, which is locale-independent, so two
     builds on two machines render the same bytes.
+
+    **And never without the unit.** This is `_effect`'s rule applied to the
+    count columns, for the same reason and after the same near miss: until
+    2026-08-05 the header read "cases (carriers / n)" and every cell was assumed
+    to be people. PMID:40127276's case-control arm counts *alleles* -- measured,
+    not assumed, in `CountUnit` -- so that header would have claimed 21,768
+    people sequenced where 11,555 were, and called an allele count a carrier
+    count, on a page whose checksum verified. An unknown unit therefore renders
+    its raw token rather than nothing: there is no branch here that omits it.
     """
     if carriers is None or total is None:
         return _EM_DASH
-    return f"{carriers:,} / {total:,}"
+    numerator, denominator = _COUNT_UNIT_LABEL.get(unit, (unit, ""))
+    return f"{carriers:,} {numerator} / {total:,}{denominator}"
 
 
 def _effect(row: BurdenRow) -> str:
@@ -713,7 +754,7 @@ def _burden_section(
                     cells=(
                         _STRATUM_LABEL.get(row.cohort_stratum, row.cohort_stratum),
                         _CONSEQUENCE_LABEL.get(row.consequence_class, row.consequence_class),
-                        _count(row.n_case_carriers, row.n_cases),
+                        _count(row.n_case_carriers, row.n_cases, row.count_unit),
                         _controls(row),
                         _effect(row),
                         f"{row.pvalue:.3g}" if row.pvalue is not None else _EM_DASH,
@@ -730,6 +771,7 @@ def _burden_section(
             f"{_disclosure(study, publications)}"
             f"{_method_line(study_rows, publications.get(study))}"
             f"{_provenance(study_rows, cohorts)}"
+            f"{_composite_note(study_rows)}"
             f"{table}"
             f"{_footnotes(study_rows)}"
         )
@@ -770,7 +812,7 @@ def _controls(row: BurdenRow) -> str:
     """
     if row.comparator == "mutation_model" and row.expected_count is not None:
         return f"{_fmt(row.expected_count)} expected"
-    return _count(row.n_control_carriers, row.n_controls)
+    return _count(row.n_control_carriers, row.n_controls, row.count_unit)
 
 
 def _disclosure(study: str, publications: Mapping[str, Publication]) -> str:
@@ -889,6 +931,37 @@ def _provenance(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str
     return (
         f'<p class="provenance">Cases: {html.escape(_names(cases, cohorts))}. '
         f"Controls: {html.escape(_names(controls, cohorts) or 'none (see the method above)')}.</p>"
+    )
+
+
+def _composite_note(rows: Sequence[BurdenRow]) -> str:
+    """Say that the `damaging` rows are the union of the two below them.
+
+    Without it a reader meets three consequence rows and reads three findings,
+    then adds up carrier counts that already include each other. Measured on
+    CHD7 in PMID:40127276: the damaging de novo row is 20 mutations, and the
+    loss-of-function and damaging-missense rows below it are 16 and 4 of *those
+    same* 20.
+
+    The composite is not droppable in favour of its parts -- it carries its own
+    p-value, which is not a function of theirs, and it is the analysis the study
+    defines its results by -- so the relationship has to be stated rather than
+    designed away.
+
+    Conditional on the study actually reporting both a composite and a
+    component. Rendered unconditionally it would assert a decomposition that
+    does not exist for the two studies whose tables carry no `damaging` row at
+    all, which is the defect `_POOLING_NOTICE` was made conditional for.
+    """
+    consequences = {row.consequence_class for row in rows}
+    if "damaging" not in consequences or not consequences & {"lof", "missense_damaging"}:
+        return ""
+    return (
+        '<p class="notice-inline">The <strong>damaging (LOF + missense)</strong> rows are '
+        "the <strong>union</strong> of the loss-of-function and damaging-missense rows "
+        "below them, not a third independent result &mdash; the same variants are counted "
+        "in both. They are shown because this study defines its findings by the composite, "
+        "and because its p-value is not derivable from the other two.</p>"
     )
 
 

@@ -1004,6 +1004,7 @@ def _burden_row(**overrides: object) -> BurdenRow:
         "consequence_class": "lof",
         "origin": "any",
         "maf_max": 0.001,
+        "count_unit": "individuals",
         "n_case_carriers": 5,
         "n_cases": 1471,
         "comparator": "control_cohort",
@@ -1133,8 +1134,8 @@ def test_an_unbounded_odds_ratio_renders_its_lower_bound_rather_than_a_blank(
     page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
 
     assert "OR ∞ (95% CI 28.1–∞)" in page
-    assert "<td>5 / 1,471</td>" in page
-    assert "<td>0 / 45,082</td>" in page
+    assert "<td>5 carriers / 1,471</td>" in page
+    assert "<td>0 carriers / 45,082</td>" in page
 
 
 def test_a_gene_with_no_burden_rows_gets_no_section_at_all(
@@ -1557,3 +1558,117 @@ def test_the_method_line_tells_a_corrected_study_apart_from_an_uncorrected_one(
     plain = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
     assert "judge the raw one against the whole scan" in plain
     assert "read it rather than the raw p" not in plain
+
+
+def test_every_count_cell_names_what_it_counted(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_count`'s rule, and `_effect`'s rule applied one column over.
+
+    Until 2026-08-05 the header read "cases (carriers / n)" and every cell was a
+    bare "5 / 1,471", which was true only because every study curated so far
+    counted people. PMID:40127276's case-control arm counts *alleles* -- measured
+    against its own Dataset S4 in `CountUnit`, where its D-Mis `Obs` tracks the
+    variant count in 245 of 248 genes and the distinct-proband count in only
+    235 -- so under the old header its rows would have claimed 21,768 people
+    sequenced where 11,555 were.
+
+    The three units render in one table here because that is the real case: one
+    study contributes a de novo arm counting mutations against trios and a
+    case-control arm counting alleles, into the same table, and a per-column
+    header cannot label either.
+
+    Scoped to the burden `<tbody>`. A page-wide assertion passes with the unit
+    dropped from the cells, because `_BURDEN_PREAMBLE` names all three words
+    higher up the page -- the trap `test_the_consequence_column_is_headed_for_
+    the_column_it_renders` records one section above.
+    """
+    rows = [
+        _burden_row(consequence_class="lof", count_unit="individuals"),
+        _burden_row(consequence_class="missense_damaging", count_unit="alleles"),
+        _burden_row(
+            consequence_class="missense_all",
+            count_unit="de_novo_mutations",
+            origin="de_novo",
+            comparator="mutation_model",
+            n_control_carriers=None,
+            n_controls=None,
+            control_cohorts=(),
+            expected_count=0.166,
+            effect=None,
+            effect_measure=None,
+            effect_bound=None,
+            ci_low=None,
+        ),
+    ]
+    section = _burden_page(tmp_path, facts_uncurated, rows)
+    section = section[section.index("Rare variant burden") :]
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+
+    assert "<td>5 carriers / 1,471</td>" in body
+    assert "<td>5 alleles / 1,471</td>" in body
+    # The denominator of a de novo row is trios, and the word travels with it:
+    # 5 mutations in 1,471 *families* is not 5 in 1,471 alleles.
+    assert "<td>5 de novo / 1,471 trios</td>" in body
+
+    # The control column takes the same unit, so an allele row does not describe
+    # its cases in alleles and its controls in people.
+    assert "<td>0 alleles / 45,082</td>" in body
+    assert "<td>0 carriers / 45,082</td>" in body
+
+    # No cell anywhere in the table is a bare "n / n": that spelling is what the
+    # column meant before the unit existed, and it is the mutant this kills.
+    assert "<td>5 / 1,471</td>" not in body
+    assert "<td>0 / 45,082</td>" not in body
+
+
+def test_a_count_unit_nothing_has_taught_the_renderer_still_names_itself(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_COUNT_UNIT_LABEL` is hand-maintained, so it can fall behind `CountUnit`.
+
+    A member added to the enum and forgotten here must degrade to its raw token
+    rather than to silence: "5 genomes / 1,471" is ugly and true, while "5 /
+    1,471" is the exact false claim this column was added to prevent. Same shape
+    as `_study_label` falling back to the bare PMID rather than an em dash.
+
+    Reached only behind a bypassed gate -- `validate_table` refuses a value
+    outside `CountUnit`, and `build_site` refuses the corpus -- which is why it
+    is pinned here rather than left to be discovered.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row(count_unit="genomes")])
+    section = page[page.index("Rare variant burden") :]
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+
+    assert "<td>5 genomes / 1,471</td>" in body
+    assert "<td>5 / 1,471</td>" not in body
+
+
+def test_the_composite_row_is_named_as_a_union_of_the_two_below_it(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Three consequence rows must not read as three independent findings.
+
+    PMID:40127276 reports `damaging (LOF + missense)` alongside its two
+    components, and the composite is the analysis its 60 genes are defined by.
+    Measured on CHD7: the damaging de novo row is 20 mutations and the two rows
+    below it are 16 and 4 of *those same* 20, so a reader adding them up gets 40
+    from 20 variants.
+
+    The note is conditional, and both halves are asserted. A study reporting only
+    components must not be told its rows decompose something that is not there --
+    the defect `_POOLING_NOTICE` was made conditional for, where an
+    unconditional sentence sent readers hunting for a second study that did not
+    exist.
+    """
+    components = [
+        _burden_row(consequence_class="lof"),
+        _burden_row(consequence_class="missense_damaging"),
+    ]
+    composite = [_burden_row(consequence_class="damaging"), *components]
+
+    with_composite = _burden_page(tmp_path, facts_uncurated, composite)
+    assert "union</strong> of the loss-of-function" in with_composite
+
+    without = _burden_page(tmp_path / "b", facts_uncurated, components)
+    assert "union</strong> of the loss-of-function" not in without

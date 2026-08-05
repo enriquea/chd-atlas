@@ -24,6 +24,7 @@ _BASE: dict[str, str] = {
     "consequence_class": "lof",
     "origin": "any",
     "maf_max": "0.001",
+    "count_unit": "individuals",
     "n_case_carriers": "6",
     "n_cases": "3876",
     "comparator": "control_cohort",
@@ -64,33 +65,44 @@ def test_rows_read_in_the_order_a_reader_needs_not_the_order_they_sort_in(
     `nonsyndromic` would come before `syndromic` and both before `all`, which
     puts the headline figure last.
 
-    Consequence: result, other result, then the control.
+    Consequence: the composite, then its two components, then the other results,
+    then the control.
 
     **`all_coding` is in this fixture because without it the test proved
     nothing.** Measured 2026-08-05: with only `lof`, `missense_damaging` and
-    `synonymous` -- the three classes the committed mirror carries -- a mutant
-    collapsing `CONSEQUENCE_ORDER` to a constant survived, because those three
-    happen to sort into reading order alphabetically anyway. `all_coding` sorts
-    first as a string and third among the four classes used here (fourth in the
-    five-member `CONSEQUENCE_ORDER`), so it is what makes the ordering rule
+    `synonymous` -- the three classes the committed mirror carried then -- a
+    mutant collapsing `CONSEQUENCE_ORDER` to a constant survived, because those
+    three happen to sort into reading order alphabetically anyway. `all_coding`
+    sorts first as a string and fourth among the five classes used here (fourth
+    in the six-member `CONSEQUENCE_ORDER`), so it is what makes the ordering rule
     observable at all.
+
+    `damaging` joined on 2026-08-05 with PMID:40127276 and does *not* replace
+    that argument: it sorts first both alphabetically and by reading order, so a
+    fixture carrying it alone would prove nothing either. It is here because its
+    position is load-bearing for a different reason -- it is the union of the two
+    rows after it, and above them they read as its breakdown rather than as two
+    more findings.
     """
     written = [
         {**_BASE, "cohort_stratum": stratum, "consequence_class": consequence}
         for stratum in ("syndromic", "nonsyndromic", "all")
-        for consequence in ("synonymous", "all_coding", "missense_damaging", "lof")
+        for consequence in ("synonymous", "all_coding", "missense_damaging", "lof", "damaging")
     ]
     rows = load_burden(_write(tmp_path, *written))["HGNC:17075"]
 
     assert [(row.cohort_stratum, row.consequence_class) for row in rows] == [
+        ("all", "damaging"),
         ("all", "lof"),
         ("all", "missense_damaging"),
         ("all", "all_coding"),
         ("all", "synonymous"),
+        ("syndromic", "damaging"),
         ("syndromic", "lof"),
         ("syndromic", "missense_damaging"),
         ("syndromic", "all_coding"),
         ("syndromic", "synonymous"),
+        ("nonsyndromic", "damaging"),
         ("nonsyndromic", "lof"),
         ("nonsyndromic", "missense_damaging"),
         ("nonsyndromic", "all_coding"),
@@ -148,6 +160,7 @@ def _row(**overrides: object) -> BurdenRow:
         "consequence_class": "lof",
         "origin": "any",
         "maf_max": 0.001,
+        "count_unit": "individuals",
         "n_case_carriers": 6,
         "n_cases": 3876,
         "comparator": "control_cohort",
@@ -177,13 +190,24 @@ def test_every_published_row_carries_every_key_whatever_its_comparator() -> None
     field off `rows[0]` and expecting it on `rows[1]`.
 
     A case-control row and a de novo row populate disjoint halves of the
-    comparator block, and both publish all 24 keys with `null` where the
+    comparator block, and both publish all 27 keys with `null` where the
     comparator does not reach. Same rule `bundles._validity_record` follows for
     ClinGen-only and GenCC-only fields.
+
+    The count says 27 because the assertion was written before the measurement
+    and the test corrected it. It read 26 in the assertion and "24 keys" in this
+    sentence until 2026-08-05 -- two numbers, neither of them right, exactly the
+    drift CLAUDE.md section 6 records. `count_unit` made it 27.
+
+    The two rows differ in `count_unit` as well as in comparator, which is the
+    point of that column: these fixtures count 6 people and 6 de novo mutations
+    respectively, and nothing else in the payload distinguishes those.
     """
     case_control = _row()
     de_novo = _row(
         comparator="mutation_model",
+        origin="de_novo",
+        count_unit="de_novo_mutations",
         n_control_carriers=None,
         n_controls=None,
         control_cohorts=(),
@@ -197,7 +221,9 @@ def test_every_published_row_carries_every_key_whatever_its_comparator() -> None
     payload = burden_payload([case_control, de_novo])
 
     assert set(payload[0]) == set(payload[1])  # type: ignore[arg-type]
-    assert len(payload[0]) == 26  # type: ignore[arg-type]
+    assert len(payload[0]) == 27  # type: ignore[arg-type]
+    assert payload[0]["count_unit"] == "individuals"  # type: ignore[index,call-overload]
+    assert payload[1]["count_unit"] == "de_novo_mutations"  # type: ignore[index,call-overload]
     assert payload[1]["expected_count"] == 0.42  # type: ignore[index,call-overload]
     assert payload[1]["n_controls"] is None  # type: ignore[index,call-overload]
 
