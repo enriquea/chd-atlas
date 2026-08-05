@@ -25,6 +25,11 @@ from pathlib import Path
 
 from chd_atlas.build.bundles import build_genes
 from chd_atlas.build.burden import cohort_registry, load_burden
+from chd_atlas.build.concordance import (
+    cohort_families,
+    evidence_axes,
+    gene_concordance,
+)
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.landing import build_landing
 from chd_atlas.build.literature import build_literature, build_sources
@@ -242,6 +247,23 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # `facts` rather than a second `gene_facts` call below: the pages and the
     # bundles render from one derivation, so a page cannot state a confidence the
     # bundle it links to contradicts. See `build_genes`' docstring.
+    # Derived once, here, and handed to all three consumers -- the bundles that
+    # publish it, the gene pages that render it as a matrix, and the browse page
+    # that renders it as a strip. Deriving it in each would type-check and leave
+    # three call sites free to drift, which is the reason `facts` and `validity`
+    # are threaded down rather than recomputed.
+    #
+    # A cohort family is a property of the *corpus*: which studies share sample
+    # collections. So it is computed over every burden row, not per gene, or two
+    # genes would show different numbers of family slots and an untested dataset
+    # would stop looking like one.
+    all_burden_rows = [row for rows in burden.values() for row in rows]
+    families = cohort_families(all_burden_rows)
+    axes = evidence_axes(all_burden_rows)
+    concordance = {
+        gene: gene_concordance(burden.get(gene, ()), families) for gene in sorted(published)
+    }
+
     facts = build_genes(
         corpus,
         emitter,
@@ -251,6 +273,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         validity=validity,
         published=published,
         burden=burden,
+        concordance=concordance,
     )
     build_literature(corpus, emitter)
     # Read again rather than threaded down from the gate: `validate_repository`
@@ -279,6 +302,8 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         publications={publication.id: publication for publication in corpus.publications},
         burden=burden,
         cohorts=cohort_registry(corpus.cohorts),
+        families=families,
+        axes=axes,
     )
     # `validity` again, and the same object `build_gene_pages` was handed: the
     # browse row's `definitive for` cell and the gene page's `definitive for`
@@ -293,6 +318,9 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         # the same mapping, so the browse page and the payload behind it
         # cannot disagree about how much evidence a gene has.
         burden_counts={gene: len(rows) for gene, rows in burden.items()},
+        # The same objects the bundles publish, so the strip a reader scans
+        # and the JSON a program reads cannot disagree.
+        concordance=concordance,
     )
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))

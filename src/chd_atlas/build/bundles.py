@@ -35,10 +35,6 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any, cast
 
 from chd_atlas.build.burden import BurdenRow, burden_payload
-from chd_atlas.build.concordance import (
-    cohort_families,
-    gene_concordance,
-)
 from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
@@ -83,6 +79,24 @@ def _records_by_gene[RecordT: (LesionAssertion, FunctionalEvidence)](
         gene: [record.model_dump(mode="json") for record in sorted(items, key=lambda r: r.id)]
         for gene, items in grouped.items()
     }
+
+
+def _concordance_for(concordance: Mapping[str, Json], gene: str) -> Json:
+    """One gene's `independent_datasets`, or a refusal naming the gap.
+
+    `raise`, never a silent default. A gene present in `published` and absent
+    from this mapping means the caller derived it over a different population,
+    and the failure a default would produce -- a bundle publishing
+    `tested: 0` -- is indistinguishable from the true statement that no study
+    reported that gene. `raise` rather than `assert`: `-O` strips `assert`.
+    """
+    if gene not in concordance:
+        raise KeyError(
+            f"no concordance derived for published gene {gene}; the mapping was built over "
+            f"a different population, and defaulting it would publish 'no dataset tested "
+            f"this' as if it had been measured"
+        )
+    return concordance[gene]
 
 
 def _summaries(modalities: Mapping[str, ModalitySummary]) -> Mapping[str, Json]:
@@ -209,6 +223,7 @@ def build_genes(
     validity: dict[str, GeneValidity],
     published: Collection[str],
     burden: Mapping[str, Sequence[BurdenRow]],
+    concordance: Mapping[str, Json],
 ) -> dict[str, GeneFacts]:
     """Emit `genes/index.json` and one bundle per published gene, and return the facts.
 
@@ -271,12 +286,6 @@ def build_genes(
     # Redundant today, and kept anyway: this array is what consumers download,
     # so its order is the published contract and should not rest on a guarantee
     # another module is free to withdraw.
-    # Derived once over the *whole* burden corpus, not per gene. A family is a
-    # property of which studies share collections, so deriving it per gene would
-    # give two genes different family counts and make a hole stop looking like a
-    # hole -- and it would recompute an O(studies^2) overlap scan 23 times.
-    families = cohort_families(row for rows in burden.values() for row in rows)
-
     for gene in sorted(facts):
         fact = facts[gene]
         # `HgncId` rather than `str` at this boundary: `gene_facts` keys on a
@@ -335,7 +344,14 @@ def build_genes(
                 # 2026-08-05 review found `curation/cohorts.yaml` rendering only
                 # in HTML and reaching zero published bytes; a fact that lives
                 # only on a page is a fact no consumer has.
-                "independent_datasets": gene_concordance(burden.get(gene, ()), families),
+                # `concordance` is required rather than defaulted: a default
+                # would let a caller forget it and publish zeros indistinguishable
+                # from a measured "no dataset found anything", which is this
+                # project's characteristic failure. A missing gene is a caller
+                # that built the mapping over the wrong population, so it fails
+                # loudly here rather than writing a bundle that quietly claims
+                # nothing was tested.
+                "independent_datasets": _concordance_for(concordance, gene),
                 "bundle": bundle,
             }
         )
@@ -365,10 +381,11 @@ def build_genes(
                 # `omics` above. An absent key would make "no study reported
                 # this gene" indistinguishable from "the build dropped it".
                 "burden": burden_payload(burden.get(gene, ())),
-                # The same object the browse row carries, so a consumer that
+                # The same object the browse row carries -- literally the
+                # same mapping, handed in by the runner -- so a consumer that
                 # filtered on the index and then fetched the bundle reads one
                 # answer rather than two.
-                "independent_datasets": gene_concordance(burden.get(gene, ()), families),
+                "independent_datasets": _concordance_for(concordance, gene),
             },
         )
 
