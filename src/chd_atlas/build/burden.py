@@ -145,13 +145,22 @@ def load_burden(root: Path) -> dict[str, list[BurdenRow]]:
     `validate_table` reports as TBL000/TBL001 and `build_site` refuses on, so
     neither is reachable behind the gate.
 
-    The tie-break in `_sort_key` runs to `origin` and stops there. That is not
+    The tie-break in `_sort_key` runs to `origin` and stops there, which is not
     the mirror's full key: `lesion_group`, `variant_class` and `maf_max` are
-    excluded, and today every row shares one value of each, so the order is
-    total. When a second frequency threshold or a CNV row arrives, two rows can
-    compare equal here and `sorted` is stable, so they will hold the mirror's
-    order -- which `validate_sort_order` pins. Order stays deterministic either
-    way; it is only the *reading* order that would need extending.
+    excluded from it.
+
+    **Both futures this paragraph used to anticipate have arrived.** It said
+    "today every row shares one value of each" and described what would happen
+    "when a second frequency threshold or a CNV row arrives"; PMID:34324492
+    brought `cnv_deletion` and PMID:40127276 brought a second `maf_max` plus a
+    null one, in the same release. The conclusion still holds -- reading order is
+    total -- but for a different reason than the one stated: `study` and `origin`
+    separate the rows that now share a gene and stratum, not the accident of a
+    single-valued corpus.
+
+    Where two rows do compare equal, `sorted` is stable, so they hold the
+    mirror's order -- which `validate_sort_order` pins. Order stays deterministic
+    either way; it is only the *reading* order that would need extending.
     """
     path = root / "mirrors" / "burden.tsv"
     if not path.is_file():

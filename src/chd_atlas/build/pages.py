@@ -208,10 +208,18 @@ _MEASURE_LABEL: Final[dict[str, str]] = {
     "rate_ratio": "rate ratio",
 }
 
-# The four partition columns that reached no page until 2026-08-05. Each is
-# populated on all 187 published rows, and without them a section headed "Rare
-# variant burden" never says what *rare* means and a case-control count of
-# rare inherited variants reads exactly like a trio's de novo count.
+# The partition columns that reached no page until 2026-08-05. Without them a
+# section headed "Rare variant burden" never says what *rare* means and a
+# case-control count of rare inherited variants reads exactly like a trio's de
+# novo count.
+#
+# This said "the four partition columns... each is populated on all 187 published
+# rows" and named `lesion_group` among them. **`lesion_group` is null on all 290
+# published rows and always has been** -- no curated study stratifies by lesion
+# group -- and `maf_max` is null on 45 of them, the de novo rows that applied no
+# frequency filter. So the claim was false for two of its four columns.
+# `_LESION_LABEL` stays empty rather than being deleted: the column is live in
+# the schema, and the first study that uses it needs that map filled.
 _VARIANT_CLASS_LABEL: Final[dict[str, str]] = {
     "snv_indel": "SNVs and indels",
     "cnv_deletion": "CNV deletions",
@@ -262,20 +270,42 @@ _POOLING_NOTICE: Final = (
 )
 
 # What the numbers do not say. Every clause was measured; see `_burden_section`.
+#
+# The absent-cell sentence used to assert a *mechanism*: "no variant of that
+# class was seen in either group, so there was nothing to compare and the study
+# reported no row for it." That was measured over PMID:42230622 alone -- 0 of
+# its 1,192 rows have no carrier on either side -- and it is false for the other
+# two studies now rendering tables beside it. PMID:34324492 tests one
+# consequence class by construction, and PMID:40127276 **observed 14,364
+# synonymous variants** (its own Dataset S4) and still published no synonymous
+# row, because its gene-level table covers only damaging classes. A reader told
+# "no variant of that class was seen" would conclude that study found none.
+#
+# So the sentence now says only what is true of every study: an absent cell is
+# something the study did not report, and why is the study's own rule.
 _BURDEN_PREAMBLE: Final = (
     "<p><code>cases</code> and <code>controls</code> each show <em>observed / total</em>, "
     "and <strong>every cell names what it counted</strong> &mdash; carriers, alleles, or "
     "de novo mutations. The three are not interchangeable: a study counting alleles "
     "counts a person with two qualifying variants twice, and its denominator is roughly "
     "twice the number of people sequenced. "
-    "A consequence class missing from a study's table is <strong>not a "
-    "null result</strong>: no variant of that class was seen in either group, so there "
-    "was nothing to compare and the study reported no row for it.</p>"
-    "<p>The <strong>synonymous</strong> row is the study's own negative control &mdash; "
+    "A consequence class or case group with no row is one the study "
+    "<strong>did not report</strong>, which is not a null result and does not always mean "
+    "no such variant was seen &mdash; studies differ in which classes their gene-level "
+    "tables cover.</p>"
+)
+
+# Rendered only where a synonymous row is actually on the page. Rendered
+# unconditionally it told a reader to weigh a negative control that 2 of the 3
+# published studies do not provide: 69 of the 290 published rows are synonymous
+# and every one comes from PMID:42230622.
+_SYNONYMOUS_NOTICE: Final = (
+    "<p>The <strong>synonymous</strong> row is that study's own negative control &mdash; "
     "synonymous variants should show no enrichment. Read it on the same uncorrected "
     "scale as the rows above it: a <em>strongly</em> enriched synonymous row is a "
     "warning about that gene's comparison, while a nominally significant one is what a "
-    "scan of this size produces by chance.</p>"
+    "scan of this size produces by chance. <strong>Only a study that publishes one has "
+    "it</strong>; a table with no synonymous row offers no such check.</p>"
 )
 
 _CITATION_HEADERS: Final = ("id", "title", "year")
@@ -724,16 +754,27 @@ def _burden_section(
       cohorts, so a pooled p-value counts the same children twice. Declining to
       compute one does not stop a reader doing it by eye, so where two studies
       share a collection the section names it (`shared_cohorts`).
-    * **A consequence class with no row had no carrier in either group** -- not
-      "was not tested". Measured over the committed mirror: zero of its 1,192
-      rows have no case carrier *and* no control carrier, so a 2x2 of all zeros
-      supports no test and the study emitted no row. The matrix is genuinely
-      sparse -- 42 of 145 genes are missing at least one cell -- so a reader
-      meets a gap often enough for the distinction to matter.
-    * **The synonymous row is the study's own negative control.** Synonymous
-      variants should show no enrichment; where one does, that gene's comparison
-      is poorly calibrated. It is sorted last within each stratum so it reads as
-      what it is -- the row that says whether to believe the two above it.
+    * **A consequence class with no row is one the study did not report** -- not
+      "was tested and found nothing", and *why* it is absent is the study's own
+      rule rather than a fact about the data. This bullet claimed the stronger
+      thing until 2026-08-05: "had no carrier in either group... measured over
+      the committed mirror: zero of its 1,192 rows have no case carrier *and* no
+      control carrier". That measurement was over PMID:42230622 alone, and both
+      halves have since failed. The mirror now holds 1,475 rows and **one of
+      them does have zero carriers on both sides**; and PMID:40127276 observed
+      14,364 synonymous variants (its Dataset S4) while publishing no synonymous
+      row at all, because its gene-level table covers only damaging classes. The
+      matrix is genuinely sparse, so a reader meets a gap often enough for the
+      distinction to matter -- which is why the sentence must be weak enough to
+      be true of every study on the page.
+    * **The synonymous row is the study's own negative control**, and only a
+      study that publishes one has it. Synonymous variants should show no
+      enrichment; where one does, that gene's comparison is poorly calibrated.
+      It is sorted last within each stratum so it reads as what it is -- the row
+      that says whether to believe the two above it. 69 of the 290 published
+      rows are synonymous and every one is from PMID:42230622, so
+      `_SYNONYMOUS_NOTICE` is conditional: a page with no such row must not
+      promise a check it cannot offer.
 
     Returns `""` for a gene with no burden rows rather than an empty section:
     unlike the validity table, whose header names the columns and whose emptiness
@@ -791,10 +832,17 @@ def _burden_section(
     # undermining the caveats that *are* live.
     pooling = _POOLING_NOTICE if len({row.study for row in rows}) > 1 else ""
 
+    # Conditional for the same reason as `pooling` and `_composite_note`: a page
+    # whose tables carry no synonymous row must not tell a reader to weigh one.
+    synonymous = (
+        _SYNONYMOUS_NOTICE if any(row.consequence_class == "synonymous" for row in rows) else ""
+    )
+
     return (
         "<h2>Rare variant burden</h2>"
         + _MIRRORED_NOTICE
         + _BURDEN_PREAMBLE
+        + synonymous
         + pooling
         + shared
         + "".join(blocks)
@@ -819,10 +867,18 @@ def _disclosure(study: str, publications: Mapping[str, Publication]) -> str:
     """Say so when the study is by an author of this atlas.
 
     `Publication.own_lab` exists to record exactly this and reached
-    `publications.json` and zero HTML files. Every burden table on the site
-    today is from `PMID:42230622`, whose first author is this repository's
-    author -- a reader weighing those numbers should be told without having to
+    `publications.json` and zero HTML files. Two of the three studies published
+    today -- `PMID:42230622` and `PMID:34324492` -- are by this repository's
+    author, and a reader weighing those numbers should be told without having to
     cross-reference a JSON payload.
+
+    **The conditional is now load-bearing rather than latent.** This docstring
+    said "every burden table on the site today is from PMID:42230622" until
+    2026-08-05, when `PMID:40127276` (`own_lab: false`) began rendering on 15 of
+    the 23 published gene pages. Eight of those pages now carry three tables with
+    the declaration on two, which is the arrangement that makes the line
+    informative: an unconditional disclosure says nothing, and a stale claim that
+    it is unconditional invites someone to make it one.
     """
     publication = publications.get(study)
     if publication is None or not publication.own_lab:
@@ -848,27 +904,39 @@ def _labelled(values: Iterable[str | None], labels: Mapping[str, str]) -> list[s
 def _method_line(rows: Sequence[BurdenRow], publication: Publication | None) -> str:
     """What was counted, and against how many other tests.
 
-    **Four of the eight partition columns reached no page.** `variant_class`,
-    `origin`, `maf_max` and `lesion_group` are populated on every one of the 187
-    published rows and appeared nowhere, so a section headed "Rare variant
-    burden" never said what *rare* meant, and a case-control count of
-    rare-inherited variants was indistinguishable from a trio's de novo count.
-    `tables.py` states the case against exactly this: the partition "exists to
-    stop two incomparable rows from *looking* comparable".
+    **Three of the eight partition columns reached no page.** `variant_class`,
+    `origin` and `maf_max` were populated and appeared nowhere, so a section
+    headed "Rare variant burden" never said what *rare* meant, and a
+    case-control count of rare-inherited variants was indistinguishable from a
+    trio's de novo count. `tables.py` states the case against exactly this: the
+    partition "exists to stop two incomparable rows from *looking* comparable".
+
+    This said "four" and named `lesion_group` as the fourth until 2026-08-05.
+    **`lesion_group` is null on all 290 published rows and always has been** --
+    no curated study stratifies by lesion group yet -- so a quarter of the
+    stated rationale was for a column that had nothing to render. `_LESION_LABEL`
+    is deliberately left empty rather than removed: the column is live in the
+    schema and a study that uses it should render, at which point that map needs
+    filling. Measured, not assumed; the claim it replaces was not.
 
     Rendered per study rather than per row, from the distinct values across the
-    block. Every field is single-valued within a study today; a study carrying
-    two frequency thresholds renders both, which says what the block contains
-    without claiming which row is which -- the JSON is row-precise and the
-    preamble says so.
+    block. **A field that is multi-valued within a study renders every value**,
+    which says what the block contains without claiming which row is which --
+    the JSON is row-precise and the preamble says so. That is no longer
+    hypothetical: PMID:40127276 contributes two origins and two tests to one
+    block, and its `maf_max` is populated on the case-control rows and null on
+    the de novo rows, which is why the frequency clause below distinguishes
+    "filtered at this threshold" from "not filtered at all" rather than dropping
+    the null.
 
     The multiple-testing sentence is the other half, and the more serious one.
-    Measured 2026-08-05 over the built site: 32 of the 187 published rows have
-    p < 0.05 and **3** survive Bonferroni over the study's own 138,609 tests, so
-    29 rows read as significant and are not. The atlas publishes no corrected
-    p -- the supplement carries none, and computing one would be authoring a
-    statistic (D12/D33) -- but naming the denominator is a fact the study
-    supplies, and it is what lets a reader apply their own threshold.
+    Measured 2026-08-05 over the built site: 32 of PMID:42230622's 187 published
+    rows have p < 0.05 and **3** survive Bonferroni over that study's own
+    138,609 tests, so 29 rows read as significant and are not. That study
+    publishes no corrected p, and computing one would be authoring a statistic
+    (D12/D33) -- but naming the denominator is a fact the study supplies, and it
+    is what lets a reader apply their own threshold. The other two studies do
+    publish corrections, so they get the other branch below.
     """
     parts: list[str] = []
     for values, labels in (
@@ -880,9 +948,26 @@ def _method_line(rows: Sequence[BurdenRow], publication: Publication | None) -> 
         rendered = _labelled(values, labels)
         if rendered:
             parts.append(", ".join(rendered))
+    # A null `maf_max` means "this analysis applied no frequency filter", which
+    # is a fact about the rows and not an absence of one. Dropping it and then
+    # stating the surviving threshold over the whole block attributed
+    # PMID:40127276's MAF < 1e-05 to its 45 de novo rows, which had no filter at
+    # all -- a de novo mutation is defined by absence from both parents, not by
+    # a population frequency. Measured 2026-08-05: that sentence was wrong on 15
+    # of the 23 published gene pages.
     mafs = sorted({row.maf_max for row in rows if row.maf_max is not None})
-    if mafs:
+    unfiltered = any(row.maf_max is None for row in rows)
+    if mafs and unfiltered:
+        parts.insert(
+            1,
+            "MAF below "
+            + ", ".join(f"{value:g}" for value in mafs)
+            + " for the rows that applied a frequency filter, and no filter on the rest",
+        )
+    elif mafs:
         parts.insert(1, "MAF below " + ", ".join(f"{value:g}" for value in mafs))
+    elif unfiltered:
+        parts.insert(1, "no frequency filter")
 
     sentence = html.escape("; ".join(parts)) + "." if parts else ""
 

@@ -352,7 +352,7 @@ def validate_burden_references(
     # This comment claimed "`build_genes` iterates the registry" until
     # 2026-08-05. It does not -- it iterates `gene_facts(..., published=...)`,
     # the 23-gene published set -- so the stated rationale was false, and it
-    # pointed away from the real gap: 122 of the 145 genes in the mirror ARE in
+    # pointed away from the real gap: 127 of the 150 genes in the mirror ARE in
     # `genes.tsv` and still reach no published byte. BUR017 below reports that;
     # this rule guards only the outer boundary.
     if known_genes is not None and "gene" in frame.columns:

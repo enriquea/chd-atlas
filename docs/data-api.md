@@ -433,14 +433,19 @@ and GenCC under, the same way it does for HPO.
 
 Published rare-variant burden statistics for the gene, one object per
 (study, cohort stratum, variant class, consequence class, frequency threshold).
-**200 rows reach the API**, across the 23 published genes, from
-2 studies (PMID:34324492, PMID:42230622). `mirrors/burden.tsv` holds
-1,295 rows for 150 genes; the other 1,095, covering
+**290 rows reach the API**, across the 23 published genes, from
+3 studies (PMID:34324492, PMID:40127276, PMID:42230622). `mirrors/burden.tsv`
+holds 1,475 rows for 150 genes; the other 1,185, covering
 127 genes, are for genes the site does not publish and reach no
 bundle and no page. They are held
 so that widening the publication gate later needs no re-mirroring, which is the
 same reason `mirrors/genes.tsv` registers 154 genes and 23 publish.
 `burden_row_count` on the browse row is this array's length.
+
+Every count in this section is asserted against a real build by
+`tests/test_site_is_consumable.py`, so it fails rather than rots when a study
+lands. It rotted once — this paragraph described two studies and 200 rows for
+one commit after the third study shipped.
 
 ```json
 {
@@ -502,8 +507,26 @@ and differs only in what "expected" meant:
 | `mutation_model` | `expected_count` | `expected_count` | `enrichment_ratio` |
 | `none` | nothing (a case series) | neither | none, and no `pvalue` |
 
-Only `control_cohort` appears today. The build refuses to publish a row whose
-statistic contradicts its comparator.
+**Both `control_cohort` (245 rows) and `mutation_model` (45 rows) appear today;
+`none` does not.** PMID:40127276 contributes the `mutation_model` rows — de novo
+mutations in 3,887 trios against a mutability-based expectation — and they carry
+null control fields, a non-null `expected_count`, and an `enrichment_ratio`
+rather than an odds ratio. A consumer that reads only `n_control_carriers` will
+see `null` on 45 of the 290 rows, several of which are the strongest results the
+atlas publishes. The build refuses to publish a row whose statistic contradicts
+its comparator.
+
+**`consequence_class` is not a partition: `damaging` is the union of `lof` and
+`missense_damaging`.** PMID:40127276 reports its primary analysis over
+loss-of-function and damaging missense together, and publishes that composite
+alongside its two components — 30 of the 290 rows. Its `n_case_carriers` is
+exactly the sum of the two component rows for the same gene, stratum and
+comparator, verified on every one. **Summing `n_case_carriers` across
+`consequence_class` therefore double-counts those variants.** Group by
+`consequence_class` and pick, or exclude `damaging`; do not aggregate over it.
+The composite is published rather than dropped because its p-value is not a
+function of its components' and is the statistic that study defines its results
+by.
 
 Five obligations, each of which is a wrong claim if you get it wrong:
 
@@ -515,20 +538,29 @@ Five obligations, each of which is a wrong claim if you get it wrong:
    result in the data, not a missing one.** Fisher's exact test returns an
    infinite odds ratio where no control carries; `Infinity` is accepted by
    `JSON.parse` nowhere, so the number cannot be published and `ci_low` carries
-   the finding instead — "at least 28.1". 34 rows today. Rendering it as blank or
-   as "not tested" discards the clearest signals in the study.
-3. **A (stratum, consequence) combination with no row had no qualifying variant
-   in either group** — it was never tested, rather than tested and found
-   negative. Zero of the 1,192 rows have no case carrier *and* no control
-   carrier, so a 2×2 of all zeros supports no test and the study emitted none.
-   The matrix is genuinely sparse: 42 of the 145 genes are missing at least one
-   cell.
-4. **Do not filter out `consequence_class: "synonymous"`.** It is the study's
-   own negative control — synonymous variants should show no enrichment — and it
-   is the most numerous class (435 rows against 345 loss-of-function), so it is
-   available almost everywhere a result is. Where a synonymous row is
-   significant, that gene's comparison is poorly calibrated, and a reader can
-   only see that if you show it.
+   the finding instead — "at least 28.1". 19 published rows today. Rendering it as
+   blank or as "not tested" discards the clearest signals in the study.
+3. **An absent (stratum, consequence) cell is not a null result — but why it is
+   absent is the study's rule, not the atlas's.** Read it per study rather than
+   as one law. For `PMID:42230622`, zero of its 1,192 mirror rows have no case
+   carrier *and* no control carrier, so a 2×2 of all zeros supports no test and
+   that study emitted none. The other two do not follow the same rule:
+   `PMID:34324492` tests one consequence class by construction (CNV deletions),
+   and `PMID:40127276` **observed 14,364 synonymous variants and still published
+   no synonymous row**, because its gene-level table reports only damaging
+   classes. So an absent cell means "this study did not report one here", and
+   only for `PMID:42230622` does it additionally mean "no carrier on either
+   side". One row in the mirror now does carry zeros on both sides.
+4. **Do not filter out `consequence_class: "synonymous"`.** It is a study's own
+   negative control — synonymous variants should show no enrichment — and where
+   one is significant, that gene's comparison is poorly calibrated, which a
+   reader can only see if you show it. **It is not available everywhere:** 69 of
+   the 290 published rows are synonymous and all of them come from
+   `PMID:42230622`. The other two studies publish no synonymous row at all, so
+   their results have no negative control on this page and must be read without
+   one. (This obligation previously called synonymous "the most numerous class,
+   435 rows against 345 loss-of-function". Both halves were measured against a
+   one-study corpus and are now false: loss-of-function is 92 and synonymous 69.)
 5. **Read `pvalue_adjusted` where it is present.** A raw and a corrected
    p-value can point opposite ways: CHD7 in `PMID:34324492` is `0.0068` raw and
    `0.991` after the study's own family-wise permutation correction, so a
@@ -541,7 +573,18 @@ Five obligations, each of which is a wrong claim if you get it wrong:
 6. **Do not pool across studies.** The CHD literature reuses cohorts, so a
    combined p-value counts the same people twice. `case_cohorts` and
    `control_cohorts` name the collections each row drew on precisely so overlap
-   is visible; ids resolve against `curation/cohorts.yaml`.
+   is visible.
+
+   **These ids do not resolve inside this API today.** `case_cohorts` and
+   `control_cohorts` publish bare strings like `"taa_cases"`, and no published
+   JSON file maps them to a name, a URL or the caveats that qualify them — those
+   live in `curation/cohorts.yaml` in the repository, and reach a reader only
+   through the gene *page*, under "About these cohorts". That is a real gap for a
+   programmatic consumer: `taa_cases` is 777 thoracic aortic aneurysm probands
+   who do not have congenital heart disease, and nothing in the JSON says so.
+   Publishing a `cohorts.json` is queued. Until it lands, treat an id you cannot
+   resolve as a caveat you have not read, and use the HTML page or the repository
+   file rather than assuming the collection is a plain CHD case set.
 
 `n_cases` and `n_controls` are the row's own denominators, and they are what the
 statistic beside them was computed from. They may differ from the figures a
