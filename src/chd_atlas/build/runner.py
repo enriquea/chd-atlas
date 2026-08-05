@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from chd_atlas.build.bundles import build_genes
-from chd_atlas.build.burden import cohort_registry, load_burden
+from chd_atlas.build.burden import burden_census, cohort_registry, load_burden
 from chd_atlas.build.concordance import (
     cohort_families,
     evidence_axes,
@@ -260,6 +260,10 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     all_burden_rows = [row for rows in burden.values() for row in rows]
     families = cohort_families(all_burden_rows)
     axes = evidence_axes(all_burden_rows)
+    # One census, two consumers: the front page states it in prose and the
+    # manifest publishes it as `counts`. Derived here rather than in either, so
+    # neither can drift from the other.
+    census = burden_census(burden, published, families)
     concordance = {
         gene: gene_concordance(burden.get(gene, ()), families) for gene in sorted(published)
     }
@@ -283,7 +287,14 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     registry, _ = load_sources(root)
     build_sources(registry, emitter)
     build_search(corpus, emitter, genes=genes, published=published)
-    build_landing(corpus, symbols=symbols, validity=validity, published=published, emitter=emitter)
+    build_landing(
+        corpus,
+        symbols=symbols,
+        validity=validity,
+        published=published,
+        census=census,
+        emitter=emitter,
+    )
     # The HTML over everything above. Wired here and nowhere else: until this
     # call existed, `pages.py` was imported by its unit test alone, `build_landing`
     # and the shared `<nav>` both linked to `genes/index.html`, and no build wrote
@@ -323,5 +334,22 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         concordance=concordance,
     )
     # Last, and enforced as last: this seals the emitter.
-    write_manifest(corpus, emitter, commit=source_commit(root))
+    #
+    # The build counts come from `census`, the object `build_landing` was handed
+    # a moment ago, so `manifest.json` and `index.html` cannot publish two
+    # censuses of one build. `genes` is `len(published)` rather than
+    # `census.genes`: they are equal today at 23 of 23, but they answer different
+    # questions — how many genes the site publishes, and how many of those carry
+    # burden evidence — and the day they diverge each key must still mean what it
+    # says.
+    write_manifest(
+        corpus,
+        emitter,
+        commit=source_commit(root),
+        counts={
+            "genes": len(published),
+            "burden_rows": census.rows,
+            "cohort_families": census.families,
+        },
+    )
     return dict(emitter.checksums)

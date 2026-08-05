@@ -77,7 +77,7 @@ def test_the_manifest_advertises_the_digest_of_the_bytes_on_disk(tmp_path: Path)
     emitter.write_json("genes/index.json", {"genes": []})
     emitter.write_json_gz("variants/1.json.gz", {"variants": []})
 
-    write_manifest(Corpus(root=Path(".")), emitter, commit="abc123")
+    write_manifest(Corpus(root=Path(".")), emitter, commit="abc123", counts={})
 
     files = _published(tmp_path)["files"]
     assert set(files) == {"genes/index.json", "variants/1.json.gz"}
@@ -87,13 +87,21 @@ def test_the_manifest_advertises_the_digest_of_the_bytes_on_disk(tmp_path: Path)
 
 
 def test_the_manifest_counts_every_record_kind_separately(tmp_path: Path) -> None:
-    """Six kinds, six different lengths, so a cross-wired count cannot pass.
+    """Nine kinds, nine different lengths, so a cross-wired count cannot pass.
 
-    `write_manifest` only ever calls `len()`, so the fixture varies lengths
-    rather than record content; the placeholders stand in for records because
-    nothing here reads a field of one. With equal lengths
+    `write_manifest` only ever calls `len()` over the corpus, so the fixture
+    varies lengths rather than record content; the placeholders stand in for
+    records because nothing here reads a field of one. With equal lengths
     `"assertions": len(corpus.datasets)` would publish the right number and the
     swap would be invisible.
+
+    The three build counts (2.7) are asserted in the same equality rather than
+    separately, because the property that matters is the *whole* census: a
+    consumer summarising the atlas reads this object, and through 2.6 it
+    published `assertions: 1, datasets: 0, functional: 0` for a site publishing
+    23 genes and 290 burden statistics. They are given values distinct from every
+    corpus length here for the same reason the corpus lengths differ from each
+    other.
 
     The lengths start at two rather than one for the reason A30 records: `1 ==
     True` in Python, so a count of one is also satisfied by a `bool()` over the
@@ -110,7 +118,12 @@ def test_the_manifest_counts_every_record_kind_separately(tmp_path: Path) -> Non
     )
     emitter = Emitter(root=tmp_path)
 
-    write_manifest(corpus, emitter, commit="abc123")
+    write_manifest(
+        corpus,
+        emitter,
+        commit="abc123",
+        counts={"genes": 8, "burden_rows": 9, "cohort_families": 10},
+    )
 
     assert _published(tmp_path)["counts"] == {
         "assertions": 2,
@@ -119,7 +132,28 @@ def test_the_manifest_counts_every_record_kind_separately(tmp_path: Path) -> Non
         "functional": 5,
         "phenotypes": 6,
         "publications": 7,
+        "genes": 8,
+        "burden_rows": 9,
+        "cohort_families": 10,
     }
+
+
+def test_a_build_count_may_not_shadow_a_corpus_count(tmp_path: Path) -> None:
+    """`counts` is merged, so a colliding key would silently republish one figure.
+
+    `datasets` is the live hazard rather than a hypothetical one: it means
+    *omics* datasets and is 0, and the burden census's third figure is a count of
+    independent datasets. A caller reaching for the obvious name would overwrite
+    a corpus figure with a build one, and `sort_keys` would leave the output
+    looking entirely ordinary — no test reading a single key could see it.
+
+    Refused rather than namespaced, because renaming the incoming key is the fix
+    and a nested object would make every consumer walk two levels for one census.
+    """
+    emitter = Emitter(root=tmp_path)
+
+    with pytest.raises(ValueError, match="would shadow the corpus counts"):
+        write_manifest(Corpus(root=Path(".")), emitter, commit="abc123", counts={"datasets": 3})
 
 
 @pytest.mark.parametrize("commit", ["a" * 40, None], ids=["a checkout", "a tarball"])
@@ -148,11 +182,11 @@ def test_the_manifest_publishes_five_keys_and_nothing_that_varies(
     """
     emitter = Emitter(root=tmp_path)
 
-    write_manifest(Corpus(root=Path(".")), emitter, commit=commit)
+    write_manifest(Corpus(root=Path(".")), emitter, commit=commit, counts={})
 
     manifest = _published(tmp_path)
     assert set(manifest) == {"schema_version", "source_commit", "status", "counts", "files"}
-    assert manifest["schema_version"] == "2.6" == SCHEMA_VERSION
+    assert manifest["schema_version"] == "2.7" == SCHEMA_VERSION
     assert manifest["status"] == "in-development" == STATUS
     assert manifest["source_commit"] == commit
     assert manifest["files"] == {}
@@ -173,13 +207,13 @@ def test_nothing_can_be_written_once_the_manifest_is_out(tmp_path: Path) -> None
     """
     emitter = Emitter(root=tmp_path)
     emitter.write_json("genes/index.json", {"genes": []})
-    write_manifest(Corpus(root=Path(".")), emitter, commit="abc123")
+    write_manifest(Corpus(root=Path(".")), emitter, commit="abc123", counts={})
     published = dict(emitter.checksums)
 
     with pytest.raises(ValueError, match="after the manifest"):
         emitter.write_json("late/shard.json", {"late": True})
     with pytest.raises(ValueError, match="after the manifest"):
-        write_manifest(Corpus(root=Path(".")), emitter, commit="abc123")
+        write_manifest(Corpus(root=Path(".")), emitter, commit="abc123", counts={})
 
     # Refused has to mean not written, not written-and-forgotten: a file on disk
     # that the manifest does not list is the whole failure being prevented.

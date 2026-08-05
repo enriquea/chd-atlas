@@ -11,17 +11,27 @@ from pathlib import Path
 
 import pytest
 
+from chd_atlas.build.burden import BurdenCensus, BurdenRow, burden_census
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.landing import build_landing
 from chd_atlas.build.paths import LANDING
-from chd_atlas.build.render import RESEARCH_USE_NOTICE, STYLESHEET
+from chd_atlas.build.render import EVIDENCE_STATE_LABELS, RESEARCH_USE_NOTICE, STYLESHEET
 from chd_atlas.build.runner import build_site
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import Evidence, LesionAssertion, SupplementaryLocator
 
+# What a corpus with no burden evidence at all publishes. Every test in this
+# file that is about something else -- escaping, pluralisation, the shell --
+# renders against it.
+_NO_BURDEN = BurdenCensus(rows=0, genes=0, families=0)
+
 TBX5 = "HGNC:11604"
 GATA4 = "HGNC:4173"
+# Published, and carrying 9 rows in the committed mirror. The fixture below
+# removes them to build a corpus where the published population is wider than
+# the burden evidence.
+TBX20 = "HGNC:11598"
 
 # tests/unit/test_build_landing.py -> tests/unit -> tests -> repo root, the same
 # climb `tests/unit/test_build_runner.py` uses to find the committed corpus.
@@ -48,6 +58,48 @@ _MIRRORED_ROW_LABEL = (
     "Genes with mirrored validity in CHD scope "
     "(browsable once ClinGen grades it definitive for a disease in that scope)"
 )
+
+
+def _burden_row(**overrides: object) -> BurdenRow:
+    """A minimal published burden row. Only `study` is ever varied here.
+
+    The census counts rows and reads `study` for nothing at all -- families are
+    passed in -- so the statistical columns are inert in this file. They are
+    filled with a real TAB2 row's values rather than zeros so that a future test
+    reaching for one of them gets a plausible number instead of a fiction.
+    """
+    payload: dict[str, object] = {
+        "study": "PMID:1",
+        "gene": "HGNC:17075",
+        "cohort_stratum": "all",
+        "lesion_group": None,
+        "variant_class": "snv_indel",
+        "consequence_class": "lof",
+        "origin": "any",
+        "maf_max": 0.001,
+        "count_unit": "individuals",
+        "n_case_carriers": 6,
+        "n_cases": 3876,
+        "comparator": "control_cohort",
+        "n_control_carriers": 0,
+        "n_controls": 45082,
+        "expected_count": None,
+        "effect": None,
+        "effect_measure": "odds_ratio",
+        "effect_bound": "unbounded_above",
+        "ci_low": 13.7,
+        "ci_high": None,
+        "pvalue": 2.45e-07,
+        "pvalue_test": "fisher_exact",
+        "pvalue_adjusted": None,
+        "pvalue_adjustment": None,
+        "case_cohorts": ("cnchd",),
+        "control_cohorts": ("ukbb",),
+        "method_note": None,
+        "source": "audain2026_sd3",
+    }
+    payload.update(overrides)
+    return BurdenRow(**payload)  # type: ignore[arg-type]
 
 
 def _evidence(**overrides: object) -> Evidence:
@@ -86,6 +138,7 @@ def _build(
     validity: dict[str, GeneValidity],
     tmp_path: Path,
     published: set[str] | None = None,
+    census: BurdenCensus = _NO_BURDEN,
 ) -> str:
     """Render the page.
 
@@ -96,6 +149,11 @@ def _build(
     about. Every test that is about the published-gene figure passes it
     explicitly, and one of them passes a set that disagrees with the assertions
     on purpose.
+
+    `census` defaults to an empty one for the same reason, and the tests about
+    the burden figures build theirs from a real `burden_census` call over a
+    fixture rather than handing this function three literals -- a page test that
+    invented its own census could not see the derivation go wrong.
     """
     emitter = Emitter(root=tmp_path)
     build_landing(
@@ -105,6 +163,7 @@ def _build(
         published=(
             {assertion.gene for assertion in corpus.assertions} if published is None else published
         ),
+        census=census,
         emitter=emitter,
     )
     return (tmp_path / LANDING).read_text(encoding="utf-8")
@@ -136,6 +195,86 @@ def _section(text: str, heading: str) -> str:
     return text[start : nxt if nxt != -1 else len(text)]
 
 
+def _checkout(root: Path) -> Path:
+    """The committed corpus, copied where a build can run over it.
+
+    `curation` and `mirrors` are copied (cheap, and a caller may trim them);
+    `ontologies` is symlinked, the same shortcut `test_build_runner.py` and
+    `test_docs_match_the_build.py` use for the same 11 MB of pinned OBO releases.
+    """
+    root.mkdir(parents=True)
+    for name in ("curation", "mirrors"):
+        shutil.copytree(REPO / name, root / name)
+    (root / "ontologies").symlink_to(REPO / "ontologies")
+    return root
+
+
+@pytest.fixture(scope="module")
+def build_with_an_untested_gene(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A build whose published population is wider than its burden evidence.
+
+    **The committed corpus cannot tell two of the manifest's counts apart.** All
+    23 published genes carry burden rows, so `len(published)` and "genes with at
+    least one burden row" are both 23 and the mutant publishing the second under
+    the name `genes` survives every test that reads a real build. Measured
+    2026-08-05; the same degeneracy CLAUDE.md section 4.15b records for the
+    one-gene corpus, in a new place.
+
+    So this fixture drops one published gene's rows from the mirror and nothing
+    else. TBX20 is chosen because it is published, carries rows in the committed
+    mirror, and no other gene's row references it — the burden schema keys on
+    (study, gene), so removing a gene's rows leaves every remaining row valid and
+    every cohort, study and gene reference intact. `validate_repository` still
+    passes, which is the point: this is a legitimate corpus, not a broken one,
+    and it is what the atlas looks like the day a published gene has no burden
+    study behind it.
+
+    A second module-scoped build costs about a second and a half of validation.
+    It buys the only distinction between two published figures that will diverge
+    the first time D21 admits a gene no burden study covered.
+    """
+    base = tmp_path_factory.mktemp("landing-untested-gene")
+    root = _checkout(base / "repo")
+    mirror = root / "mirrors" / "burden.tsv"
+    lines = mirror.read_text(encoding="utf-8").splitlines(keepends=True)
+    header, rows = lines[0], lines[1:]
+    gene = header.rstrip("\n").split("\t").index("gene")
+    kept = [row for row in rows if row.split("\t")[gene] != TBX20]
+    assert len(kept) < len(rows), "TBX20 has no rows in the mirror; pick another gene"
+    mirror.write_text(header + "".join(kept), encoding="utf-8")
+
+    out = base / "dist"
+    build_site(root, out)
+    return out
+
+
+def test_the_manifest_gene_count_is_the_population_not_the_genes_carrying_burden(
+    build_with_an_untested_gene: Path,
+) -> None:
+    """`counts.genes` sizes a consumer's fetch loop, so it must count bundles.
+
+    One gene's burden rows are removed from the mirror and nothing else changes.
+    The site still publishes 23 bundles — the publication gate is ClinGen's
+    grade, not the presence of burden evidence — so `genes` must stay 23 while
+    the genes carrying evidence falls to 22. A consumer sizing a fetch loop on
+    the smaller number silently skips a gene that has a bundle, an assertion and
+    a page.
+
+    Asserted as an inequality as well as an equality: `genes == len(bundles)`
+    alone would pass on the corpus this atlas ships today, where the two numbers
+    coincide, which is exactly how the mutant survived before this fixture
+    existed.
+    """
+    manifest = json.loads((build_with_an_untested_gene / "manifest.json").read_text())
+    counts = manifest["counts"]
+    bundles = sorted((build_with_an_untested_gene / "genes").glob("HGNC_*.json"))
+    carrying = sum(1 for path in bundles if json.loads(path.read_text(encoding="utf-8"))["burden"])
+
+    assert counts["genes"] == len(bundles)
+    assert carrying == len(bundles) - 1, "the fixture no longer removes exactly one gene's rows"
+    assert counts["genes"] != carrying
+
+
 @pytest.fixture(scope="module")
 def real_build(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A real build of the committed corpus, for checking the page against `genes/index.json`.
@@ -148,11 +287,7 @@ def real_build(tmp_path_factory: pytest.TempPathFactory) -> Path:
     question of the same output.
     """
     base = tmp_path_factory.mktemp("landing-real-build")
-    root = base / "repo"
-    root.mkdir()
-    for name in ("curation", "mirrors"):
-        shutil.copytree(REPO / name, root / name)
-    (root / "ontologies").symlink_to(REPO / "ontologies")
+    root = _checkout(base / "repo")
     out = base / "dist"
     build_site(root, out)
     return out
@@ -176,6 +311,7 @@ def test_the_page_is_published_through_write_text_and_reaches_the_checksums(
         symbols={TBX5: "TBX5"},
         validity={TBX5: uncurated()},
         published={TBX5},
+        census=_NO_BURDEN,
         emitter=emitter,
     )
 
@@ -283,6 +419,141 @@ def test_the_landing_page_distinguishes_published_from_curated(tmp_path: Path) -
     assert re.search(r"<dt>Genes published</dt>\s*<dd>3</dd>", published_section)
     assert re.search(r"<dt>Genes the atlas has curated</dt>\s*<dd>1</dd>", published_section)
     assert "2 curated gene-disease assertions so far: TBX5 (HGNC:11604)." in _prose(text)
+
+
+def test_the_burden_census_reaches_the_page_in_both_places_and_agrees_with_itself(
+    tmp_path: Path,
+) -> None:
+    """The hero band and the census list state one census, so they cannot differ.
+
+    This is the defect the whole change exists to fix, and it was an omission
+    rather than a wrong number: measured 2026-08-05 against the live site, the
+    front page's census published `assertions: 1, functional: 0, datasets: 0`
+    for a build carrying 290 burden statistics over 23 genes from 3 independent
+    datasets, and the word "burden" did not appear on it once. Every figure was
+    true; the picture they composed was false.
+
+    **All four figures the page states are deliberately distinct**, because a
+    fixture where two of them coincide cannot see them swapped. The first version
+    of this test gave the census 2 families and 2 genes-with-evidence, and the
+    mutant putting `census.genes` in the hero where `census.families` belongs
+    survived the whole file. Measured, then fixed: 6 statistics, 3 independent
+    datasets, 2 genes carrying evidence, 4 genes published.
+
+    The third family reports on no published gene, which is what makes it
+    different from the gene count. That is not contrived -- it is a study whose
+    genes all sit outside the publication gate, and 127 of the burden mirror's
+    150 genes are in exactly that position today.
+
+    The census is built by `burden_census` from a real fixture rather than
+    constructed here, so this test cannot pass against a derivation the module
+    would get wrong; `test_build_burden.py` owns that derivation's own guard.
+    """
+    burden = {
+        "HGNC:1": [_burden_row(study="PMID:1") for _ in range(5)],
+        "HGNC:2": [_burden_row(study="PMID:2")],
+    }
+    published = {"HGNC:1", "HGNC:2", "HGNC:3", TBX5}
+    families = (frozenset({"PMID:1"}), frozenset({"PMID:2"}), frozenset({"PMID:3"}))
+    census = burden_census(burden, published, families)
+    corpus = Corpus(root=Path("."), assertions=(_assertion(),))
+
+    text = _build(corpus, {TBX5: "TBX5"}, {TBX5: uncurated()}, tmp_path, published, census)
+    hero = _prose(text[text.index('<div class="hero">') : text.index("<h2>What this is</h2>")])
+    listed = _section(text, "<h2>What's published</h2>")
+
+    # Each figure asserted *with its own label*, never as a bare number: three
+    # values in one band would otherwise let two of them swap unnoticed.
+    for value, label in (
+        (4, "genes published"),
+        (3, "independent datasets"),
+        (6, "burden statistics"),
+    ):
+        assert re.search(
+            rf'"figure-value">{value}</span> <span class="figure-label">{label}<', hero
+        ), f"the hero no longer states {value} beside {label!r}"
+    assert re.search(r"<dt>Burden statistics</dt>\s*<dd>6</dd>", listed)
+    assert re.search(r"<dt>Independent datasets</dt>\s*<dd>3</dd>", listed)
+    assert re.search(r"<dt>Genes with burden evidence</dt>\s*<dd>2</dd>", listed)
+    assert re.search(r"<dt>Genes published</dt>\s*<dd>4</dd>", listed)
+
+
+def test_the_front_page_teaches_the_glyphs_before_a_reader_meets_them(tmp_path: Path) -> None:
+    """The dot strip is this atlas's one invented notation, and it is unexplained.
+
+    A reader arrives here, clicks through to the browse page and meets four
+    glyphs cold; the live gene page was reported as "difficult to follow" for
+    exactly this reason. The key uses `EVIDENCE_STATE_LABELS`, which
+    `pages._STRIP_LEGEND` and `pages._MATRIX_LEGEND` also build from, so the
+    three legends on this site cannot come to describe the same four states in
+    different words -- the failure mode CLAUDE.md records as the most repeated
+    one in this project.
+
+    Asserted against the shared constant *and* against the four `.dot` classes:
+    the labels alone would pass on a key rendering four identical glyphs, and the
+    classes alone would pass on four correct glyphs captioned with prose that had
+    drifted.
+    """
+    corpus = Corpus(root=Path("."), assertions=(_assertion(),))
+
+    text = _build(corpus, {TBX5: "TBX5"}, {TBX5: uncurated()}, tmp_path)
+
+    for label in EVIDENCE_STATE_LABELS:
+        assert label in text
+    for state in ("dot full", "dot half", "dot none", "dot untested"):
+        assert f'<span class="{state}">' in text
+
+
+def test_the_browse_page_is_the_pages_call_to_action(tmp_path: Path) -> None:
+    """The browse page is the product; it used to be a bullet under two sections.
+
+    Pinned inside the hero rather than anywhere on the page, because the `<nav>`
+    and the "Browse the data" list both link to the same file and either would
+    satisfy a bare substring check while the call to action disappeared.
+    """
+    corpus = Corpus(root=Path("."), assertions=(_assertion(),))
+
+    text = _build(corpus, {TBX5: "TBX5"}, {TBX5: uncurated()}, tmp_path)
+    hero = text[text.index('<div class="hero">') : text.index("<h2>What this is</h2>")]
+
+    assert '<a class="cta" href="genes/index.html">' in hero
+
+
+def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
+    real_build: Path,
+) -> None:
+    """Three artifacts, one set of numbers, checked against a real build.
+
+    `docs/data-api.md` describes `index.html` as stating "the rest of `counts`",
+    which makes the page and the manifest one census in two formats. They are
+    derived from a single `burden_census` call in `build_site` precisely so they
+    cannot disagree -- and a test that only read fixtures could not see them
+    start to, because the drift would be in the wiring rather than in either
+    derivation.
+
+    `burden_rows` is checked against the gene bundles too, which is the claim
+    that actually matters: the figure must count rows a consumer can *fetch*, not
+    rows in `mirrors/burden.tsv`. The mirror holds 1,475 rows over 150 genes and
+    127 of those genes publish no page, so a census counting the mirror would
+    advertise five times the evidence the site serves. Summed over the published
+    bundles rather than over the mirror for that reason.
+    """
+    text = (real_build / "index.html").read_text(encoding="utf-8")
+    manifest = json.loads((real_build / "manifest.json").read_text(encoding="utf-8"))
+    counts = manifest["counts"]
+    bundles = sorted((real_build / "genes").glob("HGNC_*.json"))
+    fetchable = sum(len(json.loads(path.read_text(encoding="utf-8"))["burden"]) for path in bundles)
+
+    assert counts["burden_rows"] == fetchable
+    assert counts["genes"] == len(bundles)
+    for label, key in (
+        ("Burden statistics", "burden_rows"),
+        ("Independent datasets", "cohort_families"),
+        ("Genes published", "genes"),
+    ):
+        match = re.search(rf"<dt>{label}</dt>\s*<dd>([\d,]+)</dd>", text)
+        assert match, f"the page no longer publishes a {label!r} row"
+        assert int(match.group(1).replace(",", "")) == counts[key], label
 
 
 def test_the_page_shares_the_shell_and_the_stylesheet_every_other_page_uses(

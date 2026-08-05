@@ -7,6 +7,7 @@ from pathlib import Path
 
 from chd_atlas.build.burden import (
     BurdenRow,
+    burden_census,
     burden_payload,
     cohort_registry,
     load_burden,
@@ -183,6 +184,54 @@ def _row(**overrides: object) -> BurdenRow:
     }
     payload.update(overrides)
     return BurdenRow(**payload)  # type: ignore[arg-type]
+
+
+def test_the_census_counts_published_rows_and_families_not_mirrored_rows_and_studies() -> None:
+    """Three separate miswirings, each of which publishes a number true of something.
+
+    The census is what `index.html` and `manifest.json` both state, so a wrong
+    figure here is a wrong claim on the front page *and* in the payload behind
+    it. All three mistakes are one plausible edit away and none is visible in
+    output that otherwise looks entirely ordinary, so the fixture is built to
+    separate them rather than to look realistic:
+
+    - **Mirror rows must not be counted.** `mirrors/burden.tsv` is deliberately
+      wider than the publication gate -- measured 2026-08-05, 1,475 rows over 150
+      genes of which 127 publish no page. `HGNC:9` here stands for those 127: it
+      carries four rows and is absent from `published`. Counting the mapping
+      (`sum(len(rows) for rows in burden.values())`) gives 7, which is true of
+      the mirror and false of the site.
+
+    - **Families are not studies.** The two published genes' rows name *two*
+      studies, and the fixture puts them in **one** family, so `len({row.study})`
+      gives 2 where the answer is 1. They are equal over the committed corpus --
+      three studies on disjoint collections -- which is exactly why a fixture has
+      to separate them: the day a fourth study reuses DDD or PCGC, a study count
+      would tell a reader that a reused cohort is independent evidence.
+
+    - **Genes are those with rows, not the published population.** `HGNC:3` is
+      published and has none, so `len(published)` gives 3 where the answer is 2.
+
+    One test rather than three because they share a fixture and a single call,
+    which is what makes the three numbers checkable against each other; a
+    per-figure split would triple the setup and weaken nothing that matters.
+    """
+    burden = {
+        "HGNC:1": [_row(study="PMID:1"), _row(study="PMID:1")],
+        "HGNC:2": [_row(study="PMID:2")],
+        # Mirrored, never published: the 127-gene asymmetry, in miniature.
+        "HGNC:9": [_row(study="PMID:1") for _ in range(4)],
+    }
+    # Published and untested, so `genes` cannot be read off `published`.
+    published = {"HGNC:1", "HGNC:2", "HGNC:3"}
+    # The two studies share a sample collection, so they are one dataset.
+    families = (frozenset({"PMID:1", "PMID:2"}),)
+
+    census = burden_census(burden, published, families)
+
+    assert census.rows == 3
+    assert census.families == 1
+    assert census.genes == 2
 
 
 def test_every_published_row_carries_every_key_whatever_its_comparator() -> None:

@@ -69,6 +69,7 @@ from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
 from chd_atlas.build.render import (
+    EVIDENCE_STATE_LABELS,
     FILTER_SCRIPT,
     Cell,
     Link,
@@ -211,12 +212,15 @@ _STRATUM_LABEL: Final[dict[str, str]] = {
 # deploy, on the page where the omission would have done the damage.
 _MATRIX_LEGEND: Final = (
     '<p class="strip-legend">'
-    '<span class="cell-key corrected"></span> enriched, and survives that study&#x27;s own '
-    "correction &nbsp; "
-    '<span class="cell-key nominal"></span> enriched nominally, or no correction published '
-    "&nbsp; "
-    '<span class="cell-key no-enrichment"></span> tested, no enrichment detected &nbsp; '
-    '<span class="cell-key not-tested"></span> not tested by that dataset</p>'
+    + " &nbsp; ".join(
+        f'<span class="cell-key {css}"></span> {label}'
+        for css, label in zip(
+            ("corrected", "nominal", "no-enrichment", "not-tested"),
+            EVIDENCE_STATE_LABELS,
+            strict=True,
+        )
+    )
+    + "</p>"
     '<p class="strip-legend">Rows are <strong>independent cohort families</strong>, not '
     "studies: two papers sharing a sample collection describe the same people and appear "
     "once. <strong>No enrichment at these cohort sizes is not evidence against a gene</strong> "
@@ -226,11 +230,15 @@ _MATRIX_LEGEND: Final = (
 
 _STRIP_LEGEND: Final = (
     '<p class="strip-legend">'
-    '<span class="dot full"></span> enriched, and survives that study\'s own correction'
-    ' &nbsp; <span class="dot half"></span> enriched nominally, or no correction published'
-    ' &nbsp; <span class="dot none"></span> tested, no enrichment detected'
-    ' &nbsp; <span class="dot untested">&ndash;</span> not tested by that dataset'
-    "</p>"
+    + " &nbsp; ".join(
+        f'<span class="dot {css}">{glyph}</span> {label}'
+        for (css, glyph), label in zip(
+            (("full", ""), ("half", ""), ("none", ""), ("untested", "&ndash;")),
+            EVIDENCE_STATE_LABELS,
+            strict=True,
+        )
+    )
+    + "</p>"
     '<p class="strip-legend">One glyph per <strong>independent cohort family</strong>, not '
     "per study: two papers sharing a sample collection describe the same people and count "
     "once. <strong>No enrichment at these cohort sizes is not evidence against a gene</strong> "

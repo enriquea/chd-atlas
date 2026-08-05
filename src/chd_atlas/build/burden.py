@@ -23,7 +23,7 @@ derives nothing beyond a set intersection over what each study already declared.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -293,6 +293,69 @@ def burden_payload(rows: Iterable[BurdenRow]) -> list[Json]:
         }
         for row in rows
     ]
+
+
+@dataclass(frozen=True)
+class BurdenCensus:
+    """The three burden figures, derived once and published in three places.
+
+    `index.html`'s hero band, its `What's published` list, and `manifest.json`'s
+    `counts`. They come from one object for the same reason `published` is
+    threaded down from `build_site` rather than recomputed: three derivations are
+    three things that drift, and a front page whose headline figure contradicts
+    its own table two screens below — or the payload a program reads instead of
+    the page — is worse than one carrying neither.
+
+    That is also why this lives in `burden.py` rather than in `landing.py`, where
+    it was first written. A census with two consumers in different layers belongs
+    to neither of them.
+    """
+
+    rows: int
+    genes: int
+    families: int
+
+
+def burden_census(
+    burden: Mapping[str, Sequence[BurdenRow]],
+    published: Collection[str],
+    families: tuple[frozenset[str], ...],
+) -> BurdenCensus:
+    """What the burden evidence *this site publishes* amounts to.
+
+    **`published` is the restriction, and dropping it would overstate the atlas
+    by a factor of five.** `mirrors/burden.tsv` is deliberately wider than the
+    publication gate — measured 2026-08-05, 1,475 rows over 150 genes, of which
+    127 genes publish no page (CLAUDE.md section 10 records that asymmetry as
+    intended, so re-mirroring is not needed the day D21 widens). A front page
+    counting the mirror would advertise 1,475 statistics a reader cannot reach
+    from any link on it, and `manifest.json` would promise a consumer five times
+    the rows it can fetch. It counts the 290 that reach a published bundle.
+
+    **`families` is the dataset count, never `len({row.study for row in rows})`.**
+    A cohort family is a connected component over shared sample collections, so
+    two papers drawing on one collection describe the same people and count once
+    (`concordance.cohort_families`). The two are equal over the committed corpus
+    — three studies on disjoint collections — which is precisely why they are
+    separated here and separated again in the tests: the day a fourth study
+    reuses DDD or PCGC, a study count on this page would tell a reader that a
+    reused cohort is independent evidence. Taken as a parameter rather than
+    recomputed, so this page and the strip on every browse row count the same
+    families.
+
+    Genes are counted as those with at least one *published* row rather than as
+    `len(published)`. They are equal today, at 23 of 23, and stating the
+    published-gene count under a burden label would keep reading as 23 on the
+    day a gene is published with no burden evidence at all.
+    """
+    rows = 0
+    genes = 0
+    for gene in published:
+        count = len(burden.get(gene, ()))
+        rows += count
+        if count:
+            genes += 1
+    return BurdenCensus(rows=rows, genes=genes, families=len(families))
 
 
 def cohort_registry(cohorts: Iterable[Cohort]) -> dict[str, Cohort]:
