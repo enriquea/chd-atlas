@@ -1017,6 +1017,8 @@ def _burden_row(**overrides: object) -> BurdenRow:
         "ci_high": None,
         "pvalue": 3.13e-08,
         "pvalue_test": "fisher_exact",
+        "pvalue_adjusted": None,
+        "pvalue_adjustment": None,
         "case_cohorts": ("cnchd", "ddd"),
         "control_cohorts": ("ukbb",),
         "method_note": None,
@@ -1492,3 +1494,66 @@ def test_the_rail_counts_burden_rows_and_names_the_publications_it_counts(
     assert "<dt>curated publications</dt><dd>0</dd>" in page
     assert "<dt>burden rows</dt><dd>2</dd>" in page
     assert "<dt>publications</dt>" not in page
+
+
+def test_a_published_correction_is_rendered_and_names_its_method(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The column that answers the sharpest finding of the 2026-08-05 review.
+
+    That review measured 187 uncorrected p-values on gene pages with nothing to
+    judge them against. The atlas still computes no correction -- that would be
+    authoring a statistic (D12/D33) -- but PMID:34324492 publishes one, and it
+    **changes the conclusion**: CHD7 has a raw permutation p of 0.0068 and a
+    family-wise corrected p of 0.991. Without this column the page shows a
+    number that reads as significant for a gene the study found nothing for.
+
+    The method is named in the cell because "0.991" alone does not say what it
+    was corrected against, and a family-wise permutation correction and a
+    Bonferroni factor are different claims.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(
+                variant_class="cnv_deletion",
+                effect=None,
+                effect_measure=None,
+                effect_bound=None,
+                ci_low=None,
+                ci_high=None,
+                pvalue=0.0068,
+                pvalue_test="permutation",
+                pvalue_adjusted=0.991,
+                pvalue_adjustment="familywise_permutation",
+            )
+        ],
+    )
+
+    assert '<th scope="col">corrected p</th>' in page
+    assert "<td>0.991 (family-wise)</td>" in page
+    assert "<td>0.0068</td>" in page
+
+
+def test_the_method_line_tells_a_corrected_study_apart_from_an_uncorrected_one(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """A sentence true of one study is false of another.
+
+    PMID:42230622 publishes no correction, so the reader needs the denominator
+    and the advice to judge against the whole scan. PMID:34324492 corrects every
+    row, so that same advice would point them at the column they should *not* be
+    reading. The block says whichever is true of its own rows.
+    """
+    corrected = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(pvalue_adjusted=0.991, pvalue_adjustment="bonferroni")],
+    )
+    assert "read it rather than the raw p" in corrected
+    assert "judge the raw one against the whole scan" not in corrected
+
+    plain = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    assert "judge the raw one against the whole scan" in plain
+    assert "read it rather than the raw p" not in plain

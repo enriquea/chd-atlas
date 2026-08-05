@@ -156,8 +156,17 @@ _BURDEN_HEADERS: Final = (
     "cases (carriers / n)",
     "controls (carriers / n)",
     "effect",
-    "p (uncorrected)",
+    "p",
+    "corrected p",
 )
+
+# How a published correction is named in the cell, so a reader is never left to
+# guess what "0.99" was corrected against.
+_ADJUSTMENT_LABEL: Final[dict[str, str]] = {
+    "bonferroni": "Bonferroni",
+    "familywise_permutation": "family-wise",
+    "benjamini_hochberg": "Benjamini-Hochberg",
+}
 
 _STRATUM_LABEL: Final[dict[str, str]] = {
     "all": "all cases",
@@ -636,6 +645,30 @@ def _fmt(value: float) -> str:
     return f"{value:.3g}"
 
 
+def _corrected(row: BurdenRow) -> str:
+    """A published corrected p-value, named for the correction that produced it.
+
+    **This column is the answer to the sharpest finding of the 2026-08-05
+    review**, which measured 187 uncorrected p-values on gene pages with nothing
+    to judge them against. The atlas still computes no correction -- that would
+    be authoring a statistic (D12/D33) -- but where a study publishes one, it
+    reaches the reader.
+
+    It changes conclusions, not just presentation. CHD7 in PMID:34324492 has a
+    raw permutation p of 0.0068 and a family-wise corrected p of 0.99: without
+    this column the page shows a number that reads as significant for a gene the
+    study found nothing for.
+
+    An em dash where a study published no correction, never a blank: the method
+    line above the table then names how many comparisons the study ran, which is
+    what a reader has instead.
+    """
+    if row.pvalue_adjusted is None:
+        return _EM_DASH
+    label = _ADJUSTMENT_LABEL.get(row.pvalue_adjustment or "", row.pvalue_adjustment or "")
+    return f"{row.pvalue_adjusted:.3g} ({label})" if label else f"{row.pvalue_adjusted:.3g}"
+
+
 def _burden_section(
     rows: Sequence[BurdenRow],
     publications: Mapping[str, Publication],
@@ -684,6 +717,7 @@ def _burden_section(
                         _controls(row),
                         _effect(row),
                         f"{row.pvalue:.3g}" if row.pvalue is not None else _EM_DASH,
+                        _corrected(row),
                     )
                 )
                 for row in study_rows
@@ -810,17 +844,29 @@ def _method_line(rows: Sequence[BurdenRow], publication: Publication | None) -> 
 
     sentence = html.escape("; ".join(parts)) + "." if parts else ""
 
+    # Three cases, because a sentence true of one study is false of another.
+    # PMID:42230622 publishes no correction at all, so the reader needs the
+    # denominator; PMID:34324492 corrects every row, so telling them to judge
+    # the raw p against the scan would be pointing at a column they should not
+    # be reading. A study that corrected only some rows gets both halves.
     correction = ""
+    uncorrected = [row for row in rows if row.pvalue is not None and row.pvalue_adjusted is None]
     if publication is not None and publication.tests_reported:
         total = publication.tests_reported
         threshold = 0.05 / total
-        correction = (
-            f" p-values are <strong>uncorrected</strong>, and this study reported "
-            f"{total:,} such comparisons &mdash; a Bonferroni threshold over that many "
-            f"is p &lt; {threshold:.2g}. Judge every p below against the whole scan, "
-            f"not against 0.05."
-        )
-    elif any(row.pvalue is not None for row in rows):
+        correction = f" This study reported {total:,} such comparisons."
+        if uncorrected:
+            correction += (
+                f" Where it published no corrected p, judge the raw one against the whole "
+                f"scan rather than against 0.05 &mdash; a Bonferroni threshold over that "
+                f"many is p &lt; {threshold:.2g}."
+            )
+        else:
+            correction += (
+                " The <strong>corrected p</strong> column carries the study's own "
+                "correction over all of them; read it rather than the raw p."
+            )
+    elif uncorrected:
         correction = " p-values are <strong>uncorrected</strong> as published."
 
     if not sentence and not correction:

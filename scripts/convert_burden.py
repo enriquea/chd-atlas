@@ -123,6 +123,8 @@ _ORDER: Final[tuple[str, ...]] = (
     "ci_high",
     "pvalue",
     "pvalue_test",
+    "pvalue_adjusted",
+    "pvalue_adjustment",
     "case_cohorts",
     "control_cohorts",
     "method_note",
@@ -297,6 +299,11 @@ def convert(source: Path, symbols: dict[str, str]) -> tuple[list[dict[str, str]]
                     ),
                     "pvalue": _number(record["fet.p_value"]),
                     "pvalue_test": "fisher_exact",
+                    # Supplementary Data 3 publishes `fet.p_value` and no
+                    # corrected column at all -- which is why the gene page
+                    # names the study's 138,609 comparisons instead.
+                    "pvalue_adjusted": "",
+                    "pvalue_adjustment": "",
                     "case_cohorts": CASE_COHORTS,
                     "control_cohorts": CONTROL_COHORTS,
                     "method_note": "",

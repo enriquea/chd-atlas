@@ -99,7 +99,18 @@ from chd_atlas.corpus import Corpus
 # infinite, where `effect_bound` is `unbounded_above` and `ci_low` carries the
 # whole finding. A consumer treating that null as "not tested" would drop the
 # strongest results in the data.
-SCHEMA_VERSION: Final = "2.3"
+#
+# 2.4 adds `pvalue_adjusted` and `pvalue_adjustment` to every burden object,
+# and `mirrors/burden.tsv` gains its second study (PMID:34324492, CNV deletion
+# burden by permutation). Additive, so MINOR: both keys are always present,
+# `null` where the study published no correction.
+#
+# The display warning matters more than the parsing one, again. A raw p and a
+# corrected p can point opposite ways -- CHD7 in PMID:34324492 is 0.0068 raw and
+# 0.991 family-wise corrected -- so a consumer rendering `pvalue` alone will
+# show a result as significant that the study reported as null. Where
+# `pvalue_adjusted` is present it is the number to read.
+SCHEMA_VERSION: Final = "2.4"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

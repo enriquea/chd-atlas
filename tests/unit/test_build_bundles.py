@@ -1255,6 +1255,8 @@ def test_the_bundle_carries_a_genes_burden_rows_and_the_browse_row_counts_them(
             ci_high=None,
             pvalue=3.13e-08,
             pvalue_test="fisher_exact",
+            pvalue_adjusted=None,
+            pvalue_adjustment=None,
             case_cohorts=("cnchd", "ddd"),
             control_cohorts=("ukbb",),
             method_note=None,

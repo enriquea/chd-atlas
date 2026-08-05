@@ -27,9 +27,19 @@ from convert_burden import _number  # noqa: E402
 
 @pytest.fixture(scope="module")
 def burden() -> pl.DataFrame:
+    """Only this converter's rows.
+
+    `mirrors/burden.tsv` has held more than one study since PMID:34324492
+    landed, and every assertion in this file is about what
+    `scripts/convert_burden.py` produced. Filtering here rather than in each
+    test is what stops a third study turning these into a slow rediscovery of
+    which rows belong to whom.
+    """
     frame, issues = read_table(REPO_ROOT / "mirrors" / "burden.tsv", BURDEN)
     assert frame is not None, issues
-    return frame
+    mine = frame.filter(pl.col("study") == "PMID:42230622")
+    assert mine.height, "no rows for PMID:42230622; did the merge drop them?"
+    return mine
 
 
 @pytest.mark.parametrize(
@@ -146,6 +156,7 @@ def test_the_committed_mirror_covers_every_gene_the_site_publishes(
     assert burden.height == 1192
     assert burden["gene"].n_unique() == 145
     assert set(burden["gene"].to_list()) <= set(genes["hgnc_id"].to_list())
+    assert burden["study"].unique().to_list() == ["PMID:42230622"]
     assert burden["consequence_class"].value_counts(sort=True).to_dicts() == [
         {"consequence_class": "synonymous", "count": 435},
         {"consequence_class": "missense_damaging", "count": 412},

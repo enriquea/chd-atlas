@@ -89,3 +89,85 @@ publications:
     # atlas publishes 187 of them. Without this figure a gene page shows an
     # uncorrected p of 0.0015 with nothing saying what it was drawn from.
     tests_reported: 138609
+  - id: PMID:34324492
+    title: >-
+      Integrative analysis of genomic variants reveals new associations of
+      candidate haploinsufficient genes with congenital heart disease.
+    journal: PLoS genetics
+    year: 2021
+    authors:
+      - Audain E
+      - Wilsdon A
+      - Breckpot J
+      - Izarzugaza JMG
+      - Fitzgerald TW
+      - Kahlert AK
+      - Sifrim A
+      - Wünnemann F
+      - Perez-Riverol Y
+      - Abdul-Khaliq H
+      - Bak M
+      - Bassett AS
+      - Benson DW
+      - Berger F
+      - Daehnert I
+      - Devriendt K
+      - Dittrich S
+      - Daubeney PE
+      - Garg V
+      - Hackmann K
+      - Hoff K
+      - Hofmann P
+      - Dombrowsky G
+      - Pickardt T
+      - Bauer U
+      - Keavney BD
+      - Klaassen S
+      - Kramer HH
+      - Marshall CR
+      - Milewicz DM
+      - Lemaire S
+      - Coselli JS
+      - Mitchell ME
+      - Tomita-Mitchell A
+      - Prakash SK
+      - Stamm K
+      - Stewart AFR
+      - Silversides CK
+      - Siebert R
+      - Stiller B
+      - Rosenfeld JA
+      - Vater I
+      - Postma AV
+      - Caliebe A
+      - Brook JD
+      - Andelfinger G
+      - Hurles ME
+      - Thienpont B
+      - Larsen LA
+      - Hitz MP
+    # Rare CNV deletions in cases against population controls, gene by gene, by
+    # PLINK permutation; plus de novo variation-rate testing in trios. Read off
+    # the paper, per this file's rule.
+    study_type: case_control
+    doi: 10.1371/journal.pgen.1009679
+    pmcid: PMC8354477
+    own_lab: true
+    # 7,958 individuals contributed CNV data. NOT all of them have congenital
+    # heart disease: the abstract says "probands with CHD including cases with
+    # sporadic thoracic aortic aneurysm", and S2 Table shows 777 of the 7,958
+    # are a TAA series (PMID 21092924). The `taa_cases` cohort in
+    # curation/cohorts.yaml is what makes that visible on every row.
+    cohort_size: 7958
+    # 11,515 genes tested by permutation for CNV deletion burden (S6 Table), of
+    # which 528 reach an adjusted p below 0.05. Counted 2026-08-05 from the
+    # workbook. This study, unlike PMID:42230622, publishes its correction --
+    # PLINK's EMP2 -- so `pvalue_adjusted` carries it rather than the page
+    # having to name the denominator.
+    tests_reported: 11515
+    # NOTE ON THE ERRATUM (PMID:34547032, PLoS Genet 17(9):e1009809): it
+    # corrects one author's name -- "The thirteenth author's name is spelled
+    # incorrectly. The correct name is: D. Woodrow Benson." -- and no data. The
+    # name above is PubMed's, which already carries the correction. Checked
+    # before any number from this paper was transcribed, because an erratum on
+    # a burden paper could just as easily have corrected the counts.

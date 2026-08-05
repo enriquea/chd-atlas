@@ -56,14 +56,35 @@ def test_an_unknown_field_is_refused_rather_than_silently_dropped() -> None:
         CohortFile.model_validate({"cohorts": [{**_ENTRY, "role": "case"}]})
 
 
-def test_the_committed_registry_parses_and_covers_the_audain_2026_cohorts() -> None:
-    """A contract pin: `mirrors/burden.tsv` cites these four ids by name.
+def test_the_committed_registry_parses_and_covers_every_cited_cohort() -> None:
+    """A contract pin: `mirrors/burden.tsv` cites these ids by name.
 
     Named rather than merely counted, because the point of the file is *which*
-    collections a row draws on -- a registry that still had four entries after
-    `ddd` was renamed would satisfy a count and break every row citing it.
+    collections a row draws on -- a registry that still had the right number of
+    entries after `ddd` was renamed would satisfy a count and break every row
+    citing it.
+
+    `taa_cases` is in this set and is deliberately not a CHD cohort: 777 of the
+    7,958 cases in PMID:34324492 have sporadic thoracic aortic aneurysm, which
+    `curation/chd_scope.yaml` puts outside this atlas. It is registered so that
+    every row drawing on it says so, rather than being quietly folded into a
+    case count labelled CHD.
     """
     path = REPO_ROOT / "curation" / "cohorts.yaml"
     parsed = CohortFile.model_validate(YAML(typ="safe").load(path.read_text(encoding="utf-8")))
 
-    assert {cohort.id for cohort in parsed.cohorts} == {"cnchd", "ddd", "nottingham", "ukbb"}
+    assert {cohort.id for cohort in parsed.cohorts} == {
+        # PMID:42230622
+        "cnchd",
+        "ddd",
+        "nottingham",
+        "ukbb",
+        # PMID:34324492
+        "signature",
+        "decipher",
+        "isca",
+        "taa_cases",
+        "gain_controls",
+        "wtccc_controls",
+        "ottawa_controls",
+    }

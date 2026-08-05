@@ -379,6 +379,38 @@ class StatisticalTest(StrEnum):
     FISHER_EXACT = "fisher_exact"
     POISSON = "poisson"
     BINOMIAL = "binomial"
+    # PLINK's `--mperm` CNV association test, which draws its null by permuting
+    # case/control labels rather than from a closed-form distribution. Added
+    # 2026-08-05 with PMID:34324492, whose whole CNV analysis uses it.
+    PERMUTATION = "permutation"
+    # DeNovoWEST and MuPIT both compare an observed de novo count against a
+    # per-gene mutation-rate model. Named for the family rather than the tool:
+    # PMID:34324492 reports `p_dnv` as the minimum of the two, so no single tool
+    # name would be true of the column.
+    MUTATION_RATE = "mutation_rate"
+
+
+class PvalueAdjustment(StrEnum):
+    """How a published corrected p-value was corrected.
+
+    **The atlas computes no correction and never will** -- that would be
+    authoring a statistic (D12/D33). This records one a study published.
+
+    It exists because the 2026-08-05 review found the sharpest gap in this
+    layer: gene pages showed 187 uncorrected p-values, of which 32 clear 0.05
+    and 3 survive Bonferroni over the study's own 138,609 tests. That study
+    published no corrected column, so the page names the denominator instead.
+    PMID:34324492 *does* publish one -- PLINK's EMP2 beside EMP1, and a
+    Bonferroni-adjusted p beside the raw de novo p -- and dropping it would
+    discard the one number that answers the question the review raised.
+
+    `FAMILYWISE_PERMUTATION` is PLINK's EMP2: the max(T) family-wise error rate
+    over the same permutations that produced EMP1, not a Bonferroni factor.
+    """
+
+    BONFERRONI = "bonferroni"
+    FAMILYWISE_PERMUTATION = "familywise_permutation"
+    BENJAMINI_HOCHBERG = "benjamini_hochberg"
 
 
 class FeaturedTopic(StrEnum):

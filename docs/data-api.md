@@ -52,7 +52,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.3",
+  "schema_version": "2.4",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -427,9 +427,11 @@ and GenCC under, the same way it does for HPO.
 
 Published rare-variant burden statistics for the gene, one object per
 (study, cohort stratum, variant class, consequence class, frequency threshold).
-**187 rows reach the API**, across the 23 published genes, from one study.
-`mirrors/burden.tsv` holds 1,192 rows for 145 genes; the other 1,005 are for
-genes the site does not publish and reach no bundle and no page. They are held
+**200 rows reach the API**, across the 23 published genes, from
+2 studies (PMID:34324492, PMID:42230622). `mirrors/burden.tsv` holds
+1,295 rows for 150 genes; the other 1,095, covering
+127 genes, are for genes the site does not publish and reach no
+bundle and no page. They are held
 so that widening the publication gate later needs no re-mirroring, which is the
 same reason `mirrors/genes.tsv` registers 154 genes and 23 publish.
 `burden_row_count` on the browse row is this array's length.
@@ -456,6 +458,8 @@ same reason `mirrors/genes.tsv` registers 154 genes and 23 publish.
   "ci_high": null,
   "pvalue": 3.13e-08,
   "pvalue_test": "fisher_exact",
+  "pvalue_adjusted": null,
+  "pvalue_adjustment": null,
   "case_cohorts": ["cnchd", "ddd", "nottingham"],
   "control_cohorts": ["ukbb"],
   "method_note": null,
@@ -503,7 +507,16 @@ Five obligations, each of which is a wrong claim if you get it wrong:
    available almost everywhere a result is. Where a synonymous row is
    significant, that gene's comparison is poorly calibrated, and a reader can
    only see that if you show it.
-5. **Do not pool across studies.** The CHD literature reuses cohorts, so a
+5. **Read `pvalue_adjusted` where it is present.** A raw and a corrected
+   p-value can point opposite ways: CHD7 in `PMID:34324492` is `0.0068` raw and
+   `0.991` after the study's own family-wise permutation correction, so a
+   consumer rendering `pvalue` alone shows as significant a result the study
+   reported as null. `pvalue_adjustment` names the correction, because a
+   family-wise permutation correction and a Bonferroni factor are different
+   claims. Both keys are `null` where the study published none — and there the
+   study's own comparison count, `tests_reported` in `publications.json`, is
+   what a reader has instead. **The atlas computes no correction itself.**
+6. **Do not pool across studies.** The CHD literature reuses cohorts, so a
    combined p-value counts the same people twice. `case_cohorts` and
    `control_cohorts` name the collections each row drew on precisely so overlap
    is visible; ids resolve against `curation/cohorts.yaml`.
