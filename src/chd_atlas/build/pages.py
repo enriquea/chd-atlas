@@ -63,6 +63,7 @@ import html
 from collections.abc import Mapping, Sequence
 from typing import Final
 
+from chd_atlas.build.burden import BurdenRow, shared_cohorts
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
@@ -129,6 +130,47 @@ _VALIDITY_HEADERS: Final = (
 )
 
 _EVIDENCE_HEADERS: Final = ("class", "strength", "summary", "publication")
+
+# `cases` and `controls` hold "carriers / total", not a carrier count: six
+# carriers is a different claim in 3,876 people than in 45,082, and putting the
+# denominator anywhere but the cell that needs it invites the comparison to be
+# made against the wrong one.
+_BURDEN_HEADERS: Final = ("cohort", "variants", "cases", "controls", "effect", "p")
+
+_STRATUM_LABEL: Final[dict[str, str]] = {
+    "all": "all cases",
+    "syndromic": "syndromic",
+    "nonsyndromic": "non-syndromic",
+}
+
+_CONSEQUENCE_LABEL: Final[dict[str, str]] = {
+    "lof": "loss-of-function",
+    "missense_damaging": "missense (damaging)",
+    "missense_all": "missense (all)",
+    "all_coding": "all coding",
+    "synonymous": "synonymous",
+}
+
+# Spelled out beside every number, because the abbreviation is the difference
+# between two claims. See `_effect`.
+_MEASURE_LABEL: Final[dict[str, str]] = {
+    "odds_ratio": "OR",
+    "enrichment_ratio": "enrichment",
+    "rate_ratio": "rate ratio",
+}
+
+# The three things the numbers do not say. Every clause here was measured
+# against the committed mirror; see `_burden_section`.
+_BURDEN_PREAMBLE: Final = (
+    "<p>Counts and statistics below are each study's own, republished as "
+    "published. The atlas computes <strong>no pooled statistic across studies</strong>: "
+    "these cohorts overlap, so combining them would count the same people twice.</p>"
+    "<p>A consequence class missing from a study's table had <strong>no qualifying "
+    "variant in either the cases or the controls</strong> &mdash; it was not tested, "
+    "rather than tested and found negative. The <strong>synonymous</strong> row is the "
+    "study's own negative control: synonymous variants should show no enrichment, so a "
+    "significant one means that gene's comparison is poorly calibrated.</p>"
+)
 
 _CITATION_HEADERS: Final = ("id", "title", "year")
 
@@ -416,6 +458,150 @@ def _evidence_section(
     )
 
 
+def _study_label(pmid: str, publications: Mapping[str, Publication]) -> str:
+    """"Audain et al. 2026", or the bare PMID when the record is missing.
+
+    The fallback is a guard on a bypassed gate -- BUR010 reports a burden row
+    citing an unregistered study and `build_site` refuses on it -- and it renders
+    the PMID rather than an em dash for the reason `build_genes` falls back to an
+    HGNC id: an identifier is something a reader can still look up.
+    """
+    publication = publications.get(pmid)
+    if publication is None:
+        return pmid
+    return f"{publication.authors[0]} et al. {publication.year}"
+
+
+def _count(carriers: int | None, total: int | None) -> str:
+    """"6 / 3,876" -- the numerator with the denominator it was measured against.
+
+    Never the numerator alone. Six carriers is a different claim in 3,876 cases
+    than in 45,082, and the two columns of this table hold exactly that contrast.
+    The separator is a literal `,` via `:,`, which is locale-independent, so two
+    builds on two machines render the same bytes.
+    """
+    if carriers is None or total is None:
+        return _EM_DASH
+    return f"{carriers:,} / {total:,}"
+
+
+def _effect(row: BurdenRow) -> str:
+    """The effect size, its measure, and its interval -- never a bare number.
+
+    **This is the guard the single `effect` column was chosen against.** One
+    column holding both odds ratios and de novo enrichments is what lets this
+    schema absorb a fifth study without a migration, and it is also the one place
+    two incomparable quantities could silently merge: an odds ratio of 3.1 and an
+    enrichment of 3.1 are different claims, and a cell reading "3.1" under a
+    header reading "effect" equates them. `_MEASURE_LABEL` is therefore consulted
+    on every row and there is no branch that omits it.
+
+    `unbounded` rather than a number, and rather than a blank. Fisher's exact
+    test returns an infinite odds ratio where no control carries, which is the
+    strongest result in the data and also the one `encode_json`'s
+    `allow_nan=False` refuses to publish. The lower bound survives and is the
+    whole finding: TAB2's syndromic row says the true odds ratio is at least
+    28.1, which a blank cell would have thrown away.
+    """
+    if row.effect_measure is None:
+        return _EM_DASH
+    measure = _MEASURE_LABEL.get(row.effect_measure, row.effect_measure)
+    if row.effect_bound == "unbounded_above":
+        low = f"{row.ci_low:.3g}" if row.ci_low is not None else None
+        return f"{measure} unbounded" + (f" (95% CI ≥{low})" if low else "")
+    if row.effect is None:
+        return _EM_DASH
+    value = f"{measure} {row.effect:.3g}"
+    if row.ci_low is None or row.ci_high is None:
+        return value
+    return f"{value} (95% CI {row.ci_low:.3g}–{row.ci_high:.3g})"
+
+
+def _burden_section(
+    rows: Sequence[BurdenRow],
+    publications: Mapping[str, Publication],
+    cohorts: Mapping[str, str],
+) -> str:
+    """Published rare-variant burden, one table per study.
+
+    Three things this section has to say that the numbers alone do not, each of
+    which a reader would otherwise get wrong:
+
+    * **The rows are per study and are never pooled.** The CHD literature reuses
+      cohorts, so a pooled p-value counts the same children twice. Declining to
+      compute one does not stop a reader doing it by eye, so where two studies
+      share a collection the section names it (`shared_cohorts`).
+    * **A consequence class with no row had no carrier in either group** -- not
+      "was not tested". Measured over the committed mirror: zero of its 1,192
+      rows have no case carrier *and* no control carrier, so a 2x2 of all zeros
+      supports no test and the study emitted no row. The matrix is genuinely
+      sparse -- 42 of 145 genes are missing at least one cell -- so a reader
+      meets a gap often enough for the distinction to matter.
+    * **The synonymous row is the study's own negative control.** Synonymous
+      variants should show no enrichment; where one does, that gene's comparison
+      is poorly calibrated. It is sorted last within each stratum so it reads as
+      what it is -- the row that says whether to believe the two above it.
+
+    Returns `""` for a gene with no burden rows rather than an empty section:
+    unlike the validity table, whose header names the columns and whose emptiness
+    is itself an answer, an empty burden table would say "this gene was studied
+    and nothing was found", which is a claim no study made.
+    """
+    if not rows:
+        return ""
+
+    overlaps = shared_cohorts(rows)
+    blocks: list[str] = []
+    for study in sorted({row.study for row in rows}):
+        study_rows = [row for row in rows if row.study == study]
+        table = data_table(
+            _BURDEN_HEADERS,
+            [
+                Row(
+                    cells=(
+                        _STRATUM_LABEL.get(row.cohort_stratum, row.cohort_stratum),
+                        _CONSEQUENCE_LABEL.get(row.consequence_class, row.consequence_class),
+                        _count(row.n_case_carriers, row.n_cases),
+                        _count(row.n_control_carriers, row.n_controls),
+                        _effect(row),
+                        f"{row.pvalue:.3g}" if row.pvalue is not None else _EM_DASH,
+                    )
+                )
+                for row in study_rows
+            ],
+        )
+        # `html.escape` on the two bare interpolations, in the idiom `_rail`
+        # uses: the label carries an author surname and the cohort names come
+        # from curated YAML, and neither reaches this string through `render.py`.
+        first = study_rows[0]
+        provenance = (
+            f"<p class=\"provenance\">Cases: {html.escape(_names(first.case_cohorts, cohorts))}. "
+            f"Controls: {html.escape(_names(first.control_cohorts, cohorts) or 'none')}.</p>"
+        )
+        blocks.append(
+            f"<h3>"
+            f'<a href="{html.escape(_pubmed(study))}">'
+            f"{html.escape(_study_label(study, publications))}</a></h3>"
+            f"{provenance}{table}"
+        )
+
+    shared = "".join(
+        f"<p class=\"notice-inline\"><strong>These two studies are not independent.</strong> "
+        f"{html.escape(_study_label(left, publications))} and "
+        f"{html.escape(_study_label(right, publications))} both draw on "
+        f"{html.escape(_names(common, cohorts))}, so their results describe partly "
+        f"the same people and must not be combined.</p>"
+        for (left, right), common in overlaps.items()
+    )
+
+    return "<h2>Rare variant burden</h2>" + _BURDEN_PREAMBLE + shared + "".join(blocks)
+
+
+def _names(ids: Sequence[str], cohorts: Mapping[str, str]) -> str:
+    """Cohort ids rendered as the collections they name, comma-separated."""
+    return ", ".join(cohorts.get(identifier, identifier) for identifier in ids)
+
+
 def build_gene_pages(
     facts: Mapping[str, GeneFacts],
     emitter: Emitter,
@@ -424,6 +610,8 @@ def build_gene_pages(
     validity: Mapping[str, GeneValidity],
     assertions: Mapping[str, list[LesionAssertion]],
     publications: Mapping[str, Publication],
+    burden: Mapping[str, Sequence[BurdenRow]],
+    cohorts: Mapping[str, str],
 ) -> None:
     """Emit one HTML page per gene in `facts`.
 
@@ -461,6 +649,13 @@ def build_gene_pages(
                 if fact.atlas_curation is AtlasCuration.CURATED
                 else _not_curated(fact)
             )
+            # After the atlas's own section, not between it and the mirrored
+            # validity table. `_not_curated` says "the classification above is
+            # an expert panel's", and a burden table sitting above that sentence
+            # would put nine rows of statistics -- which are not classifications
+            # -- inside what it refers to. It also keeps the atlas's own curation
+            # adjacent to the notice about whether there is any.
+            + _burden_section(burden.get(gene, ()), publications, cohorts)
             + "</div></div>"
         )
         emitter.write_text(

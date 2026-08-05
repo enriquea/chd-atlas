@@ -52,7 +52,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.2",
+  "schema_version": "2.3",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -90,7 +90,9 @@ wrong by the next one.
   published gene set from the genes this atlas has curated to the genes a
   ClinGen expert panel calls definitive. More rows of an unchanged shape is not
   a schema change; the new field is, and it is what tells the two kinds of row
-  apart.
+  apart. `2.3` added `burden` to every gene bundle and `burden_row_count` to
+  every gene index row, again additively; both keys are always present, so a
+  2.2 reader keeps working and a 2.3 reader never guards for a missing one.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -156,7 +158,8 @@ atlas behind it at all.
       "lesion_groups": ["septal"],
       "symbol": "TBX5",
       "validity_state": "expert_curated",
-      "variant_count": 0
+      "variant_count": 0,
+      "burden_row_count": 9
     }
   ]
 }
@@ -291,7 +294,8 @@ One gene's whole detail page, in one fetch.
   "assertions": [ { "id": "CHDA:AST:0000001", "lesion_groups": ["septal"], "evidence": [ … ] } ],
   "functional": [],
   "variants": [],
-  "omics": {}
+  "omics": {},
+  "burden": [ { "study": "PMID:42230622", "cohort_stratum": "syndromic", … } ]
 }
 ```
 
@@ -312,8 +316,8 @@ One gene's whole detail page, in one fetch.
   is the panel's classification plus whatever this atlas has recorded, which
   may be nothing at all. An empty `assertions` array is a curation gap, never a
   fetch that failed.
-- `omics` and `variants` are always present and may be empty. Read them without
-  guarding for a missing key.
+- `omics`, `variants` and `burden` are always present and may be empty. Read
+  them without guarding for a missing key.
 - **`variants` are embedded; omics rows are linked.** That asymmetry is a
   curation policy, not a property of the data — this atlas curates variants by
   hand, so the count per gene is bounded by effort. Omics tables are not, so a
@@ -418,6 +422,93 @@ behind those fields live:
 
 `sources.json` (below) carries the licence terms this atlas mirrors ClinGen
 and GenCC under, the same way it does for HPO.
+
+### The bundle's `burden` array: per study, never pooled
+
+Published rare-variant burden statistics for the gene, one object per
+(study, cohort stratum, variant class, consequence class, frequency threshold).
+1,192 rows across 145 genes today, from one study; all 23 published genes are
+covered. `burden_row_count` on the browse row is this array's length.
+
+```json
+{
+  "study": "PMID:42230622",
+  "cohort_stratum": "syndromic",
+  "lesion_group": null,
+  "variant_class": "snv_indel",
+  "consequence_class": "lof",
+  "origin": "any",
+  "maf_max": 0.001,
+  "n_case_carriers": 5,
+  "n_cases": 1471,
+  "comparator": "control_cohort",
+  "n_control_carriers": 0,
+  "n_controls": 45082,
+  "expected_count": null,
+  "effect": null,
+  "effect_measure": "odds_ratio",
+  "effect_bound": "unbounded_above",
+  "ci_low": 28.1,
+  "ci_high": null,
+  "pvalue": 3.13e-8,
+  "pvalue_test": "fisher_exact",
+  "case_cohorts": ["cnchd", "ddd", "nottingham"],
+  "control_cohorts": ["ukbb"],
+  "method_note": null,
+  "source": "audain2026_sd3"
+}
+```
+
+Every key is present on every object, `null` where the row's comparator does
+not populate it, so a consumer never has to guard for a missing one.
+
+**`comparator` is the field the whole array turns on.** The published burden
+literature answers one question — is this gene hit more often than expected? —
+and differs only in what "expected" meant:
+
+| `comparator` | expectation from | populated | `effect_measure` |
+| --- | --- | --- | --- |
+| `control_cohort` | `n_control_carriers` / `n_controls` | both control fields | `odds_ratio`, `rate_ratio` |
+| `mutation_model` | `expected_count` | `expected_count` | `enrichment_ratio` |
+| `none` | nothing (a case series) | neither | none, and no `pvalue` |
+
+Only `control_cohort` appears today. The build refuses to publish a row whose
+statistic contradicts its comparator.
+
+Five obligations, each of which is a wrong claim if you get it wrong:
+
+1. **Never render `effect` without `effect_measure` beside it.** One column
+   holds odds ratios and de novo enrichments alike, and an odds ratio of 3.1 and
+   an enrichment of 3.1 are different claims. A cell reading `3.1` under a header
+   reading "effect" equates them.
+2. **`effect: null` with `effect_bound: "unbounded_above"` is the strongest
+   result in the data, not a missing one.** Fisher's exact test returns an
+   infinite odds ratio where no control carries; `Infinity` is accepted by
+   `JSON.parse` nowhere, so the number cannot be published and `ci_low` carries
+   the finding instead — "at least 28.1". 34 rows today. Rendering it as blank or
+   as "not tested" discards the clearest signals in the study.
+3. **A (stratum, consequence) combination with no row had no qualifying variant
+   in either group** — it was never tested, rather than tested and found
+   negative. Zero of the 1,192 rows have no case carrier *and* no control
+   carrier, so a 2×2 of all zeros supports no test and the study emitted none.
+   The matrix is genuinely sparse: 42 of the 145 genes are missing at least one
+   cell.
+4. **Do not filter out `consequence_class: "synonymous"`.** It is the study's
+   own negative control — synonymous variants should show no enrichment — and it
+   is the most numerous class (435 rows against 345 loss-of-function), so it is
+   available almost everywhere a result is. Where a synonymous row is
+   significant, that gene's comparison is poorly calibrated, and a reader can
+   only see that if you show it.
+5. **Do not pool across studies.** The CHD literature reuses cohorts, so a
+   combined p-value counts the same people twice. `case_cohorts` and
+   `control_cohorts` name the collections each row drew on precisely so overlap
+   is visible; ids resolve against `curation/cohorts.yaml`.
+
+`n_cases` and `n_controls` are the row's own denominators, and they are what the
+statistic beside them was computed from. They may differ from the figures a
+paper's abstract reports — for `PMID:42230622` they are the post-QC set (3,876
+cases, 1,471 syndromic + 2,405 non-syndromic, against 45,082 controls) while the
+abstract gives the recruited set. Do not substitute one for the other.
 
 ## `genes/<slug>.html`
 

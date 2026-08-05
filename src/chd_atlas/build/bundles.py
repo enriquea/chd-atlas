@@ -31,9 +31,10 @@ write, which is what makes the two agree by construction rather than by review.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any, cast
 
+from chd_atlas.build.burden import BurdenRow, burden_payload
 from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
@@ -203,6 +204,7 @@ def build_genes(
     variants: Mapping[str, list[dict[str, Any]]],
     validity: dict[str, GeneValidity],
     published: Collection[str],
+    burden: Mapping[str, Sequence[BurdenRow]],
 ) -> dict[str, GeneFacts]:
     """Emit `genes/index.json` and one bundle per published gene, and return the facts.
 
@@ -313,6 +315,10 @@ def build_genes(
                 # Counted from the same list the bundle embeds, so the browse
                 # promise and the page cannot differ.
                 "variant_count": len(rows),
+                # Counted from the same list the bundle embeds, for the reason
+                # `variant_count` is: a browse row promising burden evidence a
+                # page does not show is the browse layer lying about the page.
+                "burden_row_count": len(burden.get(gene, ())),
                 "bundle": bundle,
             }
         )
@@ -338,6 +344,10 @@ def build_genes(
                 # Always present, empty when the gene has none, so a consumer
                 # reads one shape rather than guarding for a missing key.
                 "omics": _summaries(omics.get(gene, {})),
+                # Always present, empty when the gene has none -- same rule as
+                # `omics` above. An absent key would make "no study reported
+                # this gene" indistinguishable from "the build dropped it".
+                "burden": burden_payload(burden.get(gene, ())),
             },
         )
 

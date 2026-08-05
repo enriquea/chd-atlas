@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from chd_atlas.build.bundles import build_genes
+from chd_atlas.build.burden import cohort_labels, load_burden
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.landing import build_landing
 from chd_atlas.build.literature import build_literature, build_sources
@@ -230,6 +231,11 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # defect already had once.
     published = published_genes(validity)
 
+    # Read once and handed to both builders below, for the same reason
+    # `published` and `symbols` are: a gene page and the bundle it links to
+    # rendering different burden rows is the failure a single source removes.
+    burden = load_burden(root)
+
     emitter = Emitter(root=out)
     omics = build_omics(root, emitter)
     variants = build_variants(root, emitter)
@@ -244,6 +250,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         variants=variants,
         validity=validity,
         published=published,
+        burden=burden,
     )
     build_literature(corpus, emitter)
     # Read again rather than threaded down from the gate: `validate_repository`
@@ -270,6 +277,8 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         validity=validity,
         assertions=_assertions_by_gene(corpus),
         publications={publication.id: publication for publication in corpus.publications},
+        burden=burden,
+        cohorts=cohort_labels(corpus.cohorts),
     )
     # `validity` again, and the same object `build_gene_pages` was handed: the
     # browse row's `definitive for` cell and the gene page's `definitive for`
