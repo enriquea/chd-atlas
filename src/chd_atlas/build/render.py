@@ -261,7 +261,7 @@ def data_table(headers: Sequence[str], rows: Sequence[Row], table_id: str = "") 
     `assert`.
     """
     ident = f' id="{html.escape(table_id)}"' if table_id else ""
-    head = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+    head = "".join(f'<th scope="col">{html.escape(header)}</th>' for header in headers)
     body = ""
     for row in rows:
         for name, _ in row.attributes:

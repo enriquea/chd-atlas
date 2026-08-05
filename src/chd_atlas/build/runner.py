@@ -284,7 +284,16 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # browse row's `definitive for` cell and the gene page's `definitive for`
     # rail row must name one disease, and they do because both read this mapping
     # rather than either re-deriving it from the mirrors.
-    build_gene_index_page(facts, emitter, symbols=symbols, validity=validity)
+    build_gene_index_page(
+        facts,
+        emitter,
+        symbols=symbols,
+        validity=validity,
+        # The same count `build_genes` publishes as `burden_row_count`, from
+        # the same mapping, so the browse page and the payload behind it
+        # cannot disagree about how much evidence a gene has.
+        burden_counts={gene: len(rows) for gene, rows in burden.items()},
+    )
     # Last, and enforced as last: this seals the emitter.
     write_manifest(corpus, emitter, commit=source_commit(root))
     return dict(emitter.checksums)

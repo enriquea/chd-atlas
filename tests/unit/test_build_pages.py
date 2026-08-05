@@ -14,7 +14,12 @@ import pytest
 from chd_atlas.build.burden import BurdenRow
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.pages import _SCOPE_RULE, build_gene_index_page, build_gene_pages
+from chd_atlas.build.pages import (
+    _EM_DASH,
+    _SCOPE_RULE,
+    build_gene_index_page,
+    build_gene_pages,
+)
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
@@ -507,7 +512,11 @@ def test_the_browse_table_is_complete_before_any_script_runs(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
@@ -528,7 +537,11 @@ def test_browse_rows_are_ordered_by_hgnc_id_against_a_literal(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
@@ -578,7 +591,11 @@ def test_browse_facet_options_are_ordered_against_a_literal(
     }
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     facets = dict(
@@ -623,15 +640,19 @@ def test_the_browse_page_says_whose_classification_the_confidence_column_carries
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
     assert "upstream panel's or submitter's" in page
     assert "the atlas authors no validity classification of its own" in page
     assert "<strong>atlas curation</strong> column" in page
-    assert "<th>atlas curation</th>" in page
-    assert "<th>confidence</th>" in page
+    assert '<th scope="col">atlas curation</th>' in page
+    assert '<th scope="col">confidence</th>' in page
 
 
 def test_no_browse_row_states_a_bare_definitive_without_the_disease_it_is_for(
@@ -661,11 +682,15 @@ def test_no_browse_row_states_a_bare_definitive_without_the_disease_it_is_for(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
-    assert "<th>definitive for</th>" in page
+    assert '<th scope="col">definitive for</th>' in page
     rows = re.findall(r"<tr(?: data-[^>]*)?><td>(.*?)</tr>", page)
     assert len(rows) == 2
     expected = {TBX5: "Holt-Oram syndrome", GATA4: "structural congenital heart disease"}
@@ -724,7 +749,9 @@ def test_a_gene_definitive_for_two_in_scope_diseases_names_both_in_a_fixed_order
     )
     facts = {TBX5: _facts(TBX5, AtlasCuration.CURATED, groups=(LesionGroup.SEPTAL,))}
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts, emitter, symbols={TBX5: "TBX5"}, validity={TBX5: two})
+    build_gene_index_page(
+        facts, emitter, symbols={TBX5: "TBX5"}, validity={TBX5: two}, burden_counts={}
+    )
     build_gene_pages(
         facts,
         emitter,
@@ -765,7 +792,11 @@ def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
     build_gene_pages(
         facts_two,
@@ -835,7 +866,7 @@ def test_every_browse_row_links_to_a_page_that_was_written(
         burden={},
         cohorts={},
     )
-    build_gene_index_page(facts_two, emitter, symbols={}, validity=validity_two)
+    build_gene_index_page(facts_two, emitter, symbols={}, validity=validity_two, burden_counts={})
 
     page = _page(tmp_path, "index.html")
     for name in ("HGNC_11604.html", "HGNC_4173.html"):
@@ -868,7 +899,7 @@ def test_a_facet_option_value_is_escaped_like_every_other_published_string(
     facts[GATA4] = replace(facts[GATA4], validity_state=Hostile.X)  # type: ignore[arg-type]
     emitter = Emitter(root=tmp_path)
 
-    build_gene_index_page(facts, emitter, symbols={}, validity={})
+    build_gene_index_page(facts, emitter, symbols={}, validity={}, burden_counts={})
 
     page = _page(tmp_path, "index.html")
     assert "<script>alert(1)</script>" not in page
@@ -898,13 +929,23 @@ def test_every_facet_names_a_data_attribute_the_filter_script_reads(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
     assert 'name="q"' in page
     facets = re.findall(r'<select name="([^"]+)"[^>]*>(.*?)</select>', page)
-    assert [name for name, _ in facets] == ["lesion", "confidence", "validity", "curation"]
+    assert [name for name, _ in facets] == [
+        "lesion",
+        "confidence",
+        "validity",
+        "curation",
+        "burden",
+    ]
     for _, options in facets:
         assert options.startswith('<option value="">')
     for row in re.findall(r"<tr((?: data-[^>]*)?)>", page):
@@ -934,7 +975,11 @@ def test_every_browse_control_is_named_for_a_screen_reader(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
@@ -944,6 +989,7 @@ def test_every_browse_control_is_named_for_a_screen_reader(
         ("confidence", "Filter by mirrored confidence"),
         ("validity", "Filter by validity state"),
         ("curation", "Filter by atlas curation"),
+        ("burden", "Filter by whether burden evidence exists"),
     ]
 
 
@@ -1372,7 +1418,7 @@ def test_the_consequence_column_is_headed_for_the_column_it_renders(
     section = page[page.index("Rare variant burden") :]
 
     header = section[section.index("<thead>") : section.index("</thead>")]
-    assert "<th>consequence</th>" in header
+    assert '<th scope="col">consequence</th>' in header
     assert "variant class" not in header
 
     body = section[section.index("<tbody>") : section.index("</tbody>")]
@@ -1381,3 +1427,68 @@ def test_the_consequence_column_is_headed_for_the_column_it_renders(
     # and never in this table.
     assert "SNVs and indels" not in body
     assert page.count("SNVs and indels") == 1
+
+
+def test_the_browse_page_shows_how_much_burden_evidence_each_gene_has(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """`genes/index.json` published `burden_row_count`; the page showed nothing.
+
+    Measured on the built site 2026-08-05: `genes/index.html` contained the word
+    "burden" zero times -- no column, no filter, no count -- while every row of
+    the payload behind it carried the number. A reader scanning 23 rows that all
+    read `definitive` could not tell that four of them (ISL1, NR2F2, RBM10,
+    SMAD2) carry no loss-of-function burden evidence at all.
+
+    The em dash for a gene with none is deliberate and matches the `lesion
+    groups` column beside it: `0` reads as a measured zero, while an em dash
+    reads as "nothing here", which is what an absent row means.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={TBX5: 9},
+    )
+
+    page = _page(tmp_path, "index.html")
+
+    assert '<th scope="col">burden rows</th>' in page
+    rows = {
+        match.group(1): match.group(0)
+        for match in re.finditer(r'<tr data-search="(hgnc:\d+)[^"]*".*?</tr>', page)
+    }
+    assert "<td>9</td>" in rows["hgnc:11604"]
+    assert f"<td>{_EM_DASH}</td>" in rows["hgnc:4173"]
+
+    # The facet and the attribute must spell the same word; see
+    # `test_every_facet_names_a_data_attribute_the_filter_script_reads`.
+    assert 'data-burden="yes"' in rows["hgnc:11604"]
+    assert 'data-burden="no"' in rows["hgnc:4173"]
+
+
+def test_the_rail_counts_burden_rows_and_names_the_publications_it_counts(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Two rail defects, both raised by review 2026-08-05.
+
+    The rail read `publications | 0` on 22 of the 23 published genes while the
+    burden section one column away cited a linked, PubMed-referenced study. The
+    count was right -- `fact.publications` is what this atlas's *own* assertion
+    evidence cites -- and the label was wrong, so the label changed rather than
+    the number.
+
+    And the rail carried no burden count at all, though `burden_row_count`
+    exists and is published in every browse row.
+    """
+    page = _burden_page(
+        tmp_path, facts_uncurated, [_burden_row(), _burden_row(cohort_stratum="all")]
+    )
+
+    assert "<dt>curated publications</dt><dd>0</dd>" in page
+    assert "<dt>burden rows</dt><dd>2</dd>" in page
+    assert "<dt>publications</dt>" not in page

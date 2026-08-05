@@ -251,6 +251,7 @@ _BROWSE_HEADERS: Final = (
     "definitive for",
     "validity",
     "atlas curation",
+    "burden rows",
     "lesion groups",
 )
 
@@ -382,7 +383,9 @@ def _report_link(url: str | None) -> Cell:
     return _EM_DASH
 
 
-def _rail(gene: str, symbol: str, fact: GeneFacts, diseases: Sequence[str]) -> str:
+def _rail(
+    gene: str, symbol: str, fact: GeneFacts, diseases: Sequence[str], burden_rows: int
+) -> str:
     """The summary column, populated for every gene whether curated here or not.
 
     `chip-definitive` is the only chip class the stylesheet fills with the
@@ -418,7 +421,13 @@ def _rail(gene: str, symbol: str, fact: GeneFacts, diseases: Sequence[str]) -> s
         ("lesion groups", ", ".join(group.value for group in fact.lesion_groups) or _EM_DASH),
         ("assertions", str(fact.assertion_count)),
         ("functional records", str(fact.functional_count)),
-        ("publications", str(len(fact.publications))),
+        # "curated publications", not "publications". `fact.publications` is the
+        # PMIDs this atlas's own assertion evidence cites, and it reads 0 on 22
+        # of the 23 published genes -- which sat directly beside a burden section
+        # citing a linked, PubMed-referenced study. The count was right and the
+        # label was wrong. Raised by review 2026-08-05.
+        ("curated publications", str(len(fact.publications))),
+        ("burden rows", str(burden_rows)),
     ]
     bundle = gene_bundle_path(HgncId(gene))
     # `html.escape` here rather than a `render.py` primitive: these three are
@@ -938,7 +947,13 @@ def build_gene_pages(
         gene_validity = validity.get(gene, uncurated())
         body = (
             '<div class="layout">'
-            + _rail(gene, symbol, fact, _definitive_diseases(gene_validity))
+            + _rail(
+                gene,
+                symbol,
+                fact,
+                _definitive_diseases(gene_validity),
+                len(burden.get(gene, ())),
+            )
             + "<div>"
             + _SCOPE_RULE
             + _validity_section(gene_validity)
@@ -968,8 +983,16 @@ def build_gene_index_page(
     *,
     symbols: Mapping[str, str],
     validity: Mapping[str, GeneValidity],
+    burden_counts: Mapping[str, int],
 ) -> None:
     """Emit `genes/index.html`: every published gene, filterable in the browser.
+
+    `burden_counts` is `{gene: len(rows)}`, the same number `genes/index.json`
+    publishes as `burden_row_count`. The browse page did not mention burden at
+    all -- no column, no filter, no count -- while the payload behind it did, so
+    a reader scanning 23 identical `definitive` rows could not tell that four of
+    them (ISL1, NR2F2, RBM10, SMAD2) carry no loss-of-function evidence at all.
+    Raised by review 2026-08-05 and measured on the built site.
 
     Every row is rendered here, by the build. The inline script only *hides*
     rows, so the page is complete to `curl`, to a crawler, and to a reader with
@@ -1037,6 +1060,7 @@ def build_gene_index_page(
                     "; ".join(diseases) or _EM_DASH,
                     fact.validity_state.value,
                     fact.atlas_curation.value,
+                    str(burden_counts.get(gene, 0)) if burden_counts.get(gene) else _EM_DASH,
                     groups or _EM_DASH,
                 ),
                 attributes=(
@@ -1045,6 +1069,7 @@ def build_gene_index_page(
                     ("confidence", confidence),
                     ("validity", fact.validity_state.value),
                     ("curation", fact.atlas_curation.value),
+                    ("burden", "yes" if burden_counts.get(gene) else "no"),
                 ),
             )
         )
@@ -1103,6 +1128,15 @@ def build_gene_index_page(
                 "any curation",
                 "atlas curation",
                 {f.atlas_curation.value for f in facts.values()},
+            ),
+            # A boolean facet rather than a numeric one: `FILTER_SCRIPT` matches
+            # with `.split(' ').indexOf(want)`, which compares strings, so a
+            # range filter would need the script to change as well.
+            (
+                "burden",
+                "any burden",
+                "whether burden evidence exists",
+                {"yes" if burden_counts.get(gene) else "no" for gene in facts},
             ),
         )
     )
