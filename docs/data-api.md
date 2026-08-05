@@ -667,6 +667,13 @@ agreement, and a synonymous row is never support: it is the negative control.
 `families` is always present and ordered deterministically; it is `[]` for a
 gene no study reported.
 
+**The browse page heads this column "burden across studies", not
+`independent_datasets`.** The key names what is counted for a program; the
+header names what it is for a reader. Both avoid a verdict word on purpose —
+"replicated in" was the shorter candidate and was rejected, because for a gene
+showing 0 of 2 it reads as "not replicated", which is a claim the data do not
+make.
+
 ## `genes/<slug>.html`
 
 One page per published gene, rendering that gene's bundle for a reader. A

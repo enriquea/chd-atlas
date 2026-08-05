@@ -1878,20 +1878,22 @@ def test_the_matrix_names_an_untested_design_rather_than_leaving_a_blank(
     assert "<td></td>" not in matrix[matrix.index("<tbody>") :]
 
 
-def test_the_browse_strip_links_to_the_evidence_behind_it(
+def test_the_gene_and_its_symbol_both_link_to_the_page_and_the_strip_does_not(
     tmp_path: Path,
     facts_two: dict[str, GeneFacts],
     validity_two: dict[str, GeneValidity],
 ) -> None:
-    """The strip summarises the gene page's matrix, so it goes there.
+    """Where the affordance belongs, and where it does not.
 
-    A reader who reads the glyphs and wants the numbers behind them should not
-    have to travel back across the row to the gene column. The href is the same
-    one the gene cell carries, built from `gene_page_path` rather than written
-    out, so the two cannot point at different pages.
+    Both name cells link: `HGNC:11604` is the identifier a reader cites and
+    `TBX5` is the name they scan for, and linking only the id put the affordance
+    on the string nobody reaches for.
 
-    Scoped to the strip: the row already contains that URL in its first cell, so
-    a page-wide assertion passes with the strip linking nowhere.
+    **The strip is deliberately not a link.** It was one briefly, on the
+    reasoning that it summarises the gene page's matrix -- but the row already
+    links to that page twice, and a third link wrapped around a tally puts the
+    affordance on a number rather than on a name. Each dot keeps its `title`,
+    which is the detail the cell owes a reader.
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
@@ -1905,13 +1907,17 @@ def test_the_browse_strip_links_to_the_evidence_behind_it(
         },
     )
     page = _page(tmp_path, "index.html")
+    href = f'href="../{gene_page_path(TBX5)}"'
 
-    strip = page[page.index('<a class="strip strip-link"') :]
-    strip = strip[: strip.index("</a>")]
-    # Built from `gene_page_path` rather than written out, so the strip and the
-    # gene cell in the same row cannot point at different pages.
-    hrefs = {f'href="../{gene_page_path(gene)}"' for gene in (GATA4, TBX5)}
-    assert any(href in strip for href in hrefs)
+    # Twice: once from the id, once from the symbol.
+    assert page.count(href) == 2
+    assert f"<a {href}>{TBX5}</a>" in page
+    assert f"<a {href}>TBX5</a>" in page
+
+    # And the strip carries no anchor at all.
+    strip = page[page.index('<span class="strip">') :]
+    strip = strip[: strip.index("</span></span>")]
+    assert "<a " not in strip
     assert "strip-tally" in strip
 
 

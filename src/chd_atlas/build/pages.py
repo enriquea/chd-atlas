@@ -382,10 +382,17 @@ _BROWSE_HEADERS: Final = (
     "definitive for",
     # Immediately after the claim, because it is what qualifies it: a reader
     # whose eye stops at `definitive` should meet the evidence next rather than
-    # three columns later. Headed for what it counts -- D12 says the atlas
-    # authors no validity classification, and a verdict-shaped header beside a
-    # mirrored ClinGen call invites being read as a competing one.
-    "independent datasets",
+    # three columns later.
+    #
+    # Headed for what it *is*, not for what it might mean. "replicated in" was
+    # the shorter candidate and was rejected: for a gene showing 0 of 2 it reads
+    # as "not replicated", which is a verdict the data do not support -- KDM6A
+    # causes Kabuki syndrome and shows nothing in either dataset that tested it.
+    # D12 says the atlas authors no validity classification, and a
+    # verdict-shaped header beside a mirrored ClinGen `definitive` invites being
+    # read as a competing one. This names the evidence type and the axis and
+    # leaves the reading to the reader.
+    "burden across studies",
     "validity",
     "atlas curation",
     "burden rows",
@@ -1148,7 +1155,7 @@ def _provenance(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str
     )
 
 
-def _dot_strip(concordance: Mapping[str, Json], href: str = "") -> str:
+def _dot_strip(concordance: Mapping[str, Json]) -> str:
     """One glyph per cohort family, plus a tally naming both statistics.
 
     **Fill encodes the correction**, so a single glyph carries two facts a
@@ -1186,16 +1193,13 @@ def _dot_strip(concordance: Mapping[str, Json], href: str = "") -> str:
     corrected = concordance.get("corrected", 0)
     enriched = concordance.get("enriched", 0)
     tally = f"{enriched} of {tested} tested &middot; {corrected} corrected"
-    strip = f'{"".join(glyphs)}<span class="strip-tally">{tally}</span>'
-    # The strip is a summary of the gene page's evidence matrix, so it links
-    # there: a reader who reads the glyphs and wants the numbers behind them
-    # should not have to travel back to the gene column to get there.
-    if href:
-        return (
-            f'<a class="strip strip-link" href="{html.escape(href)}" '
-            f'title="See the evidence behind this">{strip}</a>'
-        )
-    return f'<span class="strip">{strip}</span>'
+    # Not a link. The row already links to the gene page twice -- from the id and
+    # from the symbol -- and a third link wrapped around a tally puts the
+    # affordance on a number rather than on a name. Each dot still carries a
+    # `title` naming its studies and state, which is the detail this cell owes a
+    # reader; the numbers behind it are one click away by the name they scanned
+    # for.
+    return f'<span class="strip">{"".join(glyphs)}<span class="strip-tally">{tally}</span></span>'
 
 
 def _evidence_matrix(
@@ -1582,17 +1586,16 @@ def build_gene_index_page(
             Row(
                 cells=(
                     Link(text=gene, href=f"../{gene_page_path(HgncId(gene))}"),
-                    symbol,
+                    # The symbol links too, and it is the one a reader reaches
+                    # for: `TBX5` is the name a geneticist recognises and
+                    # `HGNC:11604` is the identifier they cite. Linking only the
+                    # id put the affordance on the string nobody scans for.
+                    Link(text=symbol, href=f"../{gene_page_path(HgncId(gene))}"),
                     confidence or _EM_DASH,
                     "; ".join(diseases) or _EM_DASH,
                     fact.validity_state.value,
                     fact.atlas_curation.value,
-                    Markup(
-                        _dot_strip(
-                            (concordance or {}).get(gene, {}),
-                            href=f"../{gene_page_path(HgncId(gene))}",
-                        )
-                    ),
+                    Markup(_dot_strip((concordance or {}).get(gene, {}))),
                     str(burden_counts.get(gene, 0)) if burden_counts.get(gene) else _EM_DASH,
                     groups or _EM_DASH,
                 ),

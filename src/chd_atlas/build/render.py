@@ -127,15 +127,6 @@ STYLESHEET: Final = """
      never as a weak positive, because it is the state that would otherwise read
      as "this dataset looked and found nothing". */
   .strip { display: inline-flex; gap: 0.3rem; align-items: center; }
-  /* The strip summarises the gene page's evidence matrix, so it links there.
-     Underline only on hover: 23 underlined strips would read as 23 warnings,
-     and the glyphs are the content. The focus ring is not optional -- this is a
-     link, and a keyboard reader must be able to see where they are. */
-  a.strip-link { text-decoration: none; color: inherit; border-radius: 4px; }
-  a.strip-link:hover .strip-tally { text-decoration: underline; }
-  a.strip-link:focus-visible {
-    outline: 2px solid var(--evidence); outline-offset: 3px;
-  }
   .dot {
     width: 15px; height: 15px; border-radius: 50%; box-sizing: border-box;
     border: 1.5px solid var(--evidence); display: inline-grid; place-items: center;
