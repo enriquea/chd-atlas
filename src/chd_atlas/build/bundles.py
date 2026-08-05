@@ -35,6 +35,10 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any, cast
 
 from chd_atlas.build.burden import BurdenRow, burden_payload
+from chd_atlas.build.concordance import (
+    cohort_families,
+    gene_concordance,
+)
 from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
@@ -267,6 +271,12 @@ def build_genes(
     # Redundant today, and kept anyway: this array is what consumers download,
     # so its order is the published contract and should not rest on a guarantee
     # another module is free to withdraw.
+    # Derived once over the *whole* burden corpus, not per gene. A family is a
+    # property of which studies share collections, so deriving it per gene would
+    # give two genes different family counts and make a hole stop looking like a
+    # hole -- and it would recompute an O(studies^2) overlap scan 23 times.
+    families = cohort_families(row for rows in burden.values() for row in rows)
+
     for gene in sorted(facts):
         fact = facts[gene]
         # `HgncId` rather than `str` at this boundary: `gene_facts` keys on a
@@ -319,6 +329,13 @@ def build_genes(
                 # `variant_count` is: a browse row promising burden evidence a
                 # page does not show is the browse layer lying about the page.
                 "burden_row_count": len(burden.get(gene, ())),
+                # Computed once and published on both the browse row and the
+                # bundle below, so the two layers cannot disagree -- the rule
+                # `burden_row_count` follows. It reaches JSON at all because the
+                # 2026-08-05 review found `curation/cohorts.yaml` rendering only
+                # in HTML and reaching zero published bytes; a fact that lives
+                # only on a page is a fact no consumer has.
+                "independent_datasets": gene_concordance(burden.get(gene, ()), families),
                 "bundle": bundle,
             }
         )
@@ -348,6 +365,10 @@ def build_genes(
                 # `omics` above. An absent key would make "no study reported
                 # this gene" indistinguishable from "the build dropped it".
                 "burden": burden_payload(burden.get(gene, ())),
+                # The same object the browse row carries, so a consumer that
+                # filtered on the index and then fetched the bundle reads one
+                # answer rather than two.
+                "independent_datasets": gene_concordance(burden.get(gene, ()), families),
             },
         )
 

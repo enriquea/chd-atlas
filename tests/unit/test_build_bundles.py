@@ -180,6 +180,17 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
             "functional_count": 0,
             "variant_count": 0,
             "burden_row_count": 0,
+            # Every key present even where no study reported the gene, so a
+            # consumer reads one shape rather than guarding for a missing one.
+            # `families` is empty rather than absent for the same reason
+            # `burden` is an empty array: "no study reported this" must not be
+            # indistinguishable from "the build dropped it".
+            "independent_datasets": {
+                "tested": 0,
+                "enriched": 0,
+                "corrected": 0,
+                "families": [],
+            },
             "bundle": "genes/HGNC_11604.json",
         }
     ]
@@ -265,6 +276,7 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         "atlas_curation",
         "has_conflicting_evidence",
         "has_source_discordance",
+        "independent_datasets",
         "validity",
         "lesion_groups",
         "publications",

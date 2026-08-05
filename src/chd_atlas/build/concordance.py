@@ -23,6 +23,7 @@ from enum import StrEnum
 from typing import Final
 
 from chd_atlas.build.burden import BurdenRow, shared_cohorts
+from chd_atlas.build.emit import Json
 
 # The threshold both states are read against. 0.05 is the *studies'* convention
 # and not the atlas's: every p-value and corrected p-value here was published
@@ -177,7 +178,7 @@ def family_state(rows: Iterable[BurdenRow]) -> FamilyState:
 
 def gene_concordance(
     rows: Iterable[BurdenRow], families: tuple[frozenset[str], ...]
-) -> dict[str, object]:
+) -> dict[str, Json]:
     """One gene's `independent_datasets` object, JSON-ready.
 
     `families` is passed in rather than derived here because it is a property of
@@ -198,19 +199,25 @@ def gene_concordance(
     for row in rows:
         by_study.setdefault(row.study, []).append(row)
 
-    entries: list[dict[str, object]] = []
+    # The states are kept as enum members alongside the JSON entries rather than
+    # read back out of them, so the tally is counted from the same values the
+    # entries were built from and the two cannot disagree about one gene.
+    states: list[FamilyState] = []
+    entries: list[Json] = []
     for family in families:
         member_rows = [row for study in sorted(family) for row in by_study.get(study, ())]
-        entries.append({"studies": sorted(family), "state": family_state(member_rows).value})
+        state = family_state(member_rows)
+        states.append(state)
+        entries.append({"studies": sorted(family), "state": state.value})
 
-    states = [entry["state"] for entry in entries]
     return {
         # The denominator, and the reason the tally cannot read as a verdict.
-        "tested": sum(1 for state in states if state != FamilyState.NOT_TESTED),
+        # A consumer must use this and never `len(families)`.
+        "tested": sum(1 for state in states if state is not FamilyState.NOT_TESTED),
         "enriched": sum(
             1 for state in states if state in {FamilyState.CORRECTED, FamilyState.NOMINAL}
         ),
-        "corrected": sum(1 for state in states if state == FamilyState.CORRECTED),
+        "corrected": sum(1 for state in states if state is FamilyState.CORRECTED),
         "families": entries,
     }
 

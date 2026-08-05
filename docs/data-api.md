@@ -52,7 +52,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.5",
+  "schema_version": "2.6",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -165,7 +165,17 @@ atlas behind it at all.
       "symbol": "TBX5",
       "validity_state": "expert_curated",
       "variant_count": 0,
-      "burden_row_count": 8
+      "burden_row_count": 8,
+      "independent_datasets": {
+        "tested": 2,
+        "enriched": 2,
+        "corrected": 1,
+        "families": [
+          { "studies": ["PMID:34324492"], "state": "not_tested" },
+          { "studies": ["PMID:40127276"], "state": "corrected" },
+          { "studies": ["PMID:42230622"], "state": "nominal" }
+        ]
+      }
     }
   ]
 }
