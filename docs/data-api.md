@@ -98,7 +98,12 @@ wrong by the next one.
   *display* obligation heavier than the parsing one, described with the
   [`burden` array](#the-bundles-burden-array-per-study-never-pooled) below: a raw
   and a corrected p can point opposite ways, and two rows counting different
-  units are not comparable at all.
+  units are not comparable at all. `2.6` added `independent_datasets`, also
+  additive and always present, and its display obligation is the heaviest of the
+  three: it is a **count of datasets, not a validity call**, and rendering it as
+  a verdict beside a mirrored ClinGen `definitive` tells a clinician something
+  the data do not say. See
+  [`independent_datasets`](#independent_datasets-a-count-of-datasets-never-a-verdict).
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -602,6 +607,65 @@ paper's abstract reports — for `PMID:42230622` they are 3,876 cases (1,471
 syndromic + 2,405 non-syndromic) against 45,082 controls, while the abstract
 gives 4,747 and 52,881. The paper does not reconcile the two. Use the row's own
 denominators: they are the ones its statistic was computed from.
+
+### `independent_datasets`: a count of datasets, never a verdict
+
+On every gene bundle and every `genes/index.json` row. It answers one question —
+**how many independent datasets have looked at this gene, and what did they
+find** — and it answers it by counting, never by combining. No pooled statistic
+is computed here; see the previous section for why.
+
+```json
+"independent_datasets": {
+  "tested": 2,
+  "enriched": 2,
+  "corrected": 1,
+  "families": [
+    { "studies": ["PMID:34324492"], "state": "not_tested" },
+    { "studies": ["PMID:40127276"], "state": "corrected" },
+    { "studies": ["PMID:42230622"], "state": "nominal" }
+  ]
+}
+```
+
+**A family is not a study.** It is a set of studies that share at least one
+sample collection, walked transitively — so two papers drawing on the same
+cohort describe the same people and count **once**. Today the three curated
+studies draw on disjoint collections, so there are three singleton families; the
+grouping exists so that the day a fourth study reuses DDD or PCGC, nobody is
+told a reused cohort is independent evidence.
+
+| `state` | meaning |
+| --- | --- |
+| `corrected` | enriched, and survives that study's own published correction |
+| `nominal` | enriched, but nominal only — or the study published no correction at all |
+| `no_enrichment` | that dataset tested the gene and detected nothing |
+| `not_tested` | that dataset did not test this gene |
+
+A family counts as enriched only if a non-synonymous row has `pvalue < 0.05`
+**and points upward**. Direction is read from what the study published — the
+`unbounded_above` flag, then `effect` against 1, then the published rates where
+a study reports no effect at all. A significantly *depleted* row is not
+agreement, and a synonymous row is never support: it is the negative control.
+
+**Three obligations, and the first one matters most.**
+
+1. **This is not a validity call, and it must never be rendered as one.**
+   `headline_confidence` beside it is a mirrored ClinGen classification. A
+   consumer that renders "0 of 2" as a verdict next to a green `definitive` chip
+   tells a clinician the data contradict the classification. They do not:
+   **KDM6A causes Kabuki syndrome and shows nothing in either dataset that
+   tested it**, because burden tests at these cohort sizes routinely detect
+   nothing for genes with overwhelming family and functional evidence. If you
+   display this, display alongside it that no enrichment here is not evidence
+   against a gene.
+2. **Read `tested` as the denominator, never `len(families)`.** A gene absent
+   from a study's panel was not examined and found wanting; it was not examined.
+3. **`not_tested` must render distinguishably from `no_enrichment`.** Collapsing
+   them is what turns "nobody looked" into "somebody looked and found nothing".
+
+`families` is always present and ordered deterministically; it is `[]` for a
+gene no study reported.
 
 ## `genes/<slug>.html`
 

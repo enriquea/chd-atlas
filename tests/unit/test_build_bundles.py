@@ -1364,3 +1364,35 @@ def test_the_bundle_carries_a_genes_burden_rows_and_the_browse_row_counts_them(
     # missing key: "no study reported this gene" must not read as a dropped join.
     assert rows_by_gene[GATA4]["burden_row_count"] == 0
     assert _read(tmp_path, "genes/HGNC_4173.json")["burden"] == []
+
+
+def test_a_published_gene_with_no_concordance_derived_fails_loudly(tmp_path: Path) -> None:
+    """`build_genes` refuses rather than defaulting, and the refusal names the gap.
+
+    `concordance` is a required argument precisely so a caller cannot forget it.
+    But a caller can still build it over the wrong population -- the published
+    set changed, the mapping did not -- and the failure a silent default would
+    produce is the worst kind this project has: a bundle publishing
+    `"tested": 0`, which is indistinguishable from the true statement that no
+    study reported that gene.
+
+    So the guard `raise`s, and it says which gene and why. `raise` rather than
+    `assert`: `-O` strips `assert`.
+
+    A mutation matrix on 2026-08-05 found this guard unguarded -- disabling it
+    survived the whole suite -- which is the only reason this test exists.
+    """
+    emitter = Emitter(root=tmp_path)
+
+    with pytest.raises(KeyError, match="no concordance derived for published gene"):
+        build_genes(
+            _corpus(),
+            emitter,
+            symbols=SYMBOLS,
+            omics={},
+            variants={},
+            validity={},
+            published={TBX5},
+            burden={},
+            concordance={},
+        )
