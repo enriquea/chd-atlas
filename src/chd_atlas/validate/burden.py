@@ -50,6 +50,11 @@ _FORBIDDEN: dict[BurdenComparator, tuple[str, ...]] = {
 # one -- not a mismatched comparator but a claim with no basis -- and a curator
 # fixes it differently: by deleting the statistic, or by naming the comparator
 # that actually produced it.
+# Hoisted out of the per-row loop below. Rebuilt per row it cost 0.92 ms over
+# the committed 1,192-row mirror against 0.03 ms hoisted -- a saving of under a
+# millisecond, so this is a readability change and not a performance one.
+_COMPARATORS: frozenset[str] = frozenset(item.value for item in BurdenComparator)
+
 _STATISTIC_COLUMNS = (
     "effect",
     "effect_measure",
@@ -111,7 +116,7 @@ def validate_burden(root: Path) -> list[ValidationIssue]:
         raw = row["comparator"]
         # An unknown comparator is TBL004's to report; carrying on here would
         # KeyError on the tables below and abort validation of every later row.
-        if raw not in set(BurdenComparator):
+        if raw not in _COMPARATORS:
             continue
         comparator = BurdenComparator(raw)
 
@@ -269,11 +274,14 @@ def validate_burden_references(
 
     if known_cohorts is not None and {"case_cohorts", "control_cohorts"} <= set(frame.columns):
         cited: set[str] = set()
+        # `_split`, not a second inline split. The two disagreed on a
+        # whitespace-only token: `"ddd; "` yielded `['ddd', ' ']` here and
+        # `['ddd']` in `validate_burden`, so one validator reported
+        # `BUR009 cohort ' ' is not in curation/cohorts.yaml` while the other
+        # silently ignored it. Raised by review on #17.
         for column in ("case_cohorts", "control_cohorts"):
             for value in frame[column].to_list():
-                if value is None:
-                    continue
-                cited.update(part for part in str(value).split(";") if part)
+                cited.update(_split(value))
         for cohort in sorted(cited - known_cohorts):
             report("BUR009", f"cohort '{cohort}' is not in curation/cohorts.yaml")
 

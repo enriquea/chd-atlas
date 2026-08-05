@@ -140,14 +140,19 @@ _EVIDENCE_HEADERS: Final = ("class", "strength", "summary", "publication")
 #   *collections* (`cnchd`, `ddd`, `ukbb`), which is also what
 #   `curation/cohorts.yaml` is named for. `case group` is the stratum.
 # * `variants` held `loss-of-function / synonymous`; in a row whose other four
-#   cells are numbers, that header invites reading it as a count.
+#   cells are numbers, that header invites reading it as a count. It became
+#   "variant class" on 2026-08-05 and that was worse: this column renders
+#   `consequence_class`, while the method line above the table renders the real
+#   `variant_class` ("SNVs and indels"). One phrase meant two things on one page
+#   and was wrong in the more prominent place. Raised by review on #17.
+#   `test_the_variant_column_is_headed_for_the_column_it_renders` pins it.
 # * `cases` and `controls` hold "carriers / total", and nothing said so. The
 #   denominator must travel with the numerator -- six carriers is a different
 #   claim in 3,876 people than in 45,082 -- and the header is where a reader
 #   looks for what a cell means. `_BURDEN_PREAMBLE` states the rule as well.
 _BURDEN_HEADERS: Final = (
     "case group",
-    "variant class",
+    "consequence",
     "cases (carriers / n)",
     "controls (carriers / n)",
     "effect",

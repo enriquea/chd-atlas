@@ -436,3 +436,29 @@ def test_an_unbounded_row_is_the_one_interval_allowed_to_be_half_present(
     assert validate_burden(_write(tmp_path, _ROW)) == []
     assert _ROW["effect_bound"] == "unbounded_above"
     assert _ROW["ci_high"] == ""
+
+
+def test_both_validators_split_a_cohort_cell_the_same_way(tmp_path: Path) -> None:
+    """One column, two parsers, and they disagreed on a whitespace token.
+
+    Raised by review on #17. `validate_burden_references` split with
+    `[p for p in value.split(";") if p]` while `validate_burden` used `_split`,
+    which also strips. So `"cnchd; "` yielded `['cnchd', ' ']` in one and
+    `['cnchd']` in the other, and a curator got
+
+        BUR009 cohort ' ' is not in curation/cohorts.yaml
+
+    from the reference check while BUR016 saw nothing there at all -- an error
+    naming a cohort that does not exist, pointing at a registry that could never
+    contain it.
+
+    A guard on a bypassed gate: `COHORT_LIST_PATTERN` admits no space, so
+    TBL005 refuses this cell first. It is asserted anyway because the defect is
+    two parsers of one column drifting apart, which no gate prevents.
+    """
+    issues = validate_burden_references(
+        _write(tmp_path, {**_ROW, "case_cohorts": "cnchd; "}),
+        **_KNOWN,  # type: ignore[arg-type]
+    )
+
+    assert [issue.message for issue in issues] == []

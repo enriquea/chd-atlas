@@ -1348,3 +1348,36 @@ def test_the_pooling_warning_is_absent_when_there_is_only_one_study(
         [_burden_row(), _burden_row(study="PMID:8988165", case_cohorts=("ddd", "pcgc"))],
     )
     assert "no pooled statistic across studies" in two
+
+
+def test_the_consequence_column_is_headed_for_the_column_it_renders(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The header and the cell must name the same field.
+
+    Raised by review on #17. `_BURDEN_HEADERS[1]` read "variant class" while the
+    cell rendered `consequence_class`, and the method line above the table
+    rendered the real `variant_class` -- so one phrase meant two things on one
+    page and was wrong in the more prominent of them. The rename that introduced
+    it was itself a fix for an ambiguous header.
+
+    Asserted by pairing the header with a cell whose value could only have come
+    from one field: `loss-of-function` is a `ConsequenceClass` member and
+    `SNVs and indels` is a `VariantClass` label, so a header claiming the latter
+    over a cell holding the former fails here.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    # Scoped to the burden section: `page.index("<thead>")` finds the mirrored
+    # validity table, which is rendered first. Same trap as the provenance test.
+    section = page[page.index("Rare variant burden") :]
+
+    header = section[section.index("<thead>") : section.index("</thead>")]
+    assert "<th>consequence</th>" in header
+    assert "variant class" not in header
+
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+    assert "loss-of-function" in body
+    # The real `variant_class` is on the page exactly once, in the method line,
+    # and never in this table.
+    assert "SNVs and indels" not in body
+    assert page.count("SNVs and indels") == 1
