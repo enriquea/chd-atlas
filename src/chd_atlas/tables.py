@@ -35,6 +35,7 @@ from chd_atlas.vocab import (
     BurdenComparator,
     CohortStratum,
     ConsequenceClass,
+    CountUnit,
     EffectBound,
     EffectMeasure,
     LesionGroup,
@@ -594,6 +595,7 @@ _COMPARATORS = frozenset(item.value for item in BurdenComparator)
 _EFFECT_MEASURES = frozenset(item.value for item in EffectMeasure)
 _EFFECT_BOUNDS = frozenset(item.value for item in EffectBound)
 _STATISTICAL_TESTS = frozenset(item.value for item in StatisticalTest)
+_COUNT_UNITS = frozenset(item.value for item in CountUnit)
 _PVALUE_ADJUSTMENTS = frozenset(item.value for item in PvalueAdjustment)
 _LESION_GROUPS = frozenset(item.value for item in LesionGroup)
 
@@ -626,7 +628,12 @@ BURDEN = TableSchema(
         # fixation" are different claims and only one of them was made.
         Column("maf_max", pl.Float64, nullable=True, minimum=0, maximum=1),
         # The observation. Both mandatory: a burden row without a denominator is
-        # a count nobody can interpret.
+        # a count nobody can interpret. `count_unit` is mandatory for the same
+        # reason one step further in -- a numerator and a denominator nobody can
+        # interpret *the units of* is no better. It qualifies all four count
+        # columns below, cases and controls alike, because a study that counts
+        # case alleles counts control alleles too.
+        Column("count_unit", pl.String, allowed=_COUNT_UNITS),
         Column("n_case_carriers", pl.Int64, minimum=0),
         Column("n_cases", pl.Int64, minimum=1),
         # The comparator, and the fields each kind requires. `validate_burden`

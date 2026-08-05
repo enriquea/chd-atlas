@@ -32,6 +32,7 @@ ORDER: tuple[str, ...] = (
     "consequence_class",
     "origin",
     "maf_max",
+    "count_unit",
     "n_case_carriers",
     "n_cases",
     "comparator",

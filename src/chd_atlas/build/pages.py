@@ -153,12 +153,26 @@ _EVIDENCE_HEADERS: Final = ("class", "strength", "summary", "publication")
 _BURDEN_HEADERS: Final = (
     "case group",
     "consequence",
-    "cases (carriers / n)",
-    "controls (carriers / n)",
+    # Not "cases (carriers / n)". The unit is a property of the *row*, not of
+    # the column -- one study's table can hold a de novo arm counting mutations
+    # and a case-control arm counting alleles -- so it is rendered per cell by
+    # `_count` and the header names only what the column is.
+    "cases",
+    "controls",
     "effect",
     "p",
     "corrected p",
 )
+
+# The word for each count unit, as (numerator, denominator suffix). The
+# denominator of a de novo row is *trios*, not alleles or people, because a trio
+# is what it takes to call one -- so this pairs both halves rather than labelling
+# the numerator and leaving the reader to assume the other matches.
+_COUNT_UNIT_LABEL: Final[dict[str, tuple[str, str]]] = {
+    "individuals": ("carriers", ""),
+    "alleles": ("alleles", ""),
+    "de_novo_mutations": ("de novo", " trios"),
+}
 
 # How a published correction is named in the cell, so a reader is never left to
 # guess what "0.99" was corrected against.
@@ -236,8 +250,12 @@ _POOLING_NOTICE: Final = (
 
 # What the numbers do not say. Every clause was measured; see `_burden_section`.
 _BURDEN_PREAMBLE: Final = (
-    "<p><code>cases</code> and <code>controls</code> each show <em>carriers / total "
-    "sequenced</em>. A consequence class missing from a study's table is <strong>not a "
+    "<p><code>cases</code> and <code>controls</code> each show <em>observed / total</em>, "
+    "and <strong>every cell names what it counted</strong> &mdash; carriers, alleles, or "
+    "de novo mutations. The three are not interchangeable: a study counting alleles "
+    "counts a person with two qualifying variants twice, and its denominator is roughly "
+    "twice the number of people sequenced. "
+    "A consequence class missing from a study's table is <strong>not a "
     "null result</strong>: no variant of that class was seen in either group, so there "
     "was nothing to compare and the study reported no row for it.</p>"
     "<p>The <strong>synonymous</strong> row is the study's own negative control &mdash; "
@@ -564,17 +582,27 @@ def _study_label(pmid: str, publications: Mapping[str, Publication]) -> str:
     return f"{author} et al. {publication.year}"
 
 
-def _count(carriers: int | None, total: int | None) -> str:
-    """ "6 / 3,876" -- the numerator with the denominator it was measured against.
+def _count(carriers: int | None, total: int | None, unit: str) -> str:
+    """ "6 carriers / 3,876" -- a numerator, its denominator, and their unit.
 
     Never the numerator alone. Six carriers is a different claim in 3,876 cases
     than in 45,082, and the two columns of this table hold exactly that contrast.
     The separator is a literal `,` via `:,`, which is locale-independent, so two
     builds on two machines render the same bytes.
+
+    **And never without the unit.** This is `_effect`'s rule applied to the
+    count columns, for the same reason and after the same near miss: until
+    2026-08-05 the header read "cases (carriers / n)" and every cell was assumed
+    to be people. PMID:40127276's case-control arm counts *alleles* -- measured,
+    not assumed, in `CountUnit` -- so that header would have claimed 21,768
+    people sequenced where 11,555 were, and called an allele count a carrier
+    count, on a page whose checksum verified. An unknown unit therefore renders
+    its raw token rather than nothing: there is no branch here that omits it.
     """
     if carriers is None or total is None:
         return _EM_DASH
-    return f"{carriers:,} / {total:,}"
+    numerator, denominator = _COUNT_UNIT_LABEL.get(unit, (unit, ""))
+    return f"{carriers:,} {numerator} / {total:,}{denominator}"
 
 
 def _effect(row: BurdenRow) -> str:
@@ -713,7 +741,7 @@ def _burden_section(
                     cells=(
                         _STRATUM_LABEL.get(row.cohort_stratum, row.cohort_stratum),
                         _CONSEQUENCE_LABEL.get(row.consequence_class, row.consequence_class),
-                        _count(row.n_case_carriers, row.n_cases),
+                        _count(row.n_case_carriers, row.n_cases, row.count_unit),
                         _controls(row),
                         _effect(row),
                         f"{row.pvalue:.3g}" if row.pvalue is not None else _EM_DASH,
@@ -770,7 +798,7 @@ def _controls(row: BurdenRow) -> str:
     """
     if row.comparator == "mutation_model" and row.expected_count is not None:
         return f"{_fmt(row.expected_count)} expected"
-    return _count(row.n_control_carriers, row.n_controls)
+    return _count(row.n_control_carriers, row.n_controls, row.count_unit)
 
 
 def _disclosure(study: str, publications: Mapping[str, Publication]) -> str:

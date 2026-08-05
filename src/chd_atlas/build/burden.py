@@ -71,6 +71,7 @@ class BurdenRow:
     consequence_class: str
     origin: str
     maf_max: float | None
+    count_unit: str
     n_case_carriers: int
     n_cases: int
     comparator: str
@@ -162,6 +163,7 @@ def load_burden(root: Path) -> dict[str, list[BurdenRow]]:
             consequence_class=str(record["consequence_class"]),
             origin=str(record["origin"]),
             maf_max=record["maf_max"],
+            count_unit=str(record["count_unit"]),
             n_case_carriers=int(record["n_case_carriers"]),
             n_cases=int(record["n_cases"]),
             comparator=str(record["comparator"]),
@@ -243,6 +245,11 @@ def burden_payload(rows: Iterable[BurdenRow]) -> list[Json]:
             "consequence_class": row.consequence_class,
             "origin": row.origin,
             "maf_max": row.maf_max,
+            # Qualifies all four count keys below. A consumer reading
+            # `n_case_carriers` off two studies and comparing them is doing
+            # arithmetic on alleles and people unless this key is there to stop
+            # it -- the same defect the gene page carried until 2026-08-05.
+            "count_unit": row.count_unit,
             "n_case_carriers": row.n_case_carriers,
             "n_cases": row.n_cases,
             "comparator": row.comparator,

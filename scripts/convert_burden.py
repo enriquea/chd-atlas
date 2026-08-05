@@ -110,6 +110,7 @@ _ORDER: Final[tuple[str, ...]] = (
     "consequence_class",
     "origin",
     "maf_max",
+    "count_unit",
     "n_case_carriers",
     "n_cases",
     "comparator",
@@ -282,6 +283,11 @@ def convert(source: Path, symbols: dict[str, str]) -> tuple[list[dict[str, str]]
                     # they were inherited; it is not a de novo test.
                     "origin": "any",
                     "maf_max": _number(record["maf"]),
+                    # The supplement's `n_het_*` columns count individuals
+                    # carrying at least one qualifying variant, which is why
+                    # this study's denominators are its sample sizes rather than
+                    # twice them.
+                    "count_unit": "individuals",
                     "n_case_carriers": record[carriers],
                     "n_cases": record[denominator],
                     "comparator": "control_cohort",

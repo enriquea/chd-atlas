@@ -110,7 +110,21 @@ from chd_atlas.corpus import Corpus
 # 0.991 family-wise corrected -- so a consumer rendering `pvalue` alone will
 # show a result as significant that the study reported as null. Where
 # `pvalue_adjusted` is present it is the number to read.
-SCHEMA_VERSION: Final = "2.4"
+# 2.5 adds `count_unit` to every burden object. Additive, so MINOR: the key is
+# always present, and every row published before it carried `individuals`.
+#
+# It is the third display warning in a row, and the most load-bearing of them,
+# because unlike the two above it changes what the *existing* keys mean.
+# `n_case_carriers`, `n_cases`, `n_control_carriers` and `n_controls` are not
+# comparable across rows with different `count_unit`: `individuals` counts
+# people, `alleles` counts alleles -- so a person with two qualifying variants
+# counts twice and the denominator is roughly twice the sample size -- and
+# `de_novo_mutations` counts mutations against a denominator of *trios*. A
+# consumer that divides `n_case_carriers` by `n_cases` across studies without
+# reading this key is comparing three different quantities. That is not
+# hypothetical: PMID:42230622 and PMID:40127276 both publish case-control rows
+# for the same genes, in different units.
+SCHEMA_VERSION: Final = "2.5"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

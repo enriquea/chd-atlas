@@ -363,6 +363,56 @@ class VariantOrigin(StrEnum):
     DE_NOVO = "de_novo"
     INHERITED = "inherited"
     ANY = "any"
+    # PMID:40127276's "transmitted/unphased variants" (TUVs): its case-control
+    # arm removes de novo mutations, then pools variants whose transmission is
+    # *known* (in its 3,887 trios) with variants whose transmission is *unknown*
+    # (in its 7,668 singletons). Neither `INHERITED` nor `ANY` is true of that
+    # set -- `ANY` because de novo variants were deliberately excluded, and
+    # `INHERITED` because most of the set was never phased at all. Measured in
+    # its Dataset S4: of 36,054 variant rows, 27,429 are `Unphased`, 8,221
+    # `Trans` and 404 `DNM`, so the unphased majority is the whole difficulty.
+    TRANSMITTED_OR_UNPHASED = "transmitted_or_unphased"
+
+
+class CountUnit(StrEnum):
+    """What a burden row's numerator and denominator actually count.
+
+    **A count without its unit is the same defect as an effect without its
+    measure** -- see `EffectMeasure`. "12 / 21,768" and "6 / 7,107" are both
+    plausible burden cells, and read side by side they claim to be the same kind
+    of measurement. They are not, and no other column in this schema
+    distinguishes them.
+
+    Each member fixes *both* halves of the pair, which is why one column
+    suffices where the numerator and denominator are counted in different things:
+
+    - `INDIVIDUALS`: people carrying at least one qualifying variant, out of
+      people sequenced. Someone with two qualifying variants counts once.
+    - `ALLELES`: qualifying alleles observed, out of alleles called. Someone with
+      two qualifying variants counts twice, and the denominator is roughly twice
+      the sample size and varies gene by gene with coverage.
+    - `DE_NOVO_MUTATIONS`: de novo mutations observed, out of *trios*. The
+      denominator is families, not alleles, because a trio is what it takes to
+      call one.
+
+    The distinction was found, not assumed. Measured 2026-08-05 against
+    PMID:40127276's Dataset S6 and Dataset S4: its D-Mis case-control `Obs`
+    equals the number of qualifying variant rows in 245 of 248 genes but the
+    number of distinct probands in only 235 -- CACNA1A 80 variants across 79
+    probands, TSC1 36 across 34, LRP1 135 across 132 -- and `Obs` follows the
+    variant every time. Publishing that column under this atlas's previous
+    header, "cases (carriers / n)", would have asserted 21,768 people sequenced
+    where 11,555 were, and called alleles carriers.
+
+    Nothing here is inferable from `comparator`. A case-control study may count
+    people (PMID:42230622) or alleles (PMID:40127276), and both are ordinary
+    practice, so `validate_burden` asserts only the one implication that cannot
+    fail: counting de novo mutations requires a de novo variant set.
+    """
+
+    INDIVIDUALS = "individuals"
+    ALLELES = "alleles"
+    DE_NOVO_MUTATIONS = "de_novo_mutations"
 
 
 class StatisticalTest(StrEnum):

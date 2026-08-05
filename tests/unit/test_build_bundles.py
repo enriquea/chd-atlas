@@ -1242,6 +1242,7 @@ def test_the_bundle_carries_a_genes_burden_rows_and_the_browse_row_counts_them(
             consequence_class="lof",
             origin="any",
             maf_max=0.001,
+            count_unit="individuals",
             n_case_carriers=5,
             n_cases=1471,
             comparator="control_cohort",
