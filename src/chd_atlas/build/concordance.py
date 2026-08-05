@@ -232,10 +232,15 @@ def evidence_axes(rows: Iterable[BurdenRow]) -> tuple[tuple[str, str], ...]:
     `FamilyState` has four members for.
 
     Measured 2026-08-05 over the published corpus: three axes -- SNV/indel
-    case-control, SNV/indel de novo, CNV deletion case-control. The fourth
-    quadrant, CNV de novo, is empty because nobody has published one, and it
-    should stay visibly empty: the shape of the literature is itself information,
-    and it is the argument for which study to curate next.
+    case-control, SNV/indel de novo, CNV deletion case-control.
+
+    **What this does NOT do, and an earlier version of this docstring claimed it
+    did:** it does not render a column for a design *no* study ran. CNV de novo
+    is such a design, and it produces no column at all rather than an empty one,
+    because the axes come from the rows that exist. So the matrix shows holes at
+    the level of "this family did not run a design *another* family ran", and is
+    silent about a design nobody ran. That is a weaker guarantee than the
+    original sentence promised, and it is the true one.
 
     Sorted: derived from a set, and it orders the columns of published HTML.
     """

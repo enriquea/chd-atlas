@@ -131,8 +131,9 @@ from chd_atlas.corpus import Corpus
 # hypothetical: PMID:42230622 and PMID:40127276 both publish case-control rows
 # for the same genes, in different units.
 # 2.6 adds `independent_datasets` to every gene bundle and every
-# `genes/index.json` row. Additive, so MINOR: the key is always present, with
-# `families: []` for a gene no study reported.
+# `genes/index.json` row. Additive, so MINOR: the key is always present, and
+# `families` always carries one entry per cohort family in the corpus -- a gene
+# no study reported gets `not_tested` entries, never a shorter list.
 #
 # **It is a count of datasets, not a validity call, and the display obligation
 # is that it must never be rendered as one.** `headline_confidence` is a

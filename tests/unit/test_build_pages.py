@@ -1477,6 +1477,12 @@ def test_the_pooling_notice_is_the_matrix_caption_and_no_longer_conditional(
     assert "no pooled statistic across studies" in one
     # Immediately after the matrix, not four paragraphs above it.
     assert one.index("</table>") < one.index("no pooled statistic across studies")
+    # **And it must be true of a one-study page.** It used to assert "these
+    # cohorts overlap" in the present tense, which on this page sent a reader
+    # hunting for a second study that is not there -- the defect the original
+    # conditional existed to fix, reintroduced by relocating it. It is a
+    # statement of policy now.
+    assert "these cohorts overlap" not in one
 
     two = _burden_page(
         tmp_path,
@@ -1817,7 +1823,7 @@ def test_every_particular_caveat_survives_outside_the_fold(
     # The atlas's claim about itself.
     assert "computes none of them" in unfolded
     # The relocated pooling caption -- it qualifies the matrix directly above it.
-    assert "count the same people twice" in unfolded
+    assert "count those children twice" in unfolded
     # A row's own method note: this is where the TAA contamination, which is not
     # congenital heart disease, reaches a reader at all.
     assert "thoracic aortic aneurysm" in unfolded
@@ -2013,3 +2019,109 @@ def test_the_browse_headers_and_cells_line_up(
     assert by_header["validity"] == "expert_curated"
     assert by_header["atlas curation"] in {"curated", "not_yet_curated"}
     assert by_header["burden rows"] == "4"
+
+
+def test_the_gene_page_matrix_carries_its_own_key_and_caption(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """**The browse page had these and the gene page did not.**
+
+    That is the wrong way round. A reader arriving from a search lands on the
+    gene page, and KDM6A's matrix there is entirely hollow -- four `not tested`
+    and `no enrichment` cells -- beside a green `definitive` chip. Without the
+    caption, that reads as the data contradicting the classification. It does
+    not: KDM6A causes Kabuki syndrome, and burden tests at these cohort sizes
+    routinely detect nothing for genes with overwhelming family evidence.
+
+    Found by an adversarial review of the promotion diff, on the page where the
+    omission would have done the damage rather than on the one where it would
+    not have.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row(consequence_class="lof")])
+    section = page[page.index("Rare variant burden") :]
+
+    # The caption that stops an empty matrix reading as a verdict.
+    assert "not evidence against a gene" in section
+    # And a key, so the four states are nameable rather than only coloured.
+    assert "tested, no enrichment detected" in section
+    assert "not tested by that dataset" in section
+    # It sits with the matrix, not at the far end of the page.
+    assert section.index("</table>") < section.index("not evidence against a gene")
+
+
+def test_a_family_wise_corrected_p_is_not_labelled_q(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`q` denotes a false-discovery quantity, and one of the two methods is not.
+
+    The mirror carries `benjamini_hochberg`, which is an FDR, and
+    `familywise_permutation`, which is not. Labelling both `q` made the matrix
+    contradict the same page's own table, which names the second "family-wise" a
+    screen below -- so the page said two different things about one number.
+
+    Measured 2026-08-05: 29 cells rendered `q`, some over a family-wise p.
+    """
+    # Different *studies*, so the two land in different cells: one cell shows one
+    # row, and putting both in the same one would render only the smaller p.
+    fdr = _burden_row(
+        consequence_class="lof",
+        pvalue=0.001,
+        pvalue_adjusted=0.01,
+        pvalue_adjustment="benjamini_hochberg",
+    )
+    familywise = _burden_row(
+        study="PMID:34324492",
+        consequence_class="lof",
+        pvalue=0.001,
+        pvalue_adjusted=0.02,
+        pvalue_adjustment="familywise_permutation",
+        case_cohorts=("decipher",),
+        control_cohorts=("gain_controls",),
+    )
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [fdr, familywise],
+        publications={_PUBLICATION.id: _PUBLICATION, **_OTHER_PUBLICATIONS},
+    )
+    section = page[page.index("Rare variant burden") :]
+    matrix = section[section.index('<table class="matrix">') : section.index("</table>")]
+
+    assert "q 0.01" in matrix
+    assert "q 0.02" not in matrix
+    assert "corrected p 0.02" in matrix
+
+
+def test_the_browse_page_refuses_a_gene_it_has_no_concordance_for(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """The guard `build_genes` has, applied to the layer that lacked it.
+
+    `bundles._concordance_for` raises on a published gene the mapping does not
+    cover, because defaulting it would publish `"tested": 0` -- byte-identical to
+    a measured "no study reported this gene". The browse page did
+    `(concordance or {}).get(gene, {})` and rendered exactly that zero, silently.
+    `runner.py` says the two layers cannot disagree; the guard existed on one of
+    them.
+
+    `None` remains allowed and means "this build has no burden data at all",
+    which is what most tests of this page pass. A *mapping* that omits a
+    published gene is the error: it means the caller derived it over a different
+    population.
+
+    Found by an adversarial review of the promotion diff, and it survived the
+    mutation matrix until this test existed.
+    """
+    emitter = Emitter(root=tmp_path)
+
+    with pytest.raises(KeyError, match="no concordance derived for published gene"):
+        build_gene_index_page(
+            facts_two,
+            emitter,
+            symbols={GATA4: "GATA4", TBX5: "TBX5"},
+            validity=validity_two,
+            burden_counts={},
+            concordance={GATA4: {"tested": 0, "enriched": 0, "corrected": 0, "families": []}},
+        )
