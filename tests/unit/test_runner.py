@@ -431,3 +431,64 @@ def test_a_validity_mirror_missing_a_selected_column_is_reported_not_raised(
     assert "TBL001" in codes
     assert "TBL012" not in codes, "GenCC alone should still populate the mirrored-validity map"
     assert report.ok is False
+
+
+def _real_repo(tmp_path: Path) -> Path:
+    """A copy of the committed repository, which validates at the baseline.
+
+    Copied rather than fixtured because the defect below is about *scale* -- one
+    error naming a cause versus one error per row naming symptoms -- and a
+    two-row fixture cannot show the difference.
+    """
+    for name in ("curation", "mirrors", "ontologies"):
+        shutil.copytree(REPO_ROOT / name, tmp_path / name)
+    return tmp_path
+
+
+def test_an_absent_cohort_registry_reports_its_cause_once_not_every_row(
+    tmp_path: Path,
+) -> None:
+    """CUR004, and the guarantee in CLAUDE.md §1 it exists to keep.
+
+    "A missing registry must not report as hundreds of dangling references."
+    The first version of `validate_burden_references` passed
+    `{str(c.id) for c in corpus.cohorts}` unconditionally, so an absent
+    `cohorts.yaml` -- which `load_curation` treats as optional and reports
+    nothing for -- produced four BUR009 errors naming four cohorts and nothing
+    naming the file. Measured 2026-08-05 before the fix: 4 errors, all BUR009.
+    """
+    root = _real_repo(tmp_path)
+    (root / "curation" / "cohorts.yaml").unlink()
+
+    report = validate_repository(root)
+    codes = [issue.code for issue in report.issues if issue.severity is Severity.ERROR]
+
+    assert codes == ["CUR004"]
+    assert report.ok is False
+
+
+def test_an_unreadable_gene_registry_does_not_multiply_by_the_burden_mirror(
+    tmp_path: Path,
+) -> None:
+    """The same cascade from the other side, and the one that grew 146x.
+
+    A header-only `mirrors/genes.tsv` reads fine and carries the `hgnc_id`
+    column, so `_known_genes` returns an empty set rather than None and TBL008
+    does not fire. Before `mirrors/burden.tsv` existed that input produced
+    **1** error (REF001, the one curated assertion's gene). Measured 2026-08-05
+    with the burden table added and the registries passed unconditionally:
+    **146** -- 1 REF001 plus one BUR011 per distinct gene in the mirror -- none
+    of which named the registry.
+
+    Passing `known_genes or None` restores it to 1. The count is asserted, not
+    just the code, because the defect was never a wrong code: BUR011 was right
+    about all 145 genes. It was the burying that was wrong.
+    """
+    root = _real_repo(tmp_path)
+    genes = root / "mirrors" / "genes.tsv"
+    genes.write_text(genes.read_text(encoding="utf-8").splitlines()[0] + "\n", encoding="utf-8")
+
+    report = validate_repository(root)
+    codes = [issue.code for issue in report.issues if issue.severity is Severity.ERROR]
+
+    assert codes == ["REF001"]

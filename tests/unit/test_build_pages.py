@@ -11,11 +11,18 @@ from pathlib import Path
 
 import pytest
 
+from chd_atlas.build.burden import BurdenRow
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.pages import _SCOPE_RULE, build_gene_index_page, build_gene_pages
+from chd_atlas.build.pages import (
+    _EM_DASH,
+    _SCOPE_RULE,
+    build_gene_index_page,
+    build_gene_pages,
+)
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
+from chd_atlas.models.cohort import Cohort
 from chd_atlas.models.literature import Publication
 from chd_atlas.vocab import (
     AtlasCuration,
@@ -196,6 +203,8 @@ def test_an_uncurated_gene_page_says_the_atlas_has_not_curated_it(
         validity={GATA4: _validity()},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     page = _page(tmp_path, "HGNC_4173.html")
@@ -238,6 +247,8 @@ def test_a_curated_gene_page_carries_its_evidence_quote_and_pmid(
         validity={TBX5: _validity()},
         assertions=assertions,
         publications=publications,
+        burden={},
+        cohorts={},
     )
 
     page = _page(tmp_path, "HGNC_11604.html")
@@ -268,6 +279,8 @@ def test_a_symbol_carrying_markup_is_escaped(
         validity={GATA4: _validity()},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     page = _page(tmp_path, "HGNC_4173.html")
@@ -313,6 +326,8 @@ def test_a_non_http_report_url_never_becomes_a_link(
         validity={GATA4: _validity(report_url=report_url)},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     page = _page(tmp_path, "HGNC_4173.html")
@@ -350,6 +365,8 @@ def test_an_uncurated_notice_never_denies_functional_records_the_rail_counts(
         validity={GATA4: _validity()},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     page = _page(tmp_path, "HGNC_4173.html")
@@ -375,6 +392,8 @@ def test_a_mirrored_disease_label_carrying_markup_is_escaped(
         validity={GATA4: _validity(disease_label="<img src=x onerror=alert(1)>")},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     assert "<img src=x" not in _page(tmp_path, "HGNC_4173.html")
@@ -434,6 +453,8 @@ def test_a_contested_gene_is_never_chipped_as_settled(
         validity={GATA4: _validity()},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     page = _page(tmp_path, "HGNC_4173.html")
@@ -460,6 +481,8 @@ def test_every_gene_in_the_facts_gets_exactly_one_page(
         validity=validity_two,
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     assert sorted(path.name for path in (tmp_path / "genes").iterdir()) == [
@@ -489,7 +512,11 @@ def test_the_browse_table_is_complete_before_any_script_runs(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
@@ -510,7 +537,11 @@ def test_browse_rows_are_ordered_by_hgnc_id_against_a_literal(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
@@ -560,7 +591,11 @@ def test_browse_facet_options_are_ordered_against_a_literal(
     }
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     facets = dict(
@@ -605,15 +640,19 @@ def test_the_browse_page_says_whose_classification_the_confidence_column_carries
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
     assert "upstream panel's or submitter's" in page
     assert "the atlas authors no validity classification of its own" in page
     assert "<strong>atlas curation</strong> column" in page
-    assert "<th>atlas curation</th>" in page
-    assert "<th>confidence</th>" in page
+    assert '<th scope="col">atlas curation</th>' in page
+    assert '<th scope="col">confidence</th>' in page
 
 
 def test_no_browse_row_states_a_bare_definitive_without_the_disease_it_is_for(
@@ -643,11 +682,15 @@ def test_no_browse_row_states_a_bare_definitive_without_the_disease_it_is_for(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
-    assert "<th>definitive for</th>" in page
+    assert '<th scope="col">definitive for</th>' in page
     rows = re.findall(r"<tr(?: data-[^>]*)?><td>(.*?)</tr>", page)
     assert len(rows) == 2
     expected = {TBX5: "Holt-Oram syndrome", GATA4: "structural congenital heart disease"}
@@ -706,7 +749,9 @@ def test_a_gene_definitive_for_two_in_scope_diseases_names_both_in_a_fixed_order
     )
     facts = {TBX5: _facts(TBX5, AtlasCuration.CURATED, groups=(LesionGroup.SEPTAL,))}
     emitter = Emitter(root=tmp_path)
-    build_gene_index_page(facts, emitter, symbols={TBX5: "TBX5"}, validity={TBX5: two})
+    build_gene_index_page(
+        facts, emitter, symbols={TBX5: "TBX5"}, validity={TBX5: two}, burden_counts={}
+    )
     build_gene_pages(
         facts,
         emitter,
@@ -714,6 +759,8 @@ def test_a_gene_definitive_for_two_in_scope_diseases_names_both_in_a_fixed_order
         validity={TBX5: two},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     browse = _page(tmp_path, "index.html")
@@ -745,7 +792,11 @@ def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
     build_gene_pages(
         facts_two,
@@ -754,6 +805,8 @@ def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
         validity=validity_two,
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     for name in ("index.html", "HGNC_11604.html", "HGNC_4173.html"):
@@ -787,6 +840,8 @@ def test_a_gene_page_names_the_disease_beside_the_chip_that_says_definitive(
         validity={GATA4: _validity("CHARGE syndrome")},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
 
     page = _page(tmp_path, "HGNC_4173.html")
@@ -808,8 +863,10 @@ def test_every_browse_row_links_to_a_page_that_was_written(
         validity={TBX5: _validity(), GATA4: _validity()},
         assertions={},
         publications={},
+        burden={},
+        cohorts={},
     )
-    build_gene_index_page(facts_two, emitter, symbols={}, validity=validity_two)
+    build_gene_index_page(facts_two, emitter, symbols={}, validity=validity_two, burden_counts={})
 
     page = _page(tmp_path, "index.html")
     for name in ("HGNC_11604.html", "HGNC_4173.html"):
@@ -842,7 +899,7 @@ def test_a_facet_option_value_is_escaped_like_every_other_published_string(
     facts[GATA4] = replace(facts[GATA4], validity_state=Hostile.X)  # type: ignore[arg-type]
     emitter = Emitter(root=tmp_path)
 
-    build_gene_index_page(facts, emitter, symbols={}, validity={})
+    build_gene_index_page(facts, emitter, symbols={}, validity={}, burden_counts={})
 
     page = _page(tmp_path, "index.html")
     assert "<script>alert(1)</script>" not in page
@@ -872,13 +929,23 @@ def test_every_facet_names_a_data_attribute_the_filter_script_reads(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
     assert 'name="q"' in page
     facets = re.findall(r'<select name="([^"]+)"[^>]*>(.*?)</select>', page)
-    assert [name for name, _ in facets] == ["lesion", "confidence", "validity", "curation"]
+    assert [name for name, _ in facets] == [
+        "lesion",
+        "confidence",
+        "validity",
+        "curation",
+        "burden",
+    ]
     for _, options in facets:
         assert options.startswith('<option value="">')
     for row in re.findall(r"<tr((?: data-[^>]*)?)>", page):
@@ -908,7 +975,11 @@ def test_every_browse_control_is_named_for_a_screen_reader(
     """
     emitter = Emitter(root=tmp_path)
     build_gene_index_page(
-        facts_two, emitter, symbols={TBX5: "TBX5", GATA4: "GATA4"}, validity=validity_two
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={},
     )
 
     page = _page(tmp_path, "index.html")
@@ -918,4 +989,737 @@ def test_every_browse_control_is_named_for_a_screen_reader(
         ("confidence", "Filter by mirrored confidence"),
         ("validity", "Filter by validity state"),
         ("curation", "Filter by atlas curation"),
+        ("burden", "Filter by whether burden evidence exists"),
     ]
+
+
+def _burden_row(**overrides: object) -> BurdenRow:
+    """TAB2's syndromic loss-of-function row: the unbounded case, from real data."""
+    payload: dict[str, object] = {
+        "study": "PMID:42230622",
+        "gene": GATA4,
+        "cohort_stratum": "syndromic",
+        "lesion_group": None,
+        "variant_class": "snv_indel",
+        "consequence_class": "lof",
+        "origin": "any",
+        "maf_max": 0.001,
+        "count_unit": "individuals",
+        "n_case_carriers": 5,
+        "n_cases": 1471,
+        "comparator": "control_cohort",
+        "n_control_carriers": 0,
+        "n_controls": 45082,
+        "expected_count": None,
+        "effect": None,
+        "effect_measure": "odds_ratio",
+        "effect_bound": "unbounded_above",
+        "ci_low": 28.1,
+        "ci_high": None,
+        "pvalue": 3.13e-08,
+        "pvalue_test": "fisher_exact",
+        "pvalue_adjusted": None,
+        "pvalue_adjustment": None,
+        "case_cohorts": ("cnchd", "ddd"),
+        "control_cohorts": ("ukbb",),
+        "method_note": None,
+        "source": "audain2026_sd3",
+    }
+    payload.update(overrides)
+    return BurdenRow(**payload)  # type: ignore[arg-type]
+
+
+_COHORTS = {
+    "cnchd": Cohort(id="cnchd", name="German Competence Network", description="German registry."),
+    "ddd": Cohort(
+        id="ddd",
+        name="Deciphering Developmental Disorders (DDD)",
+        description="Ascertained on developmental disorder, so enriched for syndromic CHD.",
+    ),
+    "ukbb": Cohort(
+        id="ukbb",
+        name="UK Biobank",
+        description="Adults recruited at 40-69; survivorship bias against severe CHD.",
+    ),
+    "pcgc": Cohort(id="pcgc", name="PCGC", description="Pediatric Cardiac Genomics Consortium."),
+}
+
+_PUBLICATION = Publication(
+    id="PMID:42230622",
+    title="Assessing the contribution of rare variants to congenital heart disease",
+    journal="NPJ genomic medicine",
+    year=2026,
+    authors=["Audain E", "Hitz MP"],
+    study_type="case_control",  # type: ignore[arg-type]
+    own_lab=True,
+    tests_reported=138609,
+)
+
+
+def _burden_page(
+    tmp_path: Path,
+    facts: dict[str, GeneFacts],
+    rows: list[BurdenRow],
+    name: str = "HGNC_4173.html",
+    publications: dict[str, Publication] | None = None,
+) -> str:
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        facts,
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity={GATA4: _validity(), TBX5: _validity()},
+        assertions={},
+        publications=publications or {_PUBLICATION.id: _PUBLICATION},
+        burden={GATA4: rows},
+        cohorts=_COHORTS,
+    )
+    return _page(tmp_path, name)
+
+
+def test_an_effect_size_is_never_rendered_without_the_measure_that_names_it(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The guard the single `effect` column was chosen against.
+
+    One column carries odds ratios and de novo enrichments alike, which is what
+    lets this schema absorb a fifth study without a migration -- and it is the
+    one place two incomparable quantities could silently merge. An odds ratio of
+    2.45 and a de novo enrichment of 2.45 are different claims, and a cell
+    reading `2.45` under a header reading `effect` equates them.
+
+    Both measures are rendered here from otherwise identical rows, so a
+    `_effect` that dropped the label would produce two cells a reader could not
+    tell apart -- and this test would see one string where it expects two.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(effect=2.45, effect_bound=None, ci_low=1.2, ci_high=8.1),
+            _burden_row(
+                cohort_stratum="all",
+                comparator="mutation_model",
+                n_control_carriers=None,
+                n_controls=None,
+                control_cohorts=(),
+                expected_count=0.42,
+                effect=2.45,
+                effect_measure="enrichment_ratio",
+                effect_bound=None,
+                ci_low=1.2,
+                ci_high=8.1,
+                pvalue_test="poisson",
+            ),
+        ],
+    )
+
+    assert "OR 2.45 (95% CI 1.2–8.1)" in page
+    assert "enrichment 2.45 (95% CI 1.2–8.1)" in page
+    assert "<td>2.45</td>" not in page
+
+
+def test_an_unbounded_odds_ratio_renders_its_lower_bound_rather_than_a_blank(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """34 rows of the committed mirror have no finite odds ratio, and they are
+    the strongest results in the study.
+
+    `Infinity` cannot be published -- `encode_json` sets `allow_nan=False`, and
+    `JSON.parse` rejects it -- so the row carries a null effect and
+    `effect_bound`. A page rendering that null as an em dash would throw away the
+    finding: "at least 28.1" is what the study showed. The carrier counts beside
+    it are what make it readable: 5 of 1,471 against 0 of 45,082.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+
+    assert "OR ∞ (95% CI 28.1–∞)" in page
+    assert "<td>5 carriers / 1,471</td>" in page
+    assert "<td>0 carriers / 45,082</td>" in page
+
+
+def test_a_gene_with_no_burden_rows_gets_no_section_at_all(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Unlike the validity table, whose header names the columns and whose
+    emptiness is itself an answer, an empty burden table would read as "this gene
+    was studied and nothing was found" -- a claim no study made.
+    """
+    assert "Rare variant burden" not in _burden_page(tmp_path, facts_uncurated, [])
+
+
+def test_two_studies_sharing_a_cohort_are_declared_not_independent(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Latent on the committed corpus, which carries one study.
+
+    The atlas computes no pooled statistic because these cohorts overlap, and
+    that decision is invisible to a reader comparing two tables by eye. The
+    sentence is what makes it visible, and it names the collection rather than
+    its id.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(), _burden_row(study="PMID:8988165", case_cohorts=("ddd", "pcgc"))],
+    )
+
+    assert "These two studies are not independent." in page
+    assert "Deciphering Developmental Disorders (DDD)" in page
+
+
+def test_the_section_says_what_a_missing_row_means_without_asserting_why(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The sentence that is the difference between a table and a trap -- and the
+    mechanism it must NOT assert.
+
+    The burden matrix is sparse, and a reader meeting a gap will read it as "not
+    tested" unless told. So the page says an absent cell is one the study did not
+    report.
+
+    **It must not say why.** Until 2026-08-05 it asserted "no variant of that
+    class was seen in either group, so there was nothing to compare" -- measured
+    over PMID:42230622 alone, where 0 of 1,192 rows have no carrier on either
+    side. That is false for the other two studies now rendering tables beside it:
+    PMID:34324492 tests one consequence class by construction, and PMID:40127276
+    observed 14,364 synonymous variants (its own Dataset S4) and published no
+    synonymous row because its gene-level table covers only damaging classes. A
+    reader told "no variant of that class was seen" would conclude that study
+    found none.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    section = page[page.index("Rare variant burden") :]
+
+    assert "did not report" in section
+    assert "does not always mean" in section
+    # The refuted mechanism, in the exact words that were wrong.
+    assert "no variant of that class was seen in either group" not in section
+
+
+def test_the_synonymous_negative_control_is_explained_only_where_one_exists(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Conditional, for the reason `_POOLING_NOTICE` and `_composite_note` are.
+
+    A reader who does not know the synonymous row is a negative control reads a
+    null result as a null finding rather than as the calibration check it is --
+    so where one exists, the page says so.
+
+    Where none exists, the page must not tell a reader to weigh one. Measured
+    2026-08-05: 69 of the 290 published burden rows are synonymous and **every
+    one comes from PMID:42230622**; the other two studies publish no negative
+    control at all. Rendered unconditionally, this paragraph promised a check
+    that two of the three tables on the page cannot offer.
+    """
+    without = _burden_page(tmp_path, facts_uncurated, [_burden_row(consequence_class="lof")])
+    assert "negative control" not in without
+
+    with_syn = _burden_page(
+        tmp_path / "syn",
+        facts_uncurated,
+        [_burden_row(consequence_class="lof"), _burden_row(consequence_class="synonymous")],
+    )
+    assert "negative control" in with_syn
+    assert "uncorrected" in with_syn
+
+
+def test_the_page_names_how_many_tests_the_study_ran(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The most serious finding of the 2026-08-05 review.
+
+    Measured on the built site that day: of the 187 burden rows the 23 published
+    gene pages render, **32 have p < 0.05 and 3 survive Bonferroni** over the
+    study's own 138,609 comparisons. So 29 rows read as significant and are not,
+    under a green `definitive` chip, on pages read by clinical geneticists.
+
+    The atlas publishes no corrected p -- the supplement carries none, and
+    computing one would be authoring a statistic (D12/D33). Naming the
+    denominator is the honest alternative: it is a count the study made, and it
+    is what lets a reader apply their own threshold. `0.05 / 138609` is stated
+    as the arithmetic it is, not as a threshold the study endorsed.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    # Scoped to the method line. This asserted `"uncorrected" in page` until
+    # 2026-08-05 and passed on the word from the *synonymous* paragraph, which is
+    # a different sentence entirely -- the trap
+    # `test_the_consequence_column_is_headed_for_the_column_it_renders` records.
+    # When that paragraph became conditional the assertion failed, which is the
+    # only reason the mis-scoping was found.
+    method = page[page.index('<p class="method">') :]
+    method = method[: method.index("</p>")]
+
+    assert "138,609" in method
+    assert "3.6e-07" in method
+    assert "judge the raw one against the whole scan" in method
+
+
+def test_the_cohort_caveats_a_curator_wrote_reach_the_reader(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """They reached no published byte until 2026-08-05.
+
+    `curation/cohorts.yaml` records that UK Biobank's participants are adults
+    while the CHD cases were largely enrolled in childhood -- a survivorship
+    bias that inflates every odds ratio on every page -- and `models/cohort.py`
+    says in as many words that `description` is where such caveats belong.
+    `cohort_registry` returned `{id: name}` and dropped them.
+
+    This is the project's characteristic failure in its purest form: the work
+    was done, it was correct, it was validated, and no reader could reach it.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+
+    assert "survivorship bias against severe CHD" in page
+    assert "enriched for syndromic CHD" in page
+    # In a `<details>`, so the caveats are one click from every table rather than
+    # repeated at full length above 23 of them -- and still in the document for
+    # a crawler, a `curl`, and a reader with no JavaScript.
+    assert "<details" in page
+
+
+def test_the_page_says_what_was_counted_not_only_how_many(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Four partition columns reached no page while populated on all 187 rows.
+
+    A section headed "Rare variant burden" never said what *rare* meant, and
+    `origin: any` -- a case-control count of variants regardless of inheritance
+    -- was indistinguishable from a trio's de novo count. `vocab.VariantOrigin`
+    warns about exactly that, and `tables.py` says the partition "exists to stop
+    two incomparable rows from *looking* comparable".
+
+    The origin label is asserted in full because the parenthetical is the whole
+    point: "any inheritance" alone would still let a reader assume de novo.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+
+    assert "MAF below 0.001" in page
+    assert "any inheritance (not a de novo test)" in page
+    assert "SNVs and indels" in page
+    assert "Fisher&#x27;s exact test" in page
+
+
+def test_a_study_by_an_author_of_this_atlas_says_so(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`own_lab` reached `publications.json` and zero HTML files.
+
+    Two of the three studies published today are by this repository's author, and
+    a reader being asked to weigh their numbers should not have to
+    cross-reference a JSON payload to learn that.
+
+    This said "every burden table on the site today comes from one study whose
+    first author is this repository's author" until 2026-08-05. PMID:40127276
+    (Sierant MC et al., `own_lab: false`) made that false for 15 of the 23
+    published gene pages, 8 of which now render three studies with the
+    declaration on two of them. The sentence was the written record of when the
+    line applies, so a stale version of it is worse than none -- it describes a
+    corpus that no longer exists and invites the conclusion that the disclosure
+    is unconditional.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    assert "this study is by an author of this atlas" in page
+
+    outside = _PUBLICATION.model_copy(update={"own_lab": False})
+    other = _burden_page(
+        tmp_path, facts_uncurated, [_burden_row()], publications={outside.id: outside}
+    )
+    assert "by an author of this atlas" not in other
+
+
+def test_a_de_novo_row_renders_the_expectation_it_was_compared_against(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_count(None, None)` rendered an em dash where the comparator belongs.
+
+    On a `mutation_model` row the modelled expected count is the only thing the
+    enrichment was computed against, and an em dash is indistinguishable from a
+    control count nobody recorded. Latent until a trio study lands, which is
+    precisely why it is pinned now.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(
+                comparator="mutation_model",
+                n_control_carriers=None,
+                n_controls=None,
+                control_cohorts=(),
+                expected_count=0.42,
+                effect=11.9,
+                effect_measure="enrichment_ratio",
+                effect_bound=None,
+                ci_high=30.0,
+                pvalue_test="poisson",
+            )
+        ],
+    )
+
+    assert "0.42 expected" in page
+    assert "enrichment 11.9" in page
+
+
+def test_a_method_note_is_rendered_as_the_footnote_the_schema_promises(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`tables.py` called `method_note` "rendered verbatim as a row footnote"
+    from the day the column existed, and nothing read it.
+
+    The column exists for the CNV case, where "carrier" means different things
+    in different papers, so the first curator to need it would have got a green
+    build, a correct bundle and no page text.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(method_note="Carrier means any exonic overlap of the deletion.")],
+    )
+
+    assert "Carrier means any exonic overlap of the deletion." in page
+
+
+def test_the_provenance_line_unions_every_row_rather_than_reading_the_first(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`case_cohorts` is a per-row column and was reported per study block.
+
+    A study whose strata drew on different collections published one row's
+    cohorts as if they were all of them -- and `shared_cohorts` reads the same
+    column with a *union* rule, so the "not independent" notice could name a
+    cohort the provenance line did not. Both union now, so they cannot disagree.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(case_cohorts=("cnchd",)),
+            _burden_row(cohort_stratum="all", case_cohorts=("ddd", "pcgc")),
+        ],
+    )
+
+    # Scoped to the provenance paragraph. Asserted page-wide, this passed with
+    # `_names` mutated to print bare ids, because `_cohort_notes` renders the
+    # same names in the `<details>` block below the table.
+    start = page.index('<p class="provenance">')
+    line = page[start : page.index("</p>", start)]
+    assert "German Competence Network" in line
+    assert "Deciphering Developmental Disorders (DDD)" in line
+    assert "PCGC" in line
+    assert "cnchd" not in line
+
+
+def test_a_study_heading_never_renders_a_nameless_author(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`Publication.authors` constrains the list, not its elements.
+
+    A whitespace-only first author passes every validator and rendered
+    "    et al. 2026" -- a study heading naming nobody. `authors[0]` was read
+    only by `search.py` before this section existed, so the page is where the
+    pre-existing model weakness first became visible. Same shape as the blank
+    `symbol` defect `runner.py::_cell` exists to catch.
+    """
+    nameless = _PUBLICATION.model_copy(update={"authors": ["   "]})
+    page = _burden_page(
+        tmp_path, facts_uncurated, [_burden_row()], publications={nameless.id: nameless}
+    )
+
+    assert "et al." not in page
+    assert "PMID:42230622</a>" in page
+
+
+def test_the_pooling_warning_is_absent_when_there_is_only_one_study(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """It asserted "these cohorts overlap" in the present tense on a page showing
+    one table, sending a reader to look for a second study that is not there and
+    undermining the caveats that *are* live. The corpus carries one study today,
+    so this is the branch every real page takes.
+    """
+    one = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    assert "no pooled statistic across studies" not in one
+
+    two = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(), _burden_row(study="PMID:8988165", case_cohorts=("ddd", "pcgc"))],
+    )
+    assert "no pooled statistic across studies" in two
+
+
+def test_the_consequence_column_is_headed_for_the_column_it_renders(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The header and the cell must name the same field.
+
+    Raised by review on #17. `_BURDEN_HEADERS[1]` read "variant class" while the
+    cell rendered `consequence_class`, and the method line above the table
+    rendered the real `variant_class` -- so one phrase meant two things on one
+    page and was wrong in the more prominent of them. The rename that introduced
+    it was itself a fix for an ambiguous header.
+
+    Asserted by pairing the header with a cell whose value could only have come
+    from one field: `loss-of-function` is a `ConsequenceClass` member and
+    `SNVs and indels` is a `VariantClass` label, so a header claiming the latter
+    over a cell holding the former fails here.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    # Scoped to the burden section: `page.index("<thead>")` finds the mirrored
+    # validity table, which is rendered first. Same trap as the provenance test.
+    section = page[page.index("Rare variant burden") :]
+
+    header = section[section.index("<thead>") : section.index("</thead>")]
+    assert '<th scope="col">consequence</th>' in header
+    assert "variant class" not in header
+
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+    assert "loss-of-function" in body
+    # The real `variant_class` is on the page exactly once, in the method line,
+    # and never in this table.
+    assert "SNVs and indels" not in body
+    assert page.count("SNVs and indels") == 1
+
+
+def test_the_browse_page_shows_how_much_burden_evidence_each_gene_has(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """`genes/index.json` published `burden_row_count`; the page showed nothing.
+
+    Measured on the built site 2026-08-05: `genes/index.html` contained the word
+    "burden" zero times -- no column, no filter, no count -- while every row of
+    the payload behind it carried the number. A reader scanning 23 rows that all
+    read `definitive` could not tell that four of them (ISL1, NR2F2, RBM10,
+    SMAD2) carry no loss-of-function burden evidence at all.
+
+    The em dash for a gene with none is deliberate and matches the `lesion
+    groups` column beside it: `0` reads as a measured zero, while an em dash
+    reads as "nothing here", which is what an absent row means.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity=validity_two,
+        burden_counts={TBX5: 9},
+    )
+
+    page = _page(tmp_path, "index.html")
+
+    assert '<th scope="col">burden rows</th>' in page
+    rows = {
+        match.group(1): match.group(0)
+        for match in re.finditer(r'<tr data-search="(hgnc:\d+)[^"]*".*?</tr>', page)
+    }
+    assert "<td>9</td>" in rows["hgnc:11604"]
+    assert f"<td>{_EM_DASH}</td>" in rows["hgnc:4173"]
+
+    # The facet and the attribute must spell the same word; see
+    # `test_every_facet_names_a_data_attribute_the_filter_script_reads`.
+    assert 'data-burden="yes"' in rows["hgnc:11604"]
+    assert 'data-burden="no"' in rows["hgnc:4173"]
+
+
+def test_the_rail_counts_burden_rows_and_names_the_publications_it_counts(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Two rail defects, both raised by review 2026-08-05.
+
+    The rail read `publications | 0` on 22 of the 23 published genes while the
+    burden section one column away cited a linked, PubMed-referenced study. The
+    count was right -- `fact.publications` is what this atlas's *own* assertion
+    evidence cites -- and the label was wrong, so the label changed rather than
+    the number.
+
+    And the rail carried no burden count at all, though `burden_row_count`
+    exists and is published in every browse row.
+    """
+    page = _burden_page(
+        tmp_path, facts_uncurated, [_burden_row(), _burden_row(cohort_stratum="all")]
+    )
+
+    assert "<dt>curated publications</dt><dd>0</dd>" in page
+    assert "<dt>burden rows</dt><dd>2</dd>" in page
+    assert "<dt>publications</dt>" not in page
+
+
+def test_a_published_correction_is_rendered_and_names_its_method(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The column that answers the sharpest finding of the 2026-08-05 review.
+
+    That review measured 187 uncorrected p-values on gene pages with nothing to
+    judge them against. The atlas still computes no correction -- that would be
+    authoring a statistic (D12/D33) -- but PMID:34324492 publishes one, and it
+    **changes the conclusion**: CHD7 has a raw permutation p of 0.0068 and a
+    family-wise corrected p of 0.991. Without this column the page shows a
+    number that reads as significant for a gene the study found nothing for.
+
+    The method is named in the cell because "0.991" alone does not say what it
+    was corrected against, and a family-wise permutation correction and a
+    Bonferroni factor are different claims.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(
+                variant_class="cnv_deletion",
+                effect=None,
+                effect_measure=None,
+                effect_bound=None,
+                ci_low=None,
+                ci_high=None,
+                pvalue=0.0068,
+                pvalue_test="permutation",
+                pvalue_adjusted=0.991,
+                pvalue_adjustment="familywise_permutation",
+            )
+        ],
+    )
+
+    assert '<th scope="col">corrected p</th>' in page
+    assert "<td>0.991 (family-wise)</td>" in page
+    assert "<td>0.0068</td>" in page
+
+
+def test_the_method_line_tells_a_corrected_study_apart_from_an_uncorrected_one(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """A sentence true of one study is false of another.
+
+    PMID:42230622 publishes no correction, so the reader needs the denominator
+    and the advice to judge against the whole scan. PMID:34324492 corrects every
+    row, so that same advice would point them at the column they should *not* be
+    reading. The block says whichever is true of its own rows.
+    """
+    corrected = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(pvalue_adjusted=0.991, pvalue_adjustment="bonferroni")],
+    )
+    assert "read it rather than the raw p" in corrected
+    assert "judge the raw one against the whole scan" not in corrected
+
+    plain = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    assert "judge the raw one against the whole scan" in plain
+    assert "read it rather than the raw p" not in plain
+
+
+def test_every_count_cell_names_what_it_counted(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_count`'s rule, and `_effect`'s rule applied one column over.
+
+    Until 2026-08-05 the header read "cases (carriers / n)" and every cell was a
+    bare "5 / 1,471", which was true only because every study curated so far
+    counted people. PMID:40127276's case-control arm counts *alleles* -- measured
+    against its own Dataset S4 in `CountUnit`, where its D-Mis `Obs` tracks the
+    variant count in 245 of 248 genes and the distinct-proband count in only
+    235 -- so under the old header its rows would have claimed 21,768 people
+    sequenced where 11,555 were.
+
+    The three units render in one table here because that is the real case: one
+    study contributes a de novo arm counting mutations against trios and a
+    case-control arm counting alleles, into the same table, and a per-column
+    header cannot label either.
+
+    Scoped to the burden `<tbody>`. A page-wide assertion passes with the unit
+    dropped from the cells, because `_BURDEN_PREAMBLE` names all three words
+    higher up the page -- the trap `test_the_consequence_column_is_headed_for_
+    the_column_it_renders` records one section above.
+    """
+    rows = [
+        _burden_row(consequence_class="lof", count_unit="individuals"),
+        _burden_row(consequence_class="missense_damaging", count_unit="alleles"),
+        _burden_row(
+            consequence_class="missense_all",
+            count_unit="de_novo_mutations",
+            origin="de_novo",
+            comparator="mutation_model",
+            n_control_carriers=None,
+            n_controls=None,
+            control_cohorts=(),
+            expected_count=0.166,
+            effect=None,
+            effect_measure=None,
+            effect_bound=None,
+            ci_low=None,
+        ),
+    ]
+    section = _burden_page(tmp_path, facts_uncurated, rows)
+    section = section[section.index("Rare variant burden") :]
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+
+    assert "<td>5 carriers / 1,471</td>" in body
+    assert "<td>5 alleles / 1,471</td>" in body
+    # The denominator of a de novo row is trios, and the word travels with it:
+    # 5 mutations in 1,471 *families* is not 5 in 1,471 alleles.
+    assert "<td>5 de novo / 1,471 trios</td>" in body
+
+    # The control column takes the same unit, so an allele row does not describe
+    # its cases in alleles and its controls in people.
+    assert "<td>0 alleles / 45,082</td>" in body
+    assert "<td>0 carriers / 45,082</td>" in body
+
+    # No cell anywhere in the table is a bare "n / n": that spelling is what the
+    # column meant before the unit existed, and it is the mutant this kills.
+    assert "<td>5 / 1,471</td>" not in body
+    assert "<td>0 / 45,082</td>" not in body
+
+
+def test_a_count_unit_nothing_has_taught_the_renderer_still_names_itself(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_COUNT_UNIT_LABEL` is hand-maintained, so it can fall behind `CountUnit`.
+
+    A member added to the enum and forgotten here must degrade to its raw token
+    rather than to silence: "5 genomes / 1,471" is ugly and true, while "5 /
+    1,471" is the exact false claim this column was added to prevent. Same shape
+    as `_study_label` falling back to the bare PMID rather than an em dash.
+
+    Reached only behind a bypassed gate -- `validate_table` refuses a value
+    outside `CountUnit`, and `build_site` refuses the corpus -- which is why it
+    is pinned here rather than left to be discovered.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row(count_unit="genomes")])
+    section = page[page.index("Rare variant burden") :]
+    body = section[section.index("<tbody>") : section.index("</tbody>")]
+
+    assert "<td>5 genomes / 1,471</td>" in body
+    assert "<td>5 / 1,471</td>" not in body
+
+
+def test_the_composite_row_is_named_as_a_union_of_the_two_below_it(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Three consequence rows must not read as three independent findings.
+
+    PMID:40127276 reports `damaging (LOF + missense)` alongside its two
+    components, and the composite is the analysis its 60 genes are defined by.
+    Measured on CHD7: the damaging de novo row is 20 mutations and the two rows
+    below it are 16 and 4 of *those same* 20, so a reader adding them up gets 40
+    from 20 variants.
+
+    The note is conditional, and both halves are asserted. A study reporting only
+    components must not be told its rows decompose something that is not there --
+    the defect `_POOLING_NOTICE` was made conditional for, where an
+    unconditional sentence sent readers hunting for a second study that did not
+    exist.
+    """
+    components = [
+        _burden_row(consequence_class="lof"),
+        _burden_row(consequence_class="missense_damaging"),
+    ]
+    composite = [_burden_row(consequence_class="damaging"), *components]
+
+    with_composite = _burden_page(tmp_path, facts_uncurated, composite)
+    assert "union</strong> of the loss-of-function" in with_composite
+
+    without = _burden_page(tmp_path / "b", facts_uncurated, components)
+    assert "union</strong> of the loss-of-function" not in without

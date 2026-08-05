@@ -1,0 +1,149 @@
+# The sample collections the burden mirror's rows draw on.
+#
+# WHY THIS FILE EXISTS: the atlas publishes per-study burden rows and computes no
+# meta-statistic, because the CHD literature reuses cohorts and a pooled p-value
+# would count the same children twice. But a reader looking at four rows will
+# meta-analyse them in their head regardless. Naming the cohorts is what turns
+# that from an invisible trap into a fact a page can state: two rows citing `ddd`
+# share samples, and it says so.
+#
+# There is no `role` field. A collection is cases in one study and could be
+# controls in another, so which it was is a property of the burden row -- the
+# column it appears in -- not of the collection.
+#
+# A NOTE ON THE AUDAIN 2026 CASE COHORTS (PMID:42230622). Its cohort description
+# reads: "CHD cases were mainly sequenced as part of an initiative from the
+# German Competence Network for Congenital Heart Defects, the Deciphering
+# Developmental Disorder (DDD) project and the University of Nottingham (UK)".
+# The word "mainly" is load-bearing and the paper does not resolve it: the ethics
+# statement additionally lists the University of Leuven, Belgium (B322201010111 /
+# S52853), so some Belgian samples are very likely in the case set. The burden
+# rows name the three collections the cohort description names and no more,
+# because inventing a fourth from an ethics approval would be the atlas asserting
+# something the study did not.
+cohorts:
+  - id: cnchd
+    name: German Competence Network for Congenital Heart Defects
+    description: >-
+      National German registry and biobank for congenital heart disease, based in
+      Berlin, which recruits patients from paediatric cardiology centres across
+      Germany and holds the associated German Heart Registry consent. Named in
+      PMID:42230622 as one of the three collections its CHD cases were drawn from.
+    url: https://www.kompetenznetz-ahf.de/en/
+  - id: ddd
+    name: Deciphering Developmental Disorders (DDD)
+    description: >-
+      UK-wide study of children with severe undiagnosed developmental disorders,
+      recruited through the NHS regional genetics services and sequenced at the
+      Wellcome Sanger Institute. Cases are ascertained on developmental disorder
+      rather than on heart disease, so its contribution is enriched for syndromic
+      CHD. Individual-level data are under controlled access via the EGA. DDD
+      contributed to several of the CHD exome studies this atlas plans to
+      curate, which is the sample reuse the cohort columns exist to make
+      visible; only one study cited today names it.
+    url: https://www.ddduk.org/
+  - id: nottingham
+    name: University of Nottingham congenital heart disease collection
+    description: >-
+      Congenital heart disease cases recruited and sequenced at the University of
+      Nottingham, UK, under East Midlands-Leicester Research Ethics Committee
+      approval 6721. Named in PMID:42230622 as one of the three collections its
+      CHD cases were drawn from.
+    url: https://www.nottingham.ac.uk/life-sciences/
+  - id: signature
+    name: Signature Genomics / PerkinElmer diagnostic CNV series
+    description: >-
+      1,615 individuals with congenital heart disease ascertained through
+      clinical diagnostic array testing, the largest single contributor to the
+      CNV case set of PMID:34324492. Diagnostic ascertainment enriches for
+      severe and syndromic presentations relative to a population series.
+  - id: decipher
+    name: DECIPHER
+    description: >-
+      1,221 CHD cases from the DECIPHER database of submitted patient
+      genotype-phenotype data. Submitted by clinical genetics centres, so
+      ascertained on a diagnostic question rather than on heart disease.
+    url: https://www.deciphergenomics.org/
+  - id: isca
+    name: International Standards for Cytogenomic Arrays (ISCA)
+    description: >-
+      629 CHD cases from the ISCA consortium's shared clinical array data.
+    url: https://clinicalgenome.org/
+  - id: taa_cases
+    name: Sporadic thoracic aortic aneurysm case series (PMID 21092924)
+    description: >-
+      777 individuals with sporadic thoracic aortic aneurysm, included in the
+      CNV case set of PMID:34324492 alongside the CHD cases. TAA IS NOT
+      CONGENITAL HEART DISEASE and is explicitly out of this atlas's scope
+      (curation/chd_scope.yaml puts aortopathy outside it). The study says so
+      in its own abstract -- "probands with CHD including cases with sporadic
+      thoracic aortic aneurysm" -- and its S8 table reports the CHD-only
+      contribution separately. Any row naming this cohort has a case set that
+      is about 10% non-CHD (777 of 7,958), and the page must say so.
+  - id: gain_controls
+    name: Genetic Association Information Network (GAIN) controls
+    description: >-
+      7,993 population controls genotyped on Illumina and CGH arrays, the
+      largest control contributor to PMID:34324492. Not screened for
+      congenital heart disease, so a control carrying an undiagnosed lesion is
+      counted as a control.
+    url: https://fnih.org/what-we-do/major-completed-programs/genetic-association-information-network
+  - id: wtccc_controls
+    name: Wellcome Trust Case Control Consortium controls
+    description: >-
+      4,385 UK population controls. Not screened for congenital heart disease.
+  - id: ottawa_controls
+    name: Ottawa Heart Institute controls
+    description: >-
+      1,704 controls from the Ottawa Heart Institute series. Not screened for
+      congenital heart disease.
+  - id: pcgc
+    name: Pediatric Cardiac Genomics Consortium (CHD GENES)
+    description: >-
+      11,555 CHD probands and 7,774 parents -- 3,887 complete trios and 7,668
+      singletons -- recruited to the Congenital Heart Disease Network Study of
+      the Pediatric Cardiac Genomics Consortium (ClinicalTrials.gov
+      NCT01196182) across thirteen centres in the US and UK, and the case set of
+      PMID:40127276. THIS COLLECTION SUBSUMES THE COHORTS OF THE EARLIER PCGC
+      EXOME PAPERS, including Jin et al. 2017 (PMID:28991257), whose ~2,871
+      trios are a subset of these 3,887. Curating one of those papers alongside
+      PMID:40127276 would publish the same children twice under two study ids,
+      which is the double counting design decision D33 forbids -- and it would
+      be invisible to `shared_cohorts`, because the overlap is inside one
+      study's cohort list rather than between two. Recorded here so that a later
+      curator meets the constraint before writing the row rather than after.
+    url: https://benchtobassinet.com/
+  - id: gnomad_controls
+    name: gnomAD exomes and genomes, excluding TopMed
+    description: >-
+      The gnomAD population reference, restricted by PMID:40127276 to samples
+      with exome or genome sequence and not also present in TopMed. The study
+      states this control set as 133,743 samples; the per-gene control
+      denominators it publishes are ALLELE counts and run as high as 271,354,
+      which is above twice that figure on 22 of the 90 rows mirrored here. The
+      two are not reconcilable from what the paper reports, so the atlas
+      republishes both and asserts neither -- treat the row's own denominator as
+      the one its statistic was computed from. THREE FURTHER CAVEATS QUALIFY
+      EVERY STATISTIC COMPUTED AGAINST IT. It is a population reference rather
+      than a screened control group -- gnomAD excludes individuals with severe
+      paediatric disease at the cohort level but does not ascertain heart
+      phenotypes, so an adult with an undiagnosed lesion counts as a control.
+      Allele denominators vary gene by gene with sequencing coverage, and a
+      control carrying two qualifying variants is counted twice. And no parental
+      or sample-level data were available to the study, so the control side has
+      no transmission information to match the case side's.
+    url: https://gnomad.broadinstitute.org/
+  - id: ukbb
+    name: UK Biobank (whole-exome sequencing)
+    description: >-
+      Population cohort of ~500,000 UK adults recruited at ages 40-69, used as the
+      control set in PMID:42230622 under approved application 44165. Participants
+      labelled with schizophrenia, bipolar disorder, developmental delay or other
+      congenital anomalies were excluded from that analysis. TWO CAVEATS QUALIFY
+      EVERY ODDS RATIO COMPUTED AGAINST IT, both stated by the study itself: the
+      controls are adults while a substantial proportion of the CHD cases were
+      enrolled in childhood, so rare variants causing severe CHD may be
+      under-represented among controls through survivorship; and the combined
+      cohort is ~92% European ancestry, which limits how far its allele-frequency
+      estimates generalise.
+    url: https://www.ukbiobank.ac.uk/

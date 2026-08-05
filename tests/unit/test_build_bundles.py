@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from chd_atlas.build.bundles import build_genes
+from chd_atlas.build.burden import BurdenRow
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.omics import ModalitySummary
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
@@ -159,6 +160,7 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
         variants={},
         validity=validity,
         published={TBX5},
+        burden={},
     )
 
     assert _entries(tmp_path) == [
@@ -177,6 +179,7 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
             "assertion_count": 1,
             "functional_count": 0,
             "variant_count": 0,
+            "burden_row_count": 0,
             "bundle": "genes/HGNC_11604.json",
         }
     ]
@@ -219,6 +222,7 @@ def test_a_published_gene_the_atlas_has_not_curated_gets_a_row_and_a_bundle(
         variants={},
         validity=validity,
         published={TBX5, GATA4},
+        burden={},
     )
 
     rows = _by_gene(tmp_path)
@@ -243,7 +247,14 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        _corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     assert set(_read(tmp_path, "genes/HGNC_11604.json")) == {
@@ -261,6 +272,7 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         "functional",
         "variants",
         "omics",
+        "burden",
     }
 
 
@@ -277,7 +289,14 @@ def test_a_gene_with_no_mirrored_validity_publishes_the_uncurated_shape(
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        _corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["validity"] == {
@@ -322,6 +341,7 @@ def test_every_validity_record_carries_the_same_key_set_regardless_of_source(
         variants={},
         validity=validity,
         published={TBX5},
+        burden={},
     )
 
     records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
@@ -363,6 +383,7 @@ def test_the_bundle_does_not_resort_the_records_validity_py_already_ordered(
         variants={},
         validity=validity,
         published={TBX5},
+        burden={},
     )
 
     records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
@@ -394,6 +415,7 @@ def test_every_bundle_path_the_index_advertises_was_written(tmp_path: Path) -> N
         variants={},
         validity={},
         published={TBX5, GATA4},
+        burden={},
     )
 
     advertised = [str(entry["bundle"]) for entry in _entries(tmp_path)]
@@ -454,6 +476,7 @@ def test_a_contested_gene_is_flagged_in_both_the_index_and_the_bundle(
         variants={},
         validity=validity,
         published={TBX5, GATA4},
+        burden={},
     )
 
     entries = _by_gene(tmp_path)
@@ -502,7 +525,14 @@ def test_confidence_is_broken_down_by_lesion_group(tmp_path: Path) -> None:
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity, published={TBX5}
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity=validity,
+        published={TBX5},
+        burden={},
     )
 
     entry = _entries(tmp_path)[0]
@@ -535,7 +565,14 @@ def test_evidence_counts_are_carried_per_evidence_class(tmp_path: Path) -> None:
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     assert _entries(tmp_path)[0]["evidence_counts"] == {"functional_model": 1, "genetic_case": 2}
@@ -575,6 +612,7 @@ def test_the_browse_counts_match_the_bundle_they_link_to(tmp_path: Path) -> None
         },
         validity={},
         published={TBX5, GATA4},
+        burden={},
     )
 
     counted = {
@@ -620,6 +658,7 @@ def test_a_gene_absent_from_the_registry_keeps_its_hgnc_id_as_its_label(
         variants={},
         validity={},
         published={TBX5, GATA4},
+        burden={},
     )
 
     entries = _by_gene(tmp_path)
@@ -633,7 +672,14 @@ def test_a_bundle_carries_its_assertions_in_full(tmp_path: Path) -> None:
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        _corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -672,7 +718,14 @@ def test_a_bundle_carries_every_functional_record_about_the_gene(tmp_path: Path)
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -705,6 +758,7 @@ def test_a_bundle_carries_the_omics_summaries_verbatim(tmp_path: Path) -> None:
         variants={},
         validity={},
         published={TBX5},
+        burden={},
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["omics"] == {
@@ -734,6 +788,7 @@ def test_a_bundle_embeds_its_variants_rather_than_linking_them(tmp_path: Path) -
         variants={TBX5: [_variant(vrs_id="ga4gh:VA.2"), _variant(vrs_id="ga4gh:VA.1")]},
         validity={},
         published={TBX5},
+        burden={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -746,7 +801,14 @@ def test_a_gene_with_no_omics_or_variants_gets_empty_containers(tmp_path: Path) 
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        _corpus(), emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -783,6 +845,7 @@ def test_a_bundle_holds_only_its_own_genes_evidence(tmp_path: Path) -> None:
         variants={TBX5: [_variant()], GATA4: [_variant(gene=GATA4, vrs_id="ga4gh:VA.y")]},
         validity={},
         published={TBX5, GATA4},
+        burden={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_4173.json")
@@ -824,6 +887,7 @@ def test_the_index_is_ordered_by_hgnc_id_rather_than_by_symbol(tmp_path: Path) -
         variants={},
         validity={},
         published={TBX5, GATA4},
+        burden={},
     )
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5, GATA4]
@@ -853,7 +917,14 @@ def test_bundle_assertions_and_functional_records_are_ordered_by_id(tmp_path: Pa
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -895,7 +966,14 @@ def test_a_bundle_lists_the_publications_its_evidence_cites(tmp_path: Path) -> N
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5}
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["publications"] == [
@@ -951,6 +1029,7 @@ def test_a_gene_with_evidence_but_outside_the_published_set_is_not_published(
         variants={GATA4: [_variant(gene=GATA4)]},
         validity={},
         published={TBX5},
+        burden={},
     )
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5]
@@ -985,6 +1064,7 @@ def test_a_bundle_that_cannot_be_written_leaves_no_index_at_all(tmp_path: Path) 
             variants={},
             validity={},
             published={TBX5},
+            burden={},
         )
 
     assert not (tmp_path / "genes" / "index.json").exists()
@@ -1008,6 +1088,7 @@ def test_the_index_is_emitted_for_an_empty_corpus(tmp_path: Path) -> None:
         variants={},
         validity={},
         published=set(),
+        burden={},
     )
 
     assert _read(tmp_path, "genes/index.json") == {"genes": []}
@@ -1060,7 +1141,14 @@ def test_a_contested_gene_names_every_declared_lesion_group_as_conflicting(
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity=validity, published={TBX5}
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity=validity,
+        published={TBX5},
+        burden={},
     )
 
     entry = _entries(tmp_path)[0]
@@ -1117,6 +1205,7 @@ def test_the_conflicting_groups_are_a_subset_of_the_groups_that_carry_confidence
         variants={},
         validity=validity,
         published={TBX5, GATA4},
+        burden={},
     )
 
     for entry in _entries(tmp_path):
@@ -1125,3 +1214,81 @@ def test_the_conflicting_groups_are_a_subset_of_the_groups_that_carry_confidence
     rows = _by_gene(tmp_path)
     assert rows[TBX5]["conflicting_lesion_groups"] == ["septal"]
     assert rows[GATA4]["conflicting_lesion_groups"] == []
+
+
+def test_the_bundle_carries_a_genes_burden_rows_and_the_browse_row_counts_them(
+    tmp_path: Path,
+) -> None:
+    """Both halves, because neither is guarded by the other.
+
+    Measured 2026-08-05: with `burden={}` at every call site in this file, a
+    mutant emitting `"burden": []` unconditionally and a mutant emitting
+    `"burden_row_count": 0` unconditionally both survived the whole suite. An
+    empty fixture cannot tell a builder that publishes from one that drops.
+
+    The count is asserted against the same list the bundle embeds. A browse row
+    promising nine rows of burden evidence on a page carrying none is the browse
+    layer lying about the page -- the reason `variant_count` is derived the same
+    way one line above it.
+    """
+    emitter = Emitter(root=tmp_path)
+    rows = [
+        BurdenRow(
+            study="PMID:42230622",
+            gene=TBX5,
+            cohort_stratum=stratum,
+            lesion_group=None,
+            variant_class="snv_indel",
+            consequence_class="lof",
+            origin="any",
+            maf_max=0.001,
+            count_unit="individuals",
+            n_case_carriers=5,
+            n_cases=1471,
+            comparator="control_cohort",
+            n_control_carriers=0,
+            n_controls=45082,
+            expected_count=None,
+            effect=None,
+            effect_measure="odds_ratio",
+            effect_bound="unbounded_above",
+            ci_low=28.1,
+            ci_high=None,
+            pvalue=3.13e-08,
+            pvalue_test="fisher_exact",
+            pvalue_adjusted=None,
+            pvalue_adjustment=None,
+            case_cohorts=("cnchd", "ddd"),
+            control_cohorts=("ukbb",),
+            method_note=None,
+            source="audain2026_sd3",
+        )
+        for stratum in ("all", "syndromic")
+    ]
+
+    build_genes(
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5, GATA4},
+        burden={TBX5: rows},
+    )
+
+    bundle = _read(tmp_path, "genes/HGNC_11604.json")
+    assert [row["cohort_stratum"] for row in bundle["burden"]] == ["all", "syndromic"]
+    assert bundle["burden"][0]["case_cohorts"] == ["cnchd", "ddd"]
+    # The unbounded row publishes no number and keeps its lower bound, which is
+    # the whole finding. `is None`, not `== None`: a consumer branches on it.
+    assert bundle["burden"][0]["effect"] is None
+    assert bundle["burden"][0]["effect_bound"] == "unbounded_above"
+    assert bundle["burden"][0]["ci_low"] == 28.1
+
+    rows_by_gene = _by_gene(tmp_path)
+    assert rows_by_gene[TBX5]["burden_row_count"] == 2
+    # A published gene no study reported carries the empty shape, never a
+    # missing key: "no study reported this gene" must not read as a dropped join.
+    assert rows_by_gene[GATA4]["burden_row_count"] == 0
+    assert _read(tmp_path, "genes/HGNC_4173.json")["burden"] == []

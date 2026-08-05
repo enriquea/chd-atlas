@@ -52,7 +52,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.2",
+  "schema_version": "2.5",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -90,7 +90,15 @@ wrong by the next one.
   published gene set from the genes this atlas has curated to the genes a
   ClinGen expert panel calls definitive. More rows of an unchanged shape is not
   a schema change; the new field is, and it is what tells the two kinds of row
-  apart.
+  apart. `2.3` added `burden` to every gene bundle and `burden_row_count` to
+  every gene index row, again additively; both keys are always present, so a
+  2.2 reader keeps working and a 2.3 reader never guards for a missing one.
+  `2.4` added `pvalue_adjusted` and `pvalue_adjustment` to every burden object,
+  and `2.5` added `count_unit`. Both additive, both always present. Both carry a
+  *display* obligation heavier than the parsing one, described with the
+  [`burden` array](#the-bundles-burden-array-per-study-never-pooled) below: a raw
+  and a corrected p can point opposite ways, and two rows counting different
+  units are not comparable at all.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -156,7 +164,8 @@ atlas behind it at all.
       "lesion_groups": ["septal"],
       "symbol": "TBX5",
       "validity_state": "expert_curated",
-      "variant_count": 0
+      "variant_count": 0,
+      "burden_row_count": 8
     }
   ]
 }
@@ -291,7 +300,8 @@ One gene's whole detail page, in one fetch.
   "assertions": [ { "id": "CHDA:AST:0000001", "lesion_groups": ["septal"], "evidence": [ … ] } ],
   "functional": [],
   "variants": [],
-  "omics": {}
+  "omics": {},
+  "burden": [ { "study": "PMID:42230622", "cohort_stratum": "all", … } ]
 }
 ```
 
@@ -312,8 +322,8 @@ One gene's whole detail page, in one fetch.
   is the panel's classification plus whatever this atlas has recorded, which
   may be nothing at all. An empty `assertions` array is a curation gap, never a
   fetch that failed.
-- `omics` and `variants` are always present and may be empty. Read them without
-  guarding for a missing key.
+- `omics`, `variants` and `burden` are always present and may be empty. Read
+  them without guarding for a missing key.
 - **`variants` are embedded; omics rows are linked.** That asymmetry is a
   curation policy, not a property of the data — this atlas curates variants by
   hand, so the count per gene is bounded by effort. Omics tables are not, so a
@@ -418,6 +428,170 @@ behind those fields live:
 
 `sources.json` (below) carries the licence terms this atlas mirrors ClinGen
 and GenCC under, the same way it does for HPO.
+
+### The bundle's `burden` array: per study, never pooled
+
+Published rare-variant burden statistics for the gene, one object per
+(study, cohort stratum, variant class, consequence class, frequency threshold).
+**290 rows reach the API**, across the 23 published genes, from
+3 studies (PMID:34324492, PMID:40127276, PMID:42230622). `mirrors/burden.tsv`
+holds 1,475 rows for 150 genes; the other 1,185, covering
+127 genes, are for genes the site does not publish and reach no
+bundle and no page. They are held
+so that widening the publication gate later needs no re-mirroring, which is the
+same reason `mirrors/genes.tsv` registers 154 genes and 23 publish.
+`burden_row_count` on the browse row is this array's length.
+
+Every count in this section is asserted against a real build by
+`tests/test_site_is_consumable.py`, so it fails rather than rots when a study
+lands. It rotted once — this paragraph described two studies and 200 rows for
+one commit after the third study shipped.
+
+```json
+{
+  "study": "PMID:42230622",
+  "cohort_stratum": "syndromic",
+  "lesion_group": null,
+  "variant_class": "snv_indel",
+  "consequence_class": "lof",
+  "origin": "any",
+  "maf_max": 0.001,
+  "count_unit": "individuals",
+  "n_case_carriers": 5,
+  "n_cases": 1471,
+  "comparator": "control_cohort",
+  "n_control_carriers": 0,
+  "n_controls": 45082,
+  "expected_count": null,
+  "effect": null,
+  "effect_measure": "odds_ratio",
+  "effect_bound": "unbounded_above",
+  "ci_low": 28.1,
+  "ci_high": null,
+  "pvalue": 3.13e-08,
+  "pvalue_test": "fisher_exact",
+  "pvalue_adjusted": null,
+  "pvalue_adjustment": null,
+  "case_cohorts": ["cnchd", "ddd", "nottingham"],
+  "control_cohorts": ["ukbb"],
+  "method_note": null,
+  "source": "audain2026_sd3"
+}
+```
+
+Every key is present on every object, `null` where the row's comparator does
+not populate it, so a consumer never has to guard for a missing one.
+
+**`count_unit` qualifies all four count keys, and they are not comparable
+without it.** The four studies this schema was designed against do not count the
+same thing:
+
+| `count_unit` | numerator | denominator |
+| --- | --- | --- |
+| `individuals` | people carrying at least one qualifying variant | people sequenced |
+| `alleles` | qualifying alleles observed | alleles called — roughly twice the people, and varying per gene with coverage |
+| `de_novo_mutations` | de novo mutations observed | **trios**, not alleles and not people |
+
+A consumer dividing `n_case_carriers` by `n_cases` across studies without
+reading this key is doing arithmetic on three different quantities. Someone
+carrying two qualifying variants counts once under `individuals` and twice under
+`alleles`.
+
+**`comparator` is the field the whole array turns on.** The published burden
+literature answers one question — is this gene hit more often than expected? —
+and differs only in what "expected" meant:
+
+| `comparator` | expectation from | populated | `effect_measure` |
+| --- | --- | --- | --- |
+| `control_cohort` | `n_control_carriers` / `n_controls` | both control fields | `odds_ratio`, `rate_ratio` |
+| `mutation_model` | `expected_count` | `expected_count` | `enrichment_ratio` |
+| `none` | nothing (a case series) | neither | none, and no `pvalue` |
+
+**Both `control_cohort` (245 rows) and `mutation_model` (45 rows) appear today;
+`none` does not.** PMID:40127276 contributes the `mutation_model` rows — de novo
+mutations in 3,887 trios against a mutability-based expectation — and they carry
+null control fields, a non-null `expected_count`, and an `enrichment_ratio`
+rather than an odds ratio. A consumer that reads only `n_control_carriers` will
+see `null` on 45 of the 290 rows, several of which are the strongest results the
+atlas publishes. The build refuses to publish a row whose statistic contradicts
+its comparator.
+
+**`consequence_class` is not a partition: `damaging` is the union of `lof` and
+`missense_damaging`.** PMID:40127276 reports its primary analysis over
+loss-of-function and damaging missense together, and publishes that composite
+alongside its two components — 30 of the 290 rows. Its `n_case_carriers` is
+exactly the sum of the two component rows for the same gene, stratum and
+comparator, verified on every one. **Summing `n_case_carriers` across
+`consequence_class` therefore double-counts those variants.** Group by
+`consequence_class` and pick, or exclude `damaging`; do not aggregate over it.
+The composite is published rather than dropped because its p-value is not a
+function of its components' and is the statistic that study defines its results
+by.
+
+Five obligations, each of which is a wrong claim if you get it wrong:
+
+1. **Never render `effect` without `effect_measure` beside it.** One column
+   holds odds ratios and de novo enrichments alike, and an odds ratio of 3.1 and
+   an enrichment of 3.1 are different claims. A cell reading `3.1` under a header
+   reading "effect" equates them.
+2. **`effect: null` with `effect_bound: "unbounded_above"` is the strongest
+   result in the data, not a missing one.** Fisher's exact test returns an
+   infinite odds ratio where no control carries; `Infinity` is accepted by
+   `JSON.parse` nowhere, so the number cannot be published and `ci_low` carries
+   the finding instead — "at least 28.1". 19 published rows today. Rendering it as
+   blank or as "not tested" discards the clearest signals in the study.
+3. **An absent (stratum, consequence) cell is not a null result — but why it is
+   absent is the study's rule, not the atlas's.** Read it per study rather than
+   as one law. For `PMID:42230622`, zero of its 1,192 mirror rows have no case
+   carrier *and* no control carrier, so a 2×2 of all zeros supports no test and
+   that study emitted none. The other two do not follow the same rule:
+   `PMID:34324492` tests one consequence class by construction (CNV deletions),
+   and `PMID:40127276` **observed 14,364 synonymous variants and still published
+   no synonymous row**, because its gene-level table reports only damaging
+   classes. So an absent cell means "this study did not report one here", and
+   only for `PMID:42230622` does it additionally mean "no carrier on either
+   side". One row in the mirror now does carry zeros on both sides.
+4. **Do not filter out `consequence_class: "synonymous"`.** It is a study's own
+   negative control — synonymous variants should show no enrichment — and where
+   one is significant, that gene's comparison is poorly calibrated, which a
+   reader can only see if you show it. **It is not available everywhere:** 69 of
+   the 290 published rows are synonymous and all of them come from
+   `PMID:42230622`. The other two studies publish no synonymous row at all, so
+   their results have no negative control on this page and must be read without
+   one. (This obligation previously called synonymous "the most numerous class,
+   435 rows against 345 loss-of-function". Both halves were measured against a
+   one-study corpus and are now false: loss-of-function is 92 and synonymous 69.)
+5. **Read `pvalue_adjusted` where it is present.** A raw and a corrected
+   p-value can point opposite ways: CHD7 in `PMID:34324492` is `0.0068` raw and
+   `0.991` after the study's own family-wise permutation correction, so a
+   consumer rendering `pvalue` alone shows as significant a result the study
+   reported as null. `pvalue_adjustment` names the correction, because a
+   family-wise permutation correction and a Bonferroni factor are different
+   claims. Both keys are `null` where the study published none — and there the
+   study's own comparison count, `tests_reported` in `publications.json`, is
+   what a reader has instead. **The atlas computes no correction itself.**
+6. **Do not pool across studies.** The CHD literature reuses cohorts, so a
+   combined p-value counts the same people twice. `case_cohorts` and
+   `control_cohorts` name the collections each row drew on precisely so overlap
+   is visible.
+
+   **These ids do not resolve inside this API today.** `case_cohorts` and
+   `control_cohorts` publish bare strings like `"taa_cases"`, and no published
+   JSON file maps them to a name, a URL or the caveats that qualify them — those
+   live in `curation/cohorts.yaml` in the repository, and reach a reader only
+   through the gene *page*, under "About these cohorts". That is a real gap for a
+   programmatic consumer: `taa_cases` is 777 thoracic aortic aneurysm probands
+   who do not have congenital heart disease, and nothing in the JSON says so.
+   Publishing a `cohorts.json` is queued. Until it lands, treat an id you cannot
+   resolve as a caveat you have not read, and use the HTML page or the repository
+   file rather than assuming the collection is a plain CHD case set.
+
+`n_cases` and `n_controls` are the row's own denominators, and they are what the
+statistic beside them was computed from. They may differ from the figures a
+paper's abstract reports — for `PMID:42230622` they are 3,876 cases (1,471
+syndromic + 2,405 non-syndromic) against 45,082 controls, while the abstract
+gives 4,747 and 52,881. The paper does not reconcile the two. Use the row's own
+denominators: they are the ones its statistic was computed from.
 
 ## `genes/<slug>.html`
 
@@ -565,7 +739,8 @@ HGNC id and leaves the mapping to the authority that maintains it.
       "pmcid": null,
       "own_lab": false,
       "cohort_size": null,
-      "ancestry": []
+      "ancestry": [],
+      "tests_reported": null
     }
   ]
 }

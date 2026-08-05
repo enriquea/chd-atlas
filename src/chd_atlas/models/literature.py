@@ -22,6 +22,26 @@ class Publication(BaseModel):
     own_lab: bool = False
     cohort_size: int | None = Field(default=None, ge=1)
     ancestry: list[str] = Field(default_factory=list)
+    # How many comparisons the study reported, for a reader judging an
+    # uncorrected p-value off a burden table.
+    #
+    # Every burden study this atlas will cite is an exome- or genome-wide scan,
+    # and their supplements publish raw p-values: Supplementary Data 3 of
+    # PMID:42230622 carries `fet.p_value` and no FDR or q-value column at all.
+    # So the atlas cannot republish a corrected p, and computing one would be
+    # authoring a statistic of its own (D12/D33).
+    #
+    # Naming the denominator is the honest alternative -- it is a count the
+    # study made, not a judgement the atlas adds, and it is what lets a reader
+    # apply their own threshold. Measured 2026-08-05 for PMID:42230622:
+    # 46,342 + 46,081 + 46,186 = 138,609 gene x consequence-class x stratum
+    # comparisons, of which 187 reach a published page. Without this figure a
+    # page shows `p = 0.0015` beside a green `definitive` chip and says nothing
+    # about the 138,608 other tests it was drawn from.
+    #
+    # Optional: a family-based linkage study reports no such count, and
+    # `pages._method_line` simply omits the sentence when it is absent.
+    tests_reported: int | None = Field(default=None, ge=1)
 
 
 class PublicationFile(BaseModel):

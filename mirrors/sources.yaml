@@ -2,6 +2,63 @@
 # and the licence that governs republishing it. Verified against each authority
 # on the `retrieved_on` date recorded below.
 sources:
+  - id: audain2026_sd3
+    name: >-
+      Audain et al. 2026, npj Genomic Medicine 11, Supplementary Data 3
+      (per-gene rare variant burden, aCHD / sCHD / nsCHD versus controls)
+    # A journal supplement carries no release tag, so the file's own sha256 is
+    # the version -- and unlike a `retrieved_on` date it is checkable: a curator
+    # can prove they hold the identical workbook these 1,192 rows came from.
+    # The file itself is NOT committed (`local/` is gitignored): it is 11 MB,
+    # its redistribution terms are the article's, and the reviewable artifact is
+    # `mirrors/burden.tsv`. Reproduce with `scripts/convert_burden.py`.
+    version: "sha256:8ebb6fdceb38b0099d6229a1ebf4d77db9f9492a62cfafb569d2865f9645ee2b"
+    retrieved_on: 2026-08-04
+    url: https://static-content.springer.com/esm/art%3A10.1038%2Fs41525-026-00582-z/MediaObjects/41525_2026_582_MOESM4_ESM.xlsx
+    # "This article is licensed under a Creative Commons Attribution 4.0
+    # International License ... To view a copy of this licence, visit
+    # http://creativecommons.org/licenses/by/4.0/" -- the article's own licence
+    # statement, which covers its supplementary material.
+    licence: CC-BY-4.0
+    redistribution: permitted_with_attribution
+  - id: sierant2025_ds6
+    name: >-
+      Sierant et al. 2025, PNAS 122(13) e2420343122, Dataset S6
+      (gene-level meta-analysis over all 248 MIPseq panel genes: Poisson de novo
+      enrichment in trios, and Fisher case-control of ultra-rare TUVs against
+      gnomAD)
+    version: "sha256:d8e9f7777b329c810adde8b9f4a0f91a4d1a6211b760daeb9329ae6f36606daa"
+    retrieved_on: 2026-08-05
+    # The canonical location. RETRIEVED VIA PMC, not from here: pnas.org answers
+    # 403 to a scripted request, so the workbook was taken from the Europe PMC
+    # open-access supplementary bundle for PMC12002227 and its sha256 recorded
+    # above. The two are the same file; the sha256 is what lets a curator prove
+    # it, which is the reason this field is a checksum rather than a date.
+    url: https://www.pnas.org/doi/suppl/10.1073/pnas.2420343122/suppl_file/pnas.2420343122.sd06.xlsx
+    # "Copyright (c) 2025 the Author(s). Published by PNAS. This open access
+    # article is distributed under Creative Commons Attribution License 4.0
+    # (CC BY)." -- the article's own permissions statement, which covers its
+    # supplementary material. Confirmed independently three ways on 2026-08-05,
+    # because PNAS uses CC BY-NC-ND on some content: the article statement
+    # above, Crossref's licence record for the DOI, and NCBI's own OA service,
+    # which returns `license="CC BY"` for PMC12002227.
+    licence: CC-BY-4.0
+    redistribution: permitted_with_attribution
+  - id: audain2021_s6
+    name: >-
+      Audain et al. 2021, PLoS Genetics 17(7) e1009679, S6 Table Sheet A
+      (gene-based case/control CNV-deletion permutation testing, PLINK)
+    version: "sha256:e8bd50c0a454d3f5563a6c1ee52c62206d98840cc696c3c8db4c0e0eccb63e62"
+    retrieved_on: 2026-08-05
+    url: https://journals.plos.org/plosgenetics/article/file?id=10.1371/journal.pgen.1009679.s011&type=supplementary
+    # "This is an open access article, free of all copyright, and may be freely
+    # reproduced, distributed, transmitted, modified, built upon, or otherwise
+    # used by anyone for any lawful purpose. The work is made available under
+    # the Creative Commons CC0 public domain dedication." -- the article's own
+    # licence statement, which covers its supplementary material. CC0, not the
+    # CC BY that PLOS uses for some titles: read off this article, not assumed.
+    licence: CC0-1.0
+    redistribution: permitted
   - id: clingen
     name: Clinical Genome Resource (ClinGen) Gene-Disease Validity
     # The bulk CSV carries no version tag. Its banner stamps the date the file

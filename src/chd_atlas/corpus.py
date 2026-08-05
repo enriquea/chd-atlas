@@ -12,6 +12,7 @@ from ruamel.yaml.error import YAMLError
 from chd_atlas.fs import list_dir
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.models.assertion import AssertionFile, LesionAssertion
+from chd_atlas.models.cohort import Cohort, CohortFile
 from chd_atlas.models.dataset import Dataset
 from chd_atlas.models.functional import FunctionalEvidence, FunctionalFile
 from chd_atlas.models.literature import (
@@ -37,6 +38,7 @@ class Corpus:
     phenotypes: tuple[PhenotypeTerm, ...] = ()
     datasets: tuple[Dataset, ...] = ()
     chd_scope: tuple[ScopeEntry, ...] = ()
+    cohorts: tuple[Cohort, ...] = ()
 
 
 @dataclass
@@ -124,6 +126,7 @@ def unexpected_curation_entries(root: Path) -> list[ValidationIssue]:
     expected_files = {
         ".id_registry.yaml",
         "chd_scope.yaml",
+        "cohorts.yaml",
         "featured.yaml",
         "phenotypes.yaml",
         "publications.yaml",
@@ -224,6 +227,13 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         if parsed_chd_scope is not None:
             chd_scope = tuple(parsed_chd_scope.diseases)
 
+    cohorts: tuple[Cohort, ...] = ()
+    cohorts_path = curation / "cohorts.yaml"
+    if cohorts_path.is_file():
+        parsed_cohorts = _parse(CohortFile, cohorts_path, acc)
+        if parsed_cohorts is not None:
+            cohorts = tuple(parsed_cohorts.cohorts)
+
     corpus = Corpus(
         root=root,
         assertions=tuple(assertions),
@@ -233,5 +243,6 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         phenotypes=phenotypes,
         datasets=tuple(datasets),
         chd_scope=chd_scope,
+        cohorts=cohorts,
     )
     return corpus, acc.issues

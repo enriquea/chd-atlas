@@ -32,3 +32,222 @@ publications:
     study_type: family_linkage
     doi: 10.1038/ng0197-30
     own_lab: false
+  - id: PMID:40127276
+    title: >-
+      Genomic analysis of 11,555 probands identifies 60 dominant congenital heart
+      disease genes.
+    journal: Proceedings of the National Academy of Sciences of the United States of America
+    year: 2025
+    authors:
+      - Sierant MC
+      - Jin SC
+      - Bilguvar K
+      - Morton SU
+      - Dong W
+      - Jiang W
+      - Lu Z
+      - Li B
+      - López-Giráldez F
+      - Tikhonova I
+      - Zeng X
+      - Lu Q
+      - Choi J
+      - Zhang J
+      - Nelson-Williams C
+      - Knight JR
+      - Zhao H
+      - Cao J
+      - Mane S
+      - Sedore SC
+      - Gruber PJ
+      - Lek M
+      - Goldmuntz E
+      - Deanfield J
+      - Giardini A
+      - Mital S
+      - Russell M
+      - Gaynor JW
+      - King E
+      - Wagner M
+      - Srivastava D
+      - Shen Y
+      - Bernstein D
+      - Porter GA Jr
+      - Newburger JW
+      - Seidman JG
+      - Roberts AE
+      - Yandell M
+      - Yost HJ
+      - Tristani-Firouzi M
+      - Kim R
+      - Chung WK
+      - Gelb BD
+      - Seidman CE
+      - Brueckner M
+      - Lifton RP
+    # Read off the paper, which runs two designs and combines them. Its de novo
+    # arm is 3,887 parent-offspring trios sequenced by MIPseq and WES, which is
+    # what `trio_wes` names; its case-control arm compares 11,555 probands
+    # against gnomAD. `meta_analysis` would be the wrong reading despite the
+    # paper's own word for the combining step: this study generated its data
+    # (MIPseq on 5,929 probands), where PMID:34324492 aggregates other people's
+    # published variants and is the entry here that earns that value.
+    study_type: trio_wes
+    doi: 10.1073/pnas.2420343122
+    pmcid: PMC12002227
+    own_lab: false
+    # 11,555 CHD probands. The de novo arm uses the 3,887 of them who are
+    # complete trios; the case-control arm uses all 11,555. Both denominators
+    # travel on the burden rows themselves, so this is the study's cohort and
+    # not either arm's.
+    cohort_size: 11555
+    # 248 prespecified panel genes, and the study's JL-FDR accounts for exactly
+    # that number -- "to generate meta-analysis P-values and FDR statistics that
+    # account for the number of genes tested". Counted 2026-08-05 from Dataset
+    # S6, which carries 248 gene rows with no duplicates. Unlike PMID:42230622,
+    # this study publishes a corrected p on every row, so the page points at
+    # that column rather than leaning on this denominator.
+    tests_reported: 248
+    # NO ANCESTRY FIELD. The paper reports none -- searched 2026-08-05 for
+    # "ancestry", "ancestries", "European" and "self-reported race" across its
+    # full text, with no match. Leaving the list empty says that; inventing a
+    # composition from the recruiting centres would not.
+  - id: PMID:42230622
+    title: >-
+      Assessing the contribution of rare variants to congenital heart disease
+      through a large-scale case-control exome study.
+    journal: NPJ genomic medicine
+    year: 2026
+    authors:
+      - Audain E
+      - Wilsdon A
+      - Dombrowsky G
+      - Sifrim A
+      - Breckpot J
+      - Perez-Riverol Y
+      - Loughna S
+      - Daly A
+      - Antoniou P
+      - Hofmann P
+      - Perez-Riverol A
+      - Kahlert AK
+      - Bauer U
+      - Pickardt T
+      - Klaassen S
+      - Berger F
+      - Daehnert I
+      - Dittrich S
+      - Stiller B
+      - Abdul-Khaliq H
+      - Bu'lock F
+      - Uebing A
+      - Kramer HH
+      - Iyer V
+      - Larsen LA
+      - Brook JD
+      - Hitz MP
+    # Unrelated CHD cases compared against an unrelated control cohort, gene by
+    # gene, by Fisher's exact test. Read off the paper, per this file's rule.
+    study_type: case_control
+    doi: 10.1038/s41525-026-00582-z
+    pmcid: PMC13230774
+    own_lab: true
+    # 3,876, not the 4,747 the abstract reports. 3,876 is the per-analysis set
+    # every row of `mirrors/burden.tsv` is denominated on (1,471 syndromic +
+    # 2,405 non-syndromic) and the number the published odds ratios were
+    # computed from. The paper does not reconcile the two figures, so no reason
+    # for the gap is asserted here. Recording the larger one would put a
+    # denominator on the page that no statistic beside it used.
+    cohort_size: 3876
+    # "Our cohort was predominantly of European ancestry (~92%), with limited
+    # representation from other ancestries, which constrains the
+    # generalisability of allele frequency estimates and genetic associations."
+    ancestry:
+      - predominantly European (~92%)
+    # 46,342 + 46,081 + 46,186 rows across the three sheets of Supplementary
+    # Data 3 — one Fisher test each, counted 2026-08-05 from the workbook. The
+    # atlas publishes 187 of them. Without this figure a gene page shows an
+    # uncorrected p of 0.0015 with nothing saying what it was drawn from.
+    tests_reported: 138609
+  - id: PMID:34324492
+    title: >-
+      Integrative analysis of genomic variants reveals new associations of
+      candidate haploinsufficient genes with congenital heart disease.
+    journal: PLoS genetics
+    year: 2021
+    authors:
+      - Audain E
+      - Wilsdon A
+      - Breckpot J
+      - Izarzugaza JMG
+      - Fitzgerald TW
+      - Kahlert AK
+      - Sifrim A
+      - Wünnemann F
+      - Perez-Riverol Y
+      - Abdul-Khaliq H
+      - Bak M
+      - Bassett AS
+      - Benson DW
+      - Berger F
+      - Daehnert I
+      - Devriendt K
+      - Dittrich S
+      - Daubeney PE
+      - Garg V
+      - Hackmann K
+      - Hoff K
+      - Hofmann P
+      - Dombrowsky G
+      - Pickardt T
+      - Bauer U
+      - Keavney BD
+      - Klaassen S
+      - Kramer HH
+      - Marshall CR
+      - Milewicz DM
+      - Lemaire S
+      - Coselli JS
+      - Mitchell ME
+      - Tomita-Mitchell A
+      - Prakash SK
+      - Stamm K
+      - Stewart AFR
+      - Silversides CK
+      - Siebert R
+      - Stiller B
+      - Rosenfeld JA
+      - Vater I
+      - Postma AV
+      - Caliebe A
+      - Brook JD
+      - Andelfinger G
+      - Hurles ME
+      - Thienpont B
+      - Larsen LA
+      - Hitz MP
+    # Rare CNV deletions in cases against population controls, gene by gene, by
+    # PLINK permutation; plus de novo variation-rate testing in trios. Read off
+    # the paper, per this file's rule.
+    study_type: case_control
+    doi: 10.1371/journal.pgen.1009679
+    pmcid: PMC8354477
+    own_lab: true
+    # 7,958 individuals contributed CNV data. NOT all of them have congenital
+    # heart disease: the abstract says "probands with CHD including cases with
+    # sporadic thoracic aortic aneurysm", and S2 Table shows 777 of the 7,958
+    # are a TAA series (PMID 21092924). The `taa_cases` cohort in
+    # curation/cohorts.yaml is what makes that visible on every row.
+    cohort_size: 7958
+    # 11,515 genes tested by permutation for CNV deletion burden (S6 Table), of
+    # which 528 reach an adjusted p below 0.05. Counted 2026-08-05 from the
+    # workbook. This study, unlike PMID:42230622, publishes its correction --
+    # PLINK's EMP2 -- so `pvalue_adjusted` carries it rather than the page
+    # having to name the denominator.
+    tests_reported: 11515
+    # NOTE ON THE ERRATUM (PMID:34547032, PLoS Genet 17(9):e1009809): it
+    # corrects one author's name -- "The thirteenth author's name is spelled
+    # incorrectly. The correct name is: D. Woodrow Benson." -- and no data. The
+    # name above is PubMed's, which already carries the correction. Checked
+    # before any number from this paper was transcribed, because an erratum on
+    # a burden paper could just as easily have corrected the counts.

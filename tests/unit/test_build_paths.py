@@ -9,6 +9,7 @@ from chd_atlas.build.paths import gene_bundle_path, gene_page_path, slug
 from chd_atlas.identifiers import (
     AccessionId,
     AssertionId,
+    CohortId,
     ContrastId,
     DiseaseId,
     Doi,
@@ -53,6 +54,8 @@ SAMPLE: Final = [
     (AccessionId, "EGAS00001000123"),
     (ContrastId, "tof_vs_control"),
     (ContrastId, "hgnc_11604"),
+    (CohortId, "ddd"),
+    (CohortId, "ukbb"),
 ]
 
 
@@ -106,9 +109,15 @@ def test_slug_is_injective_over_the_ascii_values_of_every_grammar_but_doi() -> N
 
     Within ASCII the only characters slug rewrites are the colon and the
     underscore, and no two values differ solely by swapping the two: the
-    underscore appears only in `ContrastId`, which admits no capital, while every
-    grammar bearing a colon starts with one — and the hyphen and dot, which the
-    parametrised cases above pin, are left alone entirely.
+    underscore appears only in `ContrastId` and `CohortId`, neither of which
+    admits a capital, while every grammar bearing a colon starts with one — and
+    the hyphen and dot, which the parametrised cases above pin, are left alone
+    entirely.
+
+    `CohortId` was added on 2026-08-04 and this sentence named `ContrastId`
+    alone until then. The argument survived the addition because the two share a
+    grammar shape, but it had to be re-checked rather than assumed: a grammar
+    admitting both an underscore and a capital would break the claim outright.
 
     Three things this does not cover, each with its own test below: `Doi`, any
     non-ASCII value of any grammar, and two values a case-insensitive filesystem

@@ -218,6 +218,264 @@ class StudyType(StrEnum):
     META_ANALYSIS = "meta_analysis"
 
 
+class BurdenComparator(StrEnum):
+    """What a burden row's statistic compared the case count against.
+
+    This is the discriminator the whole burden schema turns on. Every published
+    burden analysis asks the same question -- is this gene hit more often than
+    expected? -- and differs only in where "expected" comes from:
+
+    - `CONTROL_COHORT`: an observed rate in sequenced controls (case-control).
+    - `MUTATION_MODEL`: a per-gene expectation from a trinucleotide mutation
+      rate model, the standard for de novo enrichment in trios, where there is
+      no control group at all.
+    - `NONE`: a case series. A numerator and a denominator, and nothing to
+      compare them with -- so no effect size and no p-value may be published,
+      which `validate_burden` enforces rather than trusts.
+
+    A row's design is a property of the *row*, not of the study: one paper
+    routinely contributes de novo rows and case-control rows, so this cannot be
+    hoisted onto the publication record.
+    """
+
+    CONTROL_COHORT = "control_cohort"
+    MUTATION_MODEL = "mutation_model"
+    NONE = "none"
+
+
+class EffectMeasure(StrEnum):
+    """Which quantity a burden row's `effect` column holds.
+
+    Mandatory whenever an effect is present, because an odds ratio of 3.1 and a
+    de novo enrichment of 3.1 are different claims and a column headed "effect"
+    holding a bare number silently equates them. `EFFECT_MEASURES` below pins
+    which measures each comparator can produce; the renderer additionally must
+    never print the number without this label.
+    """
+
+    ODDS_RATIO = "odds_ratio"
+    ENRICHMENT_RATIO = "enrichment_ratio"
+    RATE_RATIO = "rate_ratio"
+
+
+# Which effect measures each comparator can legitimately yield. A mutation
+# model cannot produce an odds ratio -- it has no control odds -- and a control
+# cohort cannot produce an "enrichment over expectation" because its expectation
+# is observed, not modelled. Read by `validate_burden`; the empty set for `NONE`
+# is what makes a case series unable to carry an effect at all.
+EFFECT_MEASURES: Final[dict[BurdenComparator, frozenset[EffectMeasure]]] = {
+    BurdenComparator.CONTROL_COHORT: frozenset(
+        {EffectMeasure.ODDS_RATIO, EffectMeasure.RATE_RATIO}
+    ),
+    BurdenComparator.MUTATION_MODEL: frozenset({EffectMeasure.ENRICHMENT_RATIO}),
+    BurdenComparator.NONE: frozenset(),
+}
+
+
+class EffectBound(StrEnum):
+    """Why a row reports no finite effect size though the test ran.
+
+    Fisher's exact test returns an unbounded odds ratio when no control carries
+    the variant class, and the published upper confidence bound is likewise
+    infinite. Measured 2026-08-04 against Supplementary Data 3 of PMID 42230622:
+    927 of 138,609 rows across its three strata report `Infinity`, always in
+    `fet.odds_ratio` and `fet.ci_95_upper` together and nowhere else.
+
+    Those rows carry the *strongest* signal in the study -- TAB2, 5 syndromic
+    carriers of 1,471 against 0 of 45,082 controls -- so dropping them would
+    discard the result the reader most wants. (This said "6 syndromic carriers"
+    until 2026-08-05; 6 is the *all-cases* count, of 3,876. Verified against the
+    mirror, the published bundle and the paper's own Table 1.)
+
+    They cannot be published as a number either:
+    `encode_json` sets `allow_nan=False`, and `Infinity` is accepted by Python's
+    `json.loads` but rejected by `JSON.parse`, so it would break every page
+    while the manifest checksum still verified.
+
+    The row therefore carries a null `effect`, a null `ci_high`, and this flag,
+    and a page renders "unbounded" rather than a blank or an invented ceiling.
+
+    There is deliberately no `unbounded_below` member. An odds ratio of zero --
+    13,430 rows in the same sheet, where no case carries -- is finite, publishes
+    as `0.0`, and comes with a finite upper bound, so it needs no flag.
+    """
+
+    UNBOUNDED_ABOVE = "unbounded_above"
+
+
+class CohortStratum(StrEnum):
+    """Which slice of a study's cases a burden row counted.
+
+    Separate from `SyndromicStatus`, which records what a curator asserts about
+    a gene. This records how a *published analysis* partitioned its cohort, and
+    its `ALL` is not that enum's `BOTH`: `ALL` means the undivided case set,
+    while `BOTH` means a gene causes isolated and syndromic disease alike.
+    """
+
+    ALL = "all"
+    SYNDROMIC = "syndromic"
+    NONSYNDROMIC = "nonsyndromic"
+
+
+class VariantClass(StrEnum):
+    """What kind of DNA change a burden row counted.
+
+    Kept separate from `ConsequenceClass` rather than merged into one
+    "variant category": deletion-and-loss-of-function and SNV-and-loss-of-function
+    are both real cells, and merging them would make "all loss-of-function
+    evidence for this gene, whatever the variant type" unaskable.
+    """
+
+    SNV_INDEL = "snv_indel"
+    CNV_DELETION = "cnv_deletion"
+    CNV_DUPLICATION = "cnv_duplication"
+    SV_OTHER = "sv_other"
+
+
+class ConsequenceClass(StrEnum):
+    """What the counted variants do to the protein.
+
+    `SYNONYMOUS` is a first-class member, not an artifact to be filtered out on
+    the way in. Synonymous variants should show no case-control enrichment, so a
+    synonymous row is the study's own negative control -- and several published
+    genes carry a nominally significant one. Publishing it beside the
+    loss-of-function row for the same gene, study and stratum is what lets a
+    reader judge how well that comparison was calibrated, which no other CHD
+    resource shows. `build/bundles.py` groups on that key for exactly this
+    reason; nothing anywhere may drop a row for being synonymous.
+    """
+
+    LOF = "lof"
+    MISSENSE_DAMAGING = "missense_damaging"
+    MISSENSE_ALL = "missense_all"
+    SYNONYMOUS = "synonymous"
+    ALL_CODING = "all_coding"
+    # Loss-of-function and damaging missense counted together, which is the
+    # composite most CHD burden papers report as their *primary* analysis --
+    # PMID:40127276's 60 genes are defined by it. Distinct from `ALL_CODING`,
+    # which would additionally include tolerated missense and synonymous
+    # variants and so is a different denominator, and not derivable from the two
+    # component rows: the composite carries its own p-value, which is not a
+    # function of theirs.
+    #
+    # A page showing all three must say that this row is the union of the other
+    # two rather than a third independent result. `build/burden.py` orders it
+    # first for that reason -- it is the headline, and its components read as a
+    # breakdown of it rather than as separate findings.
+    DAMAGING = "damaging"
+
+
+class VariantOrigin(StrEnum):
+    """Whether the counted variants were required to be de novo.
+
+    Without it, a trio study's de novo loss-of-function count and a
+    case-control study's rare-inherited loss-of-function count differ in no
+    published column and read as the same measurement.
+    """
+
+    DE_NOVO = "de_novo"
+    INHERITED = "inherited"
+    ANY = "any"
+    # PMID:40127276's "transmitted/unphased variants" (TUVs): its case-control
+    # arm removes de novo mutations, then pools variants whose transmission is
+    # *known* (in its 3,887 trios) with variants whose transmission is *unknown*
+    # (in its 7,668 singletons). Neither `INHERITED` nor `ANY` is true of that
+    # set -- `ANY` because de novo variants were deliberately excluded, and
+    # `INHERITED` because most of the set was never phased at all. Measured in
+    # its Dataset S4: of 36,054 variant rows, 27,429 are `Unphased`, 8,221
+    # `Trans` and 404 `DNM`, so the unphased majority is the whole difficulty.
+    TRANSMITTED_OR_UNPHASED = "transmitted_or_unphased"
+
+
+class CountUnit(StrEnum):
+    """What a burden row's numerator and denominator actually count.
+
+    **A count without its unit is the same defect as an effect without its
+    measure** -- see `EffectMeasure`. "12 / 21,768" and "6 / 7,107" are both
+    plausible burden cells, and read side by side they claim to be the same kind
+    of measurement. They are not, and no other column in this schema
+    distinguishes them.
+
+    Each member fixes *both* halves of the pair, which is why one column
+    suffices where the numerator and denominator are counted in different things:
+
+    - `INDIVIDUALS`: people carrying at least one qualifying variant, out of
+      people sequenced. Someone with two qualifying variants counts once.
+    - `ALLELES`: qualifying alleles observed, out of alleles called. Someone with
+      two qualifying variants counts twice, and the denominator is roughly twice
+      the sample size and varies gene by gene with coverage.
+    - `DE_NOVO_MUTATIONS`: de novo mutations observed, out of *trios*. The
+      denominator is families, not alleles, because a trio is what it takes to
+      call one.
+
+    The distinction was found, not assumed. Measured 2026-08-05 against
+    PMID:40127276's Dataset S6 and Dataset S4: its D-Mis case-control `Obs`
+    equals the number of qualifying variant rows in 245 of 248 genes but the
+    number of distinct probands in only 235 -- CACNA1A 80 variants across 79
+    probands, TSC1 36 across 34, LRP1 135 across 132 -- and `Obs` follows the
+    variant every time. Publishing that column under this atlas's previous
+    header, "cases (carriers / n)", would have asserted 21,768 people sequenced
+    where 11,555 were, and called alleles carriers.
+
+    Nothing here is inferable from `comparator`. A case-control study may count
+    people (PMID:42230622) or alleles (PMID:40127276), and both are ordinary
+    practice, so `validate_burden` asserts only the one implication that cannot
+    fail: counting de novo mutations requires a de novo variant set.
+    """
+
+    INDIVIDUALS = "individuals"
+    ALLELES = "alleles"
+    DE_NOVO_MUTATIONS = "de_novo_mutations"
+
+
+class StatisticalTest(StrEnum):
+    """Which test produced a burden row's p-value.
+
+    Deliberately not constrained against `BurdenComparator` the way
+    `EFFECT_MEASURES` constrains the measure. A binomial test appears against
+    both a control rate and a modelled rate in the published literature, so a
+    compatibility table here would encode a rule this project has not measured.
+    The one rule that *is* asserted -- a `NONE` comparator carries no test at
+    all -- lives in `validate_burden`.
+    """
+
+    FISHER_EXACT = "fisher_exact"
+    POISSON = "poisson"
+    BINOMIAL = "binomial"
+    # PLINK's `--mperm` CNV association test, which draws its null by permuting
+    # case/control labels rather than from a closed-form distribution. Added
+    # 2026-08-05 with PMID:34324492, whose whole CNV analysis uses it.
+    PERMUTATION = "permutation"
+    # DeNovoWEST and MuPIT both compare an observed de novo count against a
+    # per-gene mutation-rate model. Named for the family rather than the tool:
+    # PMID:34324492 reports `p_dnv` as the minimum of the two, so no single tool
+    # name would be true of the column.
+    MUTATION_RATE = "mutation_rate"
+
+
+class PvalueAdjustment(StrEnum):
+    """How a published corrected p-value was corrected.
+
+    **The atlas computes no correction and never will** -- that would be
+    authoring a statistic (D12/D33). This records one a study published.
+
+    It exists because the 2026-08-05 review found the sharpest gap in this
+    layer: gene pages showed 187 uncorrected p-values, of which 32 clear 0.05
+    and 3 survive Bonferroni over the study's own 138,609 tests. That study
+    published no corrected column, so the page names the denominator instead.
+    PMID:34324492 *does* publish one -- PLINK's EMP2 beside EMP1, and a
+    Bonferroni-adjusted p beside the raw de novo p -- and dropping it would
+    discard the one number that answers the question the review raised.
+
+    `FAMILYWISE_PERMUTATION` is PLINK's EMP2: the max(T) family-wise error rate
+    over the same permutations that produced EMP1, not a Bonferroni factor.
+    """
+
+    BONFERRONI = "bonferroni"
+    FAMILYWISE_PERMUTATION = "familywise_permutation"
+    BENJAMINI_HOCHBERG = "benjamini_hochberg"
+
+
 class FeaturedTopic(StrEnum):
     GENOMICS = "genomics"
     VARIANTS = "variants"

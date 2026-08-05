@@ -83,7 +83,54 @@ from chd_atlas.corpus import Corpus
 # corpus). Additive in a stronger sense than a field is: no consumer of the data
 # API is affected by a page appearing beside a payload, and every page is
 # checksummed into `files` like any other published byte.
-SCHEMA_VERSION: Final = "2.2"
+#
+# 2.3 adds `burden` to every gene bundle and `burden_row_count` to every
+# `genes/index.json` row: the per-study rare-variant burden statistics from
+# `mirrors/burden.tsv` -- 1,192 rows over 145 genes *at that version*, from one
+# study. The mirror has grown twice since (1,475 rows, 150 genes, three studies);
+# these figures describe what 2.3 shipped and are deliberately not updated,
+# because a changelog entry that tracks the present tells a reader nothing about
+# the version it names. Current counts live in `docs/data-api.md`, where
+# `tests/test_docs_match_the_build.py` measures them against a real build.
+#
+# Additive, so MINOR — a 2.2 reader keeps working, and both keys are always
+# present (an empty array and a zero for a gene no study reported), so a
+# consumer never has to guard for a missing one.
+#
+# The display warning that accompanied 2.2's population change applies here in a
+# sharper form, and `docs/data-api.md` carries it: `effect` must never be
+# rendered without `effect_measure` beside it, because an odds ratio of 3.1 and
+# a de novo enrichment of 3.1 are different claims sharing one column; and
+# `effect` is `null` on 34 rows whose odds ratio the study published as
+# infinite, where `effect_bound` is `unbounded_above` and `ci_low` carries the
+# whole finding. A consumer treating that null as "not tested" would drop the
+# strongest results in the data.
+#
+# 2.4 adds `pvalue_adjusted` and `pvalue_adjustment` to every burden object,
+# and `mirrors/burden.tsv` gains its second study (PMID:34324492, CNV deletion
+# burden by permutation). Additive, so MINOR: both keys are always present,
+# `null` where the study published no correction.
+#
+# The display warning matters more than the parsing one, again. A raw p and a
+# corrected p can point opposite ways -- CHD7 in PMID:34324492 is 0.0068 raw and
+# 0.991 family-wise corrected -- so a consumer rendering `pvalue` alone will
+# show a result as significant that the study reported as null. Where
+# `pvalue_adjusted` is present it is the number to read.
+# 2.5 adds `count_unit` to every burden object. Additive, so MINOR: the key is
+# always present, and every row published before it carried `individuals`.
+#
+# It is the third display warning in a row, and the most load-bearing of them,
+# because unlike the two above it changes what the *existing* keys mean.
+# `n_case_carriers`, `n_cases`, `n_control_carriers` and `n_controls` are not
+# comparable across rows with different `count_unit`: `individuals` counts
+# people, `alleles` counts alleles -- so a person with two qualifying variants
+# counts twice and the denominator is roughly twice the sample size -- and
+# `de_novo_mutations` counts mutations against a denominator of *trios*. A
+# consumer that divides `n_case_carriers` by `n_cases` across studies without
+# reading this key is comparing three different quantities. That is not
+# hypothetical: PMID:42230622 and PMID:40127276 both publish case-control rows
+# for the same genes, in different units.
+SCHEMA_VERSION: Final = "2.5"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is
