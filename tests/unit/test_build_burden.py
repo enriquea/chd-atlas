@@ -102,9 +102,9 @@ def test_the_cohort_columns_are_split_but_not_reordered(tmp_path: Path) -> None:
     coincidence, so the fixture writes them in an order the alphabet disagrees
     with. A consumer reads arrays and never has to know the separator.
     """
-    row = load_burden(
-        _write(tmp_path, {**_BASE, "case_cohorts": "nottingham;cnchd;ddd"})
-    )["HGNC:17075"][0]
+    row = load_burden(_write(tmp_path, {**_BASE, "case_cohorts": "nottingham;cnchd;ddd"}))[
+        "HGNC:17075"
+    ][0]
 
     assert row.case_cohorts == ("nottingham", "cnchd", "ddd")
     assert row.control_cohorts == ("ukbb",)

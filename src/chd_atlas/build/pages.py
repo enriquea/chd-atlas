@@ -459,7 +459,7 @@ def _evidence_section(
 
 
 def _study_label(pmid: str, publications: Mapping[str, Publication]) -> str:
-    """"Audain et al. 2026", or the bare PMID when the record is missing.
+    """ "Audain et al. 2026", or the bare PMID when the record is missing.
 
     The fallback is a guard on a bypassed gate -- BUR010 reports a burden row
     citing an unregistered study and `build_site` refuses on it -- and it renders
@@ -473,7 +473,7 @@ def _study_label(pmid: str, publications: Mapping[str, Publication]) -> str:
 
 
 def _count(carriers: int | None, total: int | None) -> str:
-    """"6 / 3,876" -- the numerator with the denominator it was measured against.
+    """ "6 / 3,876" -- the numerator with the denominator it was measured against.
 
     Never the numerator alone. Six carriers is a different claim in 3,876 cases
     than in 45,082, and the two columns of this table hold exactly that contrast.
@@ -575,7 +575,7 @@ def _burden_section(
         # from curated YAML, and neither reaches this string through `render.py`.
         first = study_rows[0]
         provenance = (
-            f"<p class=\"provenance\">Cases: {html.escape(_names(first.case_cohorts, cohorts))}. "
+            f'<p class="provenance">Cases: {html.escape(_names(first.case_cohorts, cohorts))}. '
             f"Controls: {html.escape(_names(first.control_cohorts, cohorts) or 'none')}.</p>"
         )
         blocks.append(
@@ -586,7 +586,7 @@ def _burden_section(
         )
 
     shared = "".join(
-        f"<p class=\"notice-inline\"><strong>These two studies are not independent.</strong> "
+        f'<p class="notice-inline"><strong>These two studies are not independent.</strong> '
         f"{html.escape(_study_label(left, publications))} and "
         f"{html.escape(_study_label(right, publications))} both draw on "
         f"{html.escape(_names(common, cohorts))}, so their results describe partly "

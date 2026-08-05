@@ -565,7 +565,13 @@ def test_evidence_counts_are_carried_per_evidence_class(tmp_path: Path) -> None:
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5},
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
         burden={},
     )
 
@@ -712,7 +718,13 @@ def test_a_bundle_carries_every_functional_record_about_the_gene(tmp_path: Path)
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5},
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
         burden={},
     )
 
@@ -905,7 +917,13 @@ def test_bundle_assertions_and_functional_records_are_ordered_by_id(tmp_path: Pa
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5},
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
         burden={},
     )
 
@@ -948,7 +966,13 @@ def test_a_bundle_lists_the_publications_its_evidence_cites(tmp_path: Path) -> N
     emitter = Emitter(root=tmp_path)
 
     build_genes(
-        corpus, emitter, symbols=SYMBOLS, omics={}, variants={}, validity={}, published={TBX5},
+        corpus,
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
         burden={},
     )
 

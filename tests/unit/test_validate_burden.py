@@ -187,9 +187,7 @@ def test_an_effect_and_its_measure_are_useless_without_each_other(tmp_path: Path
     """
     assert "BUR006" in _codes(tmp_path, {**_DE_NOVO, "effect_measure": ""})
     assert "BUR006" in _codes(tmp_path, {**_ROW, "effect_measure": ""})
-    assert "BUR006" in _codes(
-        tmp_path, {**_DE_NOVO, "effect": "", "ci_low": "", "ci_high": ""}
-    )
+    assert "BUR006" in _codes(tmp_path, {**_DE_NOVO, "effect": "", "ci_low": "", "ci_high": ""})
 
 
 def test_an_unbounded_effect_may_not_also_carry_a_number(tmp_path: Path) -> None:
@@ -314,9 +312,10 @@ def test_a_registry_that_could_not_be_read_skips_its_own_check_only(tmp_path: Pa
     """
     root = _write(tmp_path, {**_ROW, "gene": "HGNC:99999", "study": "PMID:99999999"})
 
-    assert validate_burden_references(
-        root, known_cohorts=None, known_genes=None, known_studies=None
-    ) == []
+    assert (
+        validate_burden_references(root, known_cohorts=None, known_genes=None, known_studies=None)
+        == []
+    )
 
     codes = [
         issue.code

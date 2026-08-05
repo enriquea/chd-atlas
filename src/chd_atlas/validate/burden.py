@@ -95,9 +95,7 @@ def validate_burden(root: Path) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
     def error(code: str, row: int, message: str) -> None:
-        issues.append(
-            ValidationIssue(code, Severity.ERROR, f"{path}:row {row}", message)
-        )
+        issues.append(ValidationIssue(code, Severity.ERROR, f"{path}:row {row}", message))
 
     for index, row in enumerate(frame.iter_rows(named=True)):
         # +2 for the header line and 0-based index, matching every other
@@ -264,9 +262,7 @@ def _effect_issues(
     if not has_effect and not has_bound and not _blank(measure):
         error("BUR006", f"'effect_measure' is {measure!r} but no effect is reported")
 
-    if not _blank(measure) and measure not in {
-        item.value for item in EFFECT_MEASURES[comparator]
-    }:
+    if not _blank(measure) and measure not in {item.value for item in EFFECT_MEASURES[comparator]}:
         allowed = sorted(item.value for item in EFFECT_MEASURES[comparator])
         error(
             "BUR007",
@@ -286,7 +282,6 @@ def _effect_issues(
         if not _blank(row["ci_high"]):
             error(
                 "BUR008",
-                f"'effect_bound' is 'unbounded_above' but 'ci_high' holds "
-                f"{row['ci_high']!r}",
+                f"'effect_bound' is 'unbounded_above' but 'ci_high' holds {row['ci_high']!r}",
             )
     return issues

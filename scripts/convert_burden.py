@@ -162,9 +162,7 @@ def read_sheet(path: Path, name: str) -> list[dict[str, str]]:
         relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
         targets = {
             element.get("Id"): element.get("Target")
-            for element in relationships.findall(
-                _tag(_namespace(relationships), "Relationship")
-            )
+            for element in relationships.findall(_tag(_namespace(relationships), "Relationship"))
         }
 
         sheets = workbook.find(_tag(workbook_ns, "sheets"))
@@ -285,7 +283,8 @@ def convert(source: Path, symbols: dict[str, str]) -> tuple[list[dict[str, str]]
                     "effect_bound": "unbounded_above" if unbounded else "",
                     "ci_low": _number(record["fet.ci_95_lower"]),
                     "ci_high": (
-                        "" if record["fet.ci_95_upper"] == "Infinity"
+                        ""
+                        if record["fet.ci_95_upper"] == "Infinity"
                         else _number(record["fet.ci_95_upper"])
                     ),
                     "pvalue": _number(record["fet.p_value"]),
