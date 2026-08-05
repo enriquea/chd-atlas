@@ -64,13 +64,15 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Final
 
 from chd_atlas.build.burden import BurdenRow, shared_cohorts
+from chd_atlas.build.concordance import FamilyState, family_state
 from chd_atlas.build.derive import GeneFacts
-from chd_atlas.build.emit import Emitter
+from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
 from chd_atlas.build.render import (
     FILTER_SCRIPT,
     Cell,
     Link,
+    Markup,
     Row,
     chip,
     data_table,
@@ -188,6 +190,86 @@ _STRATUM_LABEL: Final[dict[str, str]] = {
     "nonsyndromic": "non-syndromic",
 }
 
+# The four states, as a reader meets them. `not_tested` is deliberately not a
+# synonym for `no result`: KDM6A is ClinGen definitive -- it causes Kabuki
+# syndrome -- and shows nothing in either dataset that tested it, so a page that
+# merged the two would report "0 of 3" beside a green definitive chip and read
+# as the data contradicting the classification.
+# The design each comparator names, for the matrix column heads. Reuses the
+# discriminator the whole burden schema turns on rather than inventing a
+# parallel vocabulary for the page.
+# What the glyphs mean, and the sentence that stops the column reading as a
+# verdict. **The caption is not optional.** KDM6A is ClinGen definitive -- it
+# causes Kabuki syndrome -- and shows nothing in either dataset that tested it,
+# so its row reads "0 of 2 tested" beside a green `definitive` chip. Without the
+# caption a clinical geneticist reads that as the data contradicting the
+# classification; with it, they read it as the power statement it is.
+# The matrix's own key and caption. **The browse page carried these and the gene
+# page did not**, which is the wrong way round: a reader arriving from a search
+# lands on the gene page, and KDM6A's matrix there is entirely hollow beside a
+# green `definitive` chip with nothing to explain it. Found by review before the
+# deploy, on the page where the omission would have done the damage.
+_MATRIX_LEGEND: Final = (
+    '<p class="strip-legend">'
+    '<span class="cell-key corrected"></span> enriched, and survives that study&#x27;s own '
+    "correction &nbsp; "
+    '<span class="cell-key nominal"></span> enriched nominally, or no correction published '
+    "&nbsp; "
+    '<span class="cell-key no-enrichment"></span> tested, no enrichment detected &nbsp; '
+    '<span class="cell-key not-tested"></span> not tested by that dataset</p>'
+    '<p class="strip-legend">Rows are <strong>independent cohort families</strong>, not '
+    "studies: two papers sharing a sample collection describe the same people and appear "
+    "once. <strong>No enrichment at these cohort sizes is not evidence against a gene</strong> "
+    "&mdash; burden tests routinely detect nothing for genes with overwhelming family and "
+    "functional evidence.</p>"
+)
+
+_STRIP_LEGEND: Final = (
+    '<p class="strip-legend">'
+    '<span class="dot full"></span> enriched, and survives that study\'s own correction'
+    ' &nbsp; <span class="dot half"></span> enriched nominally, or no correction published'
+    ' &nbsp; <span class="dot none"></span> tested, no enrichment detected'
+    ' &nbsp; <span class="dot untested">&ndash;</span> not tested by that dataset'
+    "</p>"
+    '<p class="strip-legend">One glyph per <strong>independent cohort family</strong>, not '
+    "per study: two papers sharing a sample collection describe the same people and count "
+    "once. <strong>No enrichment at these cohort sizes is not evidence against a gene</strong> "
+    "&mdash; burden tests routinely detect nothing for genes with overwhelming family and "
+    "functional evidence. The tally reads <em>enriched</em> of <em>tested</em>: the first "
+    "number counts datasets that found something, the second counts datasets that looked. "
+    "Neither is a verdict on the gene.</p>"
+)
+
+_COMPARATOR_LABEL: Final[dict[str, str]] = {
+    "control_cohort": "case-control",
+    "mutation_model": "de novo, trios",
+    "none": "case series",
+}
+
+_STATE_GLYPH: Final[dict[str, str]] = {
+    "corrected": "full",
+    "nominal": "half",
+    "no_enrichment": "none",
+    "not_tested": "untested",
+}
+
+# What a matrix cell *reads*, as against what it says on hover. The full
+# sentence -- "this dataset did not test this gene" -- set the column width for
+# the whole table and pushed the cells wide enough to crowd each other. The
+# short form keeps the grid tight; `_STATE_TITLE` still carries the sentence on
+# the cell's `title`, so nothing is lost to a reader who wants it.
+_STATE_CELL: Final[dict[str, str]] = {
+    "not_tested": "not tested",
+    "no_enrichment": "tested",
+}
+
+_STATE_TITLE: Final[dict[str, str]] = {
+    "corrected": "enriched, and survives this study's own correction",
+    "nominal": "enriched nominally; not after correction, or no correction published",
+    "no_enrichment": "tested, no enrichment detected",
+    "not_tested": "this dataset did not test this gene",
+}
+
 _CONSEQUENCE_LABEL: Final[dict[str, str]] = {
     # Names its two components rather than saying "damaging", so a reader who
     # meets this row first is told what it is the union of before they reach the
@@ -264,9 +346,18 @@ _MIRRORED_NOTICE: Final = (
 # unconditionally it asserted "these cohorts overlap" in the present tense on a
 # page showing a single table, sending a reader to look for a second study that
 # is not there.
+# Now the matrix's caption, so it is rendered on every page with a matrix rather
+# than only where a gene carries two studies. That change made the old wording
+# false: it asserted "these cohorts overlap" in the present tense, which on a
+# page showing one study sent a reader hunting for a second -- the very defect
+# the original conditional was added to fix. It is a statement of policy now,
+# true whether the page shows one study or three, and `shared_cohorts` still
+# names an actual overlap where one exists.
 _POOLING_NOTICE: Final = (
-    "<p>The atlas computes <strong>no pooled statistic across studies</strong>: these "
-    "cohorts overlap, so combining them would count the same people twice.</p>"
+    "<p>The atlas computes <strong>no pooled statistic across studies</strong>. "
+    "Where two studies draw on the same sample collection they describe partly the same "
+    "children, so combining their results would count those children twice; any overlap "
+    "between the studies below is named where it occurs.</p>"
 )
 
 # What the numbers do not say. Every clause was measured; see `_burden_section`.
@@ -319,6 +410,19 @@ _BROWSE_HEADERS: Final = (
     "symbol",
     "confidence",
     "definitive for",
+    # Immediately after the claim, because it is what qualifies it: a reader
+    # whose eye stops at `definitive` should meet the evidence next rather than
+    # three columns later.
+    #
+    # Headed for what it *is*, not for what it might mean. "replicated in" was
+    # the shorter candidate and was rejected: for a gene showing 0 of 2 it reads
+    # as "not replicated", which is a verdict the data do not support -- KDM6A
+    # causes Kabuki syndrome and shows nothing in either dataset that tested it.
+    # D12 says the atlas authors no validity classification, and a
+    # verdict-shaped header beside a mirrored ClinGen `definitive` invites being
+    # read as a competing one. This names the evidence type and the axis and
+    # leaves the reading to the reader.
+    "burden across studies",
     "validity",
     "atlas curation",
     "burden rows",
@@ -744,6 +848,8 @@ def _burden_section(
     rows: Sequence[BurdenRow],
     publications: Mapping[str, Publication],
     cohorts: Mapping[str, Cohort],
+    families: tuple[frozenset[str], ...] = (),
+    axes: tuple[tuple[str, str], ...] = (),
 ) -> str:
     """Published rare-variant burden, one table per study.
 
@@ -805,13 +911,24 @@ def _burden_section(
                 for row in study_rows
             ],
         )
+        design, warning = _method_line(study_rows, publications.get(study))
+        # `design` and `_provenance` fold together: both are identical for a
+        # given study on all 23 gene pages. `warning`, the disclosure, the
+        # composite note and the footnotes do not -- each changes what a reader
+        # concludes from the table right below it.
+        counted = (
+            f'<details class="reading-notes"><summary>How this study counted'
+            f"</summary>{design}{_provenance(study_rows, cohorts)}</details>"
+            if design or _provenance(study_rows, cohorts)
+            else ""
+        )
         blocks.append(
             f"<h3>"
             f'<a href="{html.escape(_pubmed(study))}">'
             f"{html.escape(_study_label(study, publications))}</a></h3>"
             f"{_disclosure(study, publications)}"
-            f"{_method_line(study_rows, publications.get(study))}"
-            f"{_provenance(study_rows, cohorts)}"
+            f"{warning}"
+            f"{counted}"
             f"{_composite_note(study_rows)}"
             f"{table}"
             f"{_footnotes(study_rows)}"
@@ -838,13 +955,42 @@ def _burden_section(
         _SYNONYMOUS_NOTICE if any(row.consequence_class == "synonymous" for row in rows) else ""
     )
 
+    matrix = _evidence_matrix(rows, families, axes, publications)
+
+    # THE FOLD RULE. A caveat may fold if it is *general* -- true on every gene
+    # page, teaching how to read the table. It must stay visible if it is
+    # *particular* -- it fired because of this gene's data and changes what a
+    # reader concludes about this gene.
+    #
+    # Folded here: the units glossary, what an absent cell means, and the
+    # synonymous negative control. All three are identical on all 23 pages, and
+    # none is lost -- the unit word is still in every cell and the matrix
+    # renders `not tested` as its own state.
+    #
+    # Outside the fold, always: `_MIRRORED_NOTICE` (one line, and it is the
+    # atlas's claim about itself), the `shared_cohorts` non-independence notice,
+    # the own-lab disclosure, and every row's `method_note` footnote -- which is
+    # where PMID:34324492's thoracic-aortic-aneurysm contamination reaches a
+    # reader. `test_every_particular_caveat_survives_outside_the_fold` is what
+    # stops one of those being tidied inside later.
+    reading_notes = (
+        '<details class="reading-notes"><summary>How to read these numbers'
+        "</summary>" + _BURDEN_PREAMBLE + synonymous + "</details>"
+    )
+
     return (
         "<h2>Rare variant burden</h2>"
         + _MIRRORED_NOTICE
-        + _BURDEN_PREAMBLE
-        + synonymous
-        + pooling
+        + matrix
+        # RELOCATED, not folded. A summary that counts datasets is adjacent to
+        # pooling and invites exactly the arithmetic this sentence forbids, so it
+        # belongs directly beneath the matrix rather than four paragraphs above
+        # it. Rendered whenever there is a matrix, because the matrix is what it
+        # qualifies -- unlike its previous home, where it was conditional on
+        # there being more than one study to pool.
+        + (_POOLING_NOTICE if matrix else pooling)
         + shared
+        + reading_notes
         + "".join(blocks)
         + _cohort_notes(rows, cohorts)
     )
@@ -901,7 +1047,7 @@ def _labelled(values: Iterable[str | None], labels: Mapping[str, str]) -> list[s
     return sorted({labels.get(value, value) for value in values if value is not None})
 
 
-def _method_line(rows: Sequence[BurdenRow], publication: Publication | None) -> str:
+def _method_line(rows: Sequence[BurdenRow], publication: Publication | None) -> tuple[str, str]:
     """What was counted, and against how many other tests.
 
     **Three of the eight partition columns reached no page.** `variant_class`,
@@ -997,8 +1143,28 @@ def _method_line(rows: Sequence[BurdenRow], publication: Publication | None) -> 
         correction = " p-values are <strong>uncorrected</strong> as published."
 
     if not sentence and not correction:
-        return ""
-    return f'<p class="method">{sentence}{correction}</p>'
+        return ("", "")
+
+    # **The two halves are returned separately because they fold differently.**
+    #
+    # The design clause ("SNVs and indels; MAF below 0.001; Fisher's exact
+    # test") is *general*: identical for a given study on all 23 gene pages, and
+    # it teaches how to read the block rather than saying anything about this
+    # gene. It folds, with the provenance line, under "How this study counted".
+    #
+    # The multiple-testing clause does not. It was the sharpest finding of the
+    # 2026-08-05 review -- 32 of PMID:42230622's 187 published rows clear 0.05
+    # and 3 survive Bonferroni over its own 138,609 comparisons -- so it changes
+    # what a reader concludes from every p-value in the block below it. Folding
+    # it would reintroduce, one release later, exactly the defect that review
+    # found.
+    #
+    # Returned as a pair rather than as one string the caller splits: this
+    # module builds HTML and must never parse it back, and a split on "</p>"
+    # would break silently the first time either half gained a paragraph.
+    design = f'<p class="method">{sentence}</p>' if sentence else ""
+    warning = f'<p class="method">{correction.strip()}</p>' if correction else ""
+    return (design, warning)
 
 
 def _provenance(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str:
@@ -1017,6 +1183,232 @@ def _provenance(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str
         f'<p class="provenance">Cases: {html.escape(_names(cases, cohorts))}. '
         f"Controls: {html.escape(_names(controls, cohorts) or 'none (see the method above)')}.</p>"
     )
+
+
+def _concordance_for(
+    concordance: Mapping[str, Mapping[str, Json]] | None, gene: str
+) -> Mapping[str, Json]:
+    """One gene's concordance, or a refusal naming the gap.
+
+    **`bundles._concordance_for` raised on a missing gene and this page defaulted
+    it**, so a mapping built over the wrong population would have made the bundle
+    fail loudly and the browse row render "0 of 0 tested" -- a tally byte-identical
+    to a measured "no study reported this gene". The guard existed on one of the
+    two layers `runner.py` says cannot disagree.
+
+    `None` is still allowed and means "this build has no burden data at all",
+    which is what every unit test of this page passes. A *mapping* that omits a
+    gene is the error: it means the caller derived it over a different population.
+    """
+    if concordance is None:
+        return {"tested": 0, "enriched": 0, "corrected": 0, "families": []}
+    if gene not in concordance:
+        raise KeyError(
+            f"no concordance derived for published gene {gene}; the mapping was built over "
+            f"a different population, and defaulting it would render 'no dataset tested "
+            f"this' as if it had been measured"
+        )
+    return concordance[gene]
+
+
+def _dot_strip(concordance: Mapping[str, Json]) -> str:
+    """One glyph per cohort family, plus a tally naming both statistics.
+
+    **Fill encodes the correction**, so a single glyph carries two facts a
+    reader would otherwise need two columns for: that a dataset showed
+    enrichment, and whether that survived the study's own correction. TAB2 is
+    the case it was designed against -- three families all pointing the same
+    way, of which only one survives correction.
+
+    The tally counts *tested* families and says both numbers, because either
+    alone misleads. `3 of 3` hides that two do not survive correction;
+    `1 corrected` hides that PMID:42230622 publishes no correction on any row
+    and so can never earn one.
+
+    A family that did not test the gene gets its own glyph and is excluded from
+    the denominator. That is not presentation: KDM6A is ClinGen definitive and
+    shows nothing in either dataset that tested it, and "0 of 3" beside a green
+    chip reads as the data contradicting the classification, where "0 of 2
+    tested" reads as what it is.
+    """
+    families = concordance.get("families") or ()
+    if not isinstance(families, Sequence):
+        return _EM_DASH
+    glyphs: list[str] = []
+    for entry in families:
+        if not isinstance(entry, Mapping):
+            continue
+        state = str(entry.get("state", ""))
+        studies = entry.get("studies") or ()
+        names = ", ".join(str(study) for study in studies) if isinstance(studies, Sequence) else ""
+        title = f"{names}: {_STATE_TITLE.get(state, state)}"
+        glyph = _STATE_GLYPH.get(state, "untested")
+        body = "&ndash;" if glyph == "untested" else ""
+        glyphs.append(f'<span class="dot {glyph}" title="{html.escape(title)}">{body}</span>')
+    tested = concordance.get("tested", 0)
+    corrected = concordance.get("corrected", 0)
+    enriched = concordance.get("enriched", 0)
+    tally = f"{enriched} of {tested} tested &middot; {corrected} corrected"
+    # Not a link. The row already links to the gene page twice -- from the id and
+    # from the symbol -- and a third link wrapped around a tally puts the
+    # affordance on a number rather than on a name. Each dot still carries a
+    # `title` naming its studies and state, which is the detail this cell owes a
+    # reader; the numbers behind it are one click away by the name they scanned
+    # for.
+    return f'<span class="strip">{"".join(glyphs)}<span class="strip-tally">{tally}</span></span>'
+
+
+def _evidence_matrix(
+    rows: Sequence[BurdenRow],
+    families: tuple[frozenset[str], ...],
+    axes: tuple[tuple[str, str], ...],
+    publications: Mapping[str, Publication],
+) -> str:
+    """Cohort family against evidence design, with the holes left visible.
+
+    **The empty cells are the point.** Columns come from the whole corpus rather
+    than from this gene, so a dataset that did not test this gene renders as an
+    absence rather than vanishing -- the same confusion between "not tested" and
+    "tested and found nothing" that `FamilyState` has four members for.
+
+    **The guarantee is narrower than an earlier version of this docstring
+    claimed.** It said the CNV de novo quadrant "is empty on every page". It is
+    on *no* page: `evidence_axes` derives columns from the rows that exist, so a
+    design *nobody* ran produces no column at all. What the matrix shows is a
+    hole where one family did not run a design another family did; it is silent
+    about a design the whole corpus lacks. Measured 2026-08-05: three columns,
+    none of them CNV de novo.
+
+    The cell shows the most significant row in it, ordered by corrected p where
+    published and by raw p otherwise, tie-broken on
+    `(consequence_class, cohort_stratum)` so the choice is deterministic across
+    builds. Where a cell holds more than one row the count is stated, so a
+    reader knows the cell summarises and the table below is the record.
+    """
+    if not rows or not families or not axes:
+        return ""
+
+    by_study: dict[str, list[BurdenRow]] = {}
+    for row in rows:
+        by_study.setdefault(row.study, []).append(row)
+
+    header = "".join(
+        f'<th scope="col">{html.escape(_VARIANT_CLASS_LABEL.get(variant, variant))}'
+        f'<br><span class="sub">{html.escape(_COMPARATOR_LABEL.get(comparator, comparator))}'
+        f"</span></th>"
+        for variant, comparator in axes
+    )
+
+    body: list[str] = []
+    for family in families:
+        members = [row for study in sorted(family) for row in by_study.get(study, ())]
+        label = " + ".join(_study_label(study, publications) for study in sorted(family))
+        cells: list[str] = []
+        for variant, comparator in axes:
+            in_cell = [
+                row
+                for row in members
+                if row.variant_class == variant and row.comparator == comparator
+            ]
+            cells.append(_matrix_cell(in_cell))
+        body.append(f'<tr><th scope="row">{html.escape(label)}</th>{"".join(cells)}</tr>')
+
+    return (
+        '<div class="scroll"><table class="matrix">'
+        f"<thead><tr><td></td>{header}</tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></div>" + _MATRIX_LEGEND
+    )
+
+
+def _matrix_cell(rows: Sequence[BurdenRow]) -> str:
+    """One family's result for one evidence design.
+
+    An empty cell says `not tested` in words rather than rendering blank: a
+    blank cell is indistinguishable from a rendering bug, and this one carries a
+    claim -- that this dataset did not run this design on this gene.
+    """
+    if not rows:
+        return (
+            f'<td><span class="cell not-tested" title="{_STATE_TITLE["not_tested"]}">'
+            f"{_STATE_CELL['not_tested']}</span></td>"
+        )
+
+    state = family_state(rows)
+    # Most significant first: corrected p where published, raw p otherwise, then
+    # a stable tie-break so two builds pick the same row.
+    best = sorted(
+        rows,
+        key=lambda row: (
+            row.pvalue_adjusted if row.pvalue_adjusted is not None else (row.pvalue or 1.0),
+            row.consequence_class,
+            row.cohort_stratum,
+        ),
+    )[0]
+
+    if state is FamilyState.NO_ENRICHMENT:
+        detail = f"n = {len(rows)}" if len(rows) > 1 else "&nbsp;"
+        return (
+            f'<td><span class="cell no-enrichment" title="{_STATE_TITLE["no_enrichment"]}">'
+            f'{_STATE_CELL["no_enrichment"]}<br><span class="sub">{detail}</span></span></td>'
+        )
+
+    # **The cell is a summary; the table below is the record.** So it carries the
+    # effect and one statistic and stops there. The full spelling -- the
+    # confidence interval, the name of the correction -- goes on the `title` and
+    # is in the table in full a screen further down.
+    #
+    # This is a width decision with a correctness edge. The interval and the
+    # correction name ran a cell to 61 characters, which set the column width for
+    # the whole grid and crowded the cells against each other. What may *not* be
+    # dropped is the measure: `_effect` has no branch that omits it, because an
+    # odds ratio of 3.1 and a de novo enrichment of 3.1 are different claims, and
+    # `_effect_compact` keeps that property.
+    kind = "corrected" if state is FamilyState.CORRECTED else "nominal"
+    # `q` only where the correction really is a false-discovery rate. The mirror
+    # carries two methods -- `benjamini_hochberg`, which is an FDR, and
+    # `familywise_permutation`, which is not -- and labelling the second `q`
+    # contradicted the same page's own table, which names it "family-wise" a
+    # screen below. Measured 2026-08-05: 29 cells rendered `q`, some of them
+    # over a family-wise p.
+    if best.pvalue_adjusted is None:
+        statistic = f"p {best.pvalue:.3g}" if best.pvalue is not None else _EM_DASH
+    elif best.pvalue_adjustment == "benjamini_hochberg":
+        statistic = f"q {best.pvalue_adjusted:.3g}"
+    else:
+        statistic = f"corrected p {best.pvalue_adjusted:.3g}"
+    more = f'<span class="sub"> &middot; {len(rows)} rows</span>' if len(rows) > 1 else ""
+    full = f"{_effect(best)}; {_corrected(best) if best.pvalue_adjusted is not None else ''}".strip(
+        "; "
+    )
+    return (
+        f'<td><span class="cell {kind}" title="{html.escape(full)}">'
+        f"{html.escape(_effect_compact(best))}<br>"
+        f'<span class="sub">{html.escape(statistic)}</span>{more}</span></td>'
+    )
+
+
+def _effect_compact(row: BurdenRow) -> str:
+    """The effect and its measure, without the interval. For the matrix cell only.
+
+    **The measure survives; only the interval is dropped.** `_effect`'s rule --
+    that no branch omits the measure, because an odds ratio of 3.1 and a de novo
+    enrichment of 3.1 are different claims -- is the one property this must not
+    trade for width. The interval is a different kind of thing: it qualifies the
+    estimate rather than naming it, and it is in the row's own table a screen
+    below, plus on this cell's `title`.
+
+    An unbounded effect still renders `OR &infin;` rather than a blank, for the
+    reason `_effect` does: it is the strongest result in the data and the one
+    `allow_nan=False` refuses to publish as a number.
+    """
+    if row.effect_measure is None:
+        return _EM_DASH
+    measure = _MEASURE_LABEL.get(row.effect_measure, row.effect_measure)
+    if row.effect_bound == "unbounded_above":
+        return f"{measure} ∞"
+    if row.effect is None:
+        return _EM_DASH
+    return f"{measure} {_fmt(row.effect)}"
 
 
 def _composite_note(rows: Sequence[BurdenRow]) -> str:
@@ -1123,6 +1515,8 @@ def build_gene_pages(
     publications: Mapping[str, Publication],
     burden: Mapping[str, Sequence[BurdenRow]],
     cohorts: Mapping[str, Cohort],
+    families: tuple[frozenset[str], ...] = (),
+    axes: tuple[tuple[str, str], ...] = (),
 ) -> None:
     """Emit one HTML page per gene in `facts`.
 
@@ -1172,7 +1566,7 @@ def build_gene_pages(
             # would put nine rows of statistics -- which are not classifications
             # -- inside what it refers to. It also keeps the atlas's own curation
             # adjacent to the notice about whether there is any.
-            + _burden_section(burden.get(gene, ()), publications, cohorts)
+            + _burden_section(burden.get(gene, ()), publications, cohorts, families, axes)
             + "</div></div>"
         )
         emitter.write_text(
@@ -1188,6 +1582,7 @@ def build_gene_index_page(
     symbols: Mapping[str, str],
     validity: Mapping[str, GeneValidity],
     burden_counts: Mapping[str, int],
+    concordance: Mapping[str, Mapping[str, Json]] | None = None,
 ) -> None:
     """Emit `genes/index.html`: every published gene, filterable in the browser.
 
@@ -1259,9 +1654,20 @@ def build_gene_index_page(
             Row(
                 cells=(
                     Link(text=gene, href=f"../{gene_page_path(HgncId(gene))}"),
-                    symbol,
+                    # The symbol links too, and it is the one a reader reaches
+                    # for: `TBX5` is the name a geneticist recognises and
+                    # `HGNC:11604` is the identifier they cite. Linking only the
+                    # id put the affordance on the string nobody scans for.
+                    Link(text=symbol, href=f"../{gene_page_path(HgncId(gene))}"),
                     confidence or _EM_DASH,
                     "; ".join(diseases) or _EM_DASH,
+                    # Position matters and was wrong for one commit: the header
+                    # was inserted after `definitive for` while the cell stayed
+                    # after `atlas curation`, so the column was headed for a
+                    # field two places away. `data_table` zips headers to cells
+                    # by position and cannot detect that -- see
+                    # `test_the_browse_headers_and_cells_line_up`.
+                    Markup(_dot_strip(_concordance_for(concordance, gene))),
                     fact.validity_state.value,
                     fact.atlas_curation.value,
                     str(burden_counts.get(gene, 0)) if burden_counts.get(gene) else _EM_DASH,
@@ -1358,7 +1764,7 @@ def build_gene_index_page(
         '<input name="q" type="search" aria-label="Search by gene symbol or HGNC id" '
         'placeholder="symbol or HGNC id">'
         f"{selects}</form>"
-        f"{data_table(_BROWSE_HEADERS, rows, table_id='gene-table')}"
+        f"{data_table(_BROWSE_HEADERS, rows, table_id='gene-table')}" + _STRIP_LEGEND
     )
     emitter.write_text(
         GENE_INDEX_PAGE,

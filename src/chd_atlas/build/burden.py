@@ -220,10 +220,14 @@ def shared_cohorts(rows: Iterable[BurdenRow]) -> dict[tuple[str, str], tuple[str
     stable order. Pairs sharing nothing are omitted: the interesting fact is the
     overlap, and an entry per independent pair would bury it.
 
-    **Latent on the committed corpus**, which carries one study. Implemented and
-    tested against a fixture rather than left until the second study lands,
-    because a feature nobody exercised is a feature that breaks on the day it is
-    first needed.
+    **Still latent, but for a different reason than when this was written.** It
+    said "the committed corpus carries one study"; it carries three, and they
+    draw on disjoint collections, so this returns an empty mapping. That is no
+    longer a curiosity: `concordance.cohort_families` walks these edges to decide
+    what counts as an independent dataset, so an empty result here is exactly what
+    makes the three studies three families. Implemented and tested against a
+    fixture rather than left until two studies share a cohort, because a feature
+    nobody exercised is a feature that breaks the day it is first needed.
     """
     by_study: dict[str, set[str]] = {}
     for row in rows:

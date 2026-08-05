@@ -69,12 +69,21 @@ STYLESHEET: Final = """
     --fg: #1a1a1a; --bg: #ffffff; --muted: #555555; --border: #d0d0d0;
     --notice-bg: #fff4e5; --notice-border: #b45309; --link: #0b5fa5;
     --chip-bg: rgba(127, 127, 127, 0.15); --definitive: #1a7f37; --warn: #b02a37;
+    /* The evidence hue, deliberately NOT the green of --definitive and not
+       a red/green pair. `significant` is not `true` on this site, and a
+       green tick beside a nominal-only result would undo every caveat
+       around it. One hue at three intensities encodes how much support
+       there is; absence is drawn as absence rather than as a third colour. */
+    --evidence: #1f6f8b; --evidence-soft: #e4eff3; --on-evidence: #ffffff;
+    --surface: #f4f6f8;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --fg: #e8e8e8; --bg: #14161a; --muted: #a8a8a8; --border: #3a3d42;
       --notice-bg: #3a2a12; --notice-border: #d99a3d; --link: #6cb6f5;
       --definitive: #3fb950; --warn: #f85149;
+      --evidence: #58abc7; --evidence-soft: #172a33; --on-evidence: #0f151a;
+      --surface: #1b1f25;
     }
   }
   * { box-sizing: border-box; }
@@ -111,6 +120,70 @@ STYLESHEET: Final = """
     color: var(--muted); font-size: 0.9rem; margin: 0.35rem 0; font-style: italic;
   }
   .footnotes { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
+  /* The concordance strip and matrix. One evidence hue at three intensities
+     rather than a red/green pair: "significant" is not "true" on this site, and
+     a green tick beside a nominal-only result would undo every caveat around
+     it. `not tested` is drawn as an absence -- a dash, a dashed border -- and
+     never as a weak positive, because it is the state that would otherwise read
+     as "this dataset looked and found nothing". */
+  .strip { display: inline-flex; gap: 0.3rem; align-items: center; }
+  .dot {
+    width: 15px; height: 15px; border-radius: 50%; box-sizing: border-box;
+    border: 1.5px solid var(--evidence); display: inline-grid; place-items: center;
+  }
+  .dot.full { background: var(--evidence); }
+  .dot.half {
+    background: linear-gradient(90deg, var(--evidence) 50%, transparent 50%);
+  }
+  .dot.none { border-color: var(--muted); }
+  .dot.untested {
+    border: 0; color: var(--muted); font-size: 15px; line-height: 1;
+  }
+  .strip-tally {
+    font-size: 0.78rem; color: var(--muted); margin-left: 0.35rem;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .strip-legend { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
+  /* The matrix key: a swatch per state, drawn from the same rules as the cells
+     so the key cannot drift from what it describes. */
+  .cell-key {
+    display: inline-block; width: 13px; height: 13px; border-radius: 3px;
+    vertical-align: -2px; border: 1px solid transparent;
+  }
+  .cell-key.corrected { background: var(--evidence); }
+  .cell-key.nominal { background: var(--evidence-soft); border-color: var(--evidence); }
+  .cell-key.no-enrichment { background: var(--surface); border-color: var(--border); }
+  .cell-key.not-tested { border: 1px dashed var(--border); }
+
+  /* The matrix is the widest thing on the page. Without this the *body*
+     scrolls sideways on a narrow screen, which moves the whole layout rather
+     than the table. `.scroll` was emitted by `_evidence_matrix` with no rule
+     anywhere -- found by review before the deploy. */
+  .scroll { overflow-x: auto; }
+  table.matrix { border-collapse: separate; border-spacing: 3px; margin: 1rem 0; }
+  table.matrix th { font-size: 0.8rem; }
+  table.matrix th[scope="row"] { text-align: right; white-space: nowrap; }
+  .cell {
+    display: grid; place-items: center; min-width: 5rem; min-height: 2.5rem;
+    padding: 0.25rem 0.45rem; border-radius: 4px; text-align: center;
+    font-variant-numeric: tabular-nums; font-size: 0.8rem; line-height: 1.25;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .cell.corrected { background: var(--evidence); color: var(--on-evidence); }
+  .cell.nominal {
+    background: var(--evidence-soft); border-color: var(--evidence);
+  }
+  .cell.no-enrichment { background: var(--surface); color: var(--muted); }
+  .cell.not-tested {
+    border: 1px dashed var(--border); color: var(--muted); font-size: 0.76rem;
+  }
+  .cell .sub { font-size: 0.72rem; opacity: 0.85; }
+
+  .reading-notes { margin: 1rem 0; }
+  .reading-notes summary { cursor: pointer; color: var(--muted); }
+  .reading-notes summary:focus-visible, .cohort-notes summary:focus-visible {
+    outline: 2px solid var(--evidence); outline-offset: 2px;
+  }
   .cohort-notes { margin: 1rem 0; font-size: 0.9rem; }
   .cohort-notes summary { cursor: pointer; color: var(--muted); }
   .cohort-notes li { margin: 0.5rem 0; }
@@ -202,7 +275,28 @@ class Link:
     href: str
 
 
-Cell = str | Link
+@dataclass(frozen=True)
+class Markup:
+    """A table cell whose HTML the *caller* has already made safe.
+
+    **The escaping obligation moves to the caller, and this type exists so that
+    is visible at the call site rather than implied.** Every other `Cell` is
+    escaped by `_cell`; this one is not, so a `Markup` built from curated or
+    mirrored text is an injection. `data_table`'s own docstring records why that
+    matters here: a browse row's attributes are refused rather than escaped
+    because escaping cannot make a name safe, and the same reasoning applies to
+    a cell that carries markup.
+
+    One caller today: `pages._dot_strip`, whose HTML is a fixed set of `<span>`
+    elements with class names from a literal map and `title` text escaped where
+    it is built. Nothing it interpolates comes from a mirror or from curation
+    unescaped.
+    """
+
+    html: str
+
+
+Cell = str | Link | Markup
 
 
 @dataclass(frozen=True)
@@ -222,6 +316,9 @@ class Row:
 def _cell(value: Cell) -> str:
     if isinstance(value, Link):
         return f'<a href="{html.escape(value.href)}">{html.escape(value.text)}</a>'
+    # Deliberately unescaped; see `Markup`, which exists to make that visible.
+    if isinstance(value, Markup):
+        return value.html
     return html.escape(value)
 
 

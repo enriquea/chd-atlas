@@ -130,7 +130,26 @@ from chd_atlas.corpus import Corpus
 # reading this key is comparing three different quantities. That is not
 # hypothetical: PMID:42230622 and PMID:40127276 both publish case-control rows
 # for the same genes, in different units.
-SCHEMA_VERSION: Final = "2.5"
+# 2.6 adds `independent_datasets` to every gene bundle and every
+# `genes/index.json` row. Additive, so MINOR: the key is always present, and
+# `families` always carries one entry per cohort family in the corpus -- a gene
+# no study reported gets `not_tested` entries, never a shorter list.
+#
+# **It is a count of datasets, not a validity call, and the display obligation
+# is that it must never be rendered as one.** `headline_confidence` is a
+# mirrored ClinGen classification; this object sits beside it and says how many
+# independent cohort families showed enrichment. A consumer that renders
+# "0 of 2" as a verdict beside a green `definitive` chip will tell a clinician
+# the data contradict the classification. They do not -- KDM6A causes Kabuki
+# syndrome and shows nothing in either dataset that tested it, because burden
+# tests at these cohort sizes routinely miss genes with overwhelming family
+# evidence.
+#
+# Two consequences for any consumer: read `tested` as the denominator, never
+# `len(families)`; and render `not_tested` distinguishably from
+# `no_enrichment`, because collapsing them is what turns "nobody looked" into
+# "somebody looked and found nothing".
+SCHEMA_VERSION: Final = "2.6"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is
