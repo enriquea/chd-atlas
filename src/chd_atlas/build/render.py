@@ -127,6 +127,15 @@ STYLESHEET: Final = """
      never as a weak positive, because it is the state that would otherwise read
      as "this dataset looked and found nothing". */
   .strip { display: inline-flex; gap: 0.3rem; align-items: center; }
+  /* The strip summarises the gene page's evidence matrix, so it links there.
+     Underline only on hover: 23 underlined strips would read as 23 warnings,
+     and the glyphs are the content. The focus ring is not optional -- this is a
+     link, and a keyboard reader must be able to see where they are. */
+  a.strip-link { text-decoration: none; color: inherit; border-radius: 4px; }
+  a.strip-link:hover .strip-tally { text-decoration: underline; }
+  a.strip-link:focus-visible {
+    outline: 2px solid var(--evidence); outline-offset: 3px;
+  }
   .dot {
     width: 15px; height: 15px; border-radius: 50%; box-sizing: border-box;
     border: 1.5px solid var(--evidence); display: inline-grid; place-items: center;
@@ -149,10 +158,10 @@ STYLESHEET: Final = """
   table.matrix th { font-size: 0.8rem; }
   table.matrix th[scope="row"] { text-align: right; white-space: nowrap; }
   .cell {
-    display: grid; place-items: center; min-width: 6.5rem; min-height: 2.7rem;
-    padding: 0.3rem 0.5rem; border-radius: 4px; text-align: center;
-    font-variant-numeric: tabular-nums; font-size: 0.82rem;
-    border: 1px solid transparent;
+    display: grid; place-items: center; min-width: 5rem; min-height: 2.5rem;
+    padding: 0.25rem 0.45rem; border-radius: 4px; text-align: center;
+    font-variant-numeric: tabular-nums; font-size: 0.8rem; line-height: 1.25;
+    border: 1px solid transparent; white-space: nowrap;
   }
   .cell.corrected { background: var(--evidence); color: var(--on-evidence); }
   .cell.nominal {

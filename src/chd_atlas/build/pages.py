@@ -232,6 +232,16 @@ _STATE_GLYPH: Final[dict[str, str]] = {
     "not_tested": "untested",
 }
 
+# What a matrix cell *reads*, as against what it says on hover. The full
+# sentence -- "this dataset did not test this gene" -- set the column width for
+# the whole table and pushed the cells wide enough to crowd each other. The
+# short form keeps the grid tight; `_STATE_TITLE` still carries the sentence on
+# the cell's `title`, so nothing is lost to a reader who wants it.
+_STATE_CELL: Final[dict[str, str]] = {
+    "not_tested": "not tested",
+    "no_enrichment": "tested",
+}
+
 _STATE_TITLE: Final[dict[str, str]] = {
     "corrected": "enriched, and survives this study's own correction",
     "nominal": "enriched nominally; not after correction, or no correction published",
@@ -1138,7 +1148,7 @@ def _provenance(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str
     )
 
 
-def _dot_strip(concordance: Mapping[str, Json]) -> str:
+def _dot_strip(concordance: Mapping[str, Json], href: str = "") -> str:
     """One glyph per cohort family, plus a tally naming both statistics.
 
     **Fill encodes the correction**, so a single glyph carries two facts a
@@ -1176,7 +1186,16 @@ def _dot_strip(concordance: Mapping[str, Json]) -> str:
     corrected = concordance.get("corrected", 0)
     enriched = concordance.get("enriched", 0)
     tally = f"{enriched} of {tested} tested &middot; {corrected} corrected"
-    return f'<span class="strip">{"".join(glyphs)}<span class="strip-tally">{tally}</span></span>'
+    strip = f'{"".join(glyphs)}<span class="strip-tally">{tally}</span>'
+    # The strip is a summary of the gene page's evidence matrix, so it links
+    # there: a reader who reads the glyphs and wants the numbers behind them
+    # should not have to travel back to the gene column to get there.
+    if href:
+        return (
+            f'<a class="strip strip-link" href="{html.escape(href)}" '
+            f'title="See the evidence behind this">{strip}</a>'
+        )
+    return f'<span class="strip">{strip}</span>'
 
 
 def _evidence_matrix(
@@ -1244,7 +1263,10 @@ def _matrix_cell(rows: Sequence[BurdenRow]) -> str:
     claim -- that this dataset did not run this design on this gene.
     """
     if not rows:
-        return f'<td><span class="cell not-tested">{_STATE_TITLE["not_tested"]}</span></td>'
+        return (
+            f'<td><span class="cell not-tested" title="{_STATE_TITLE["not_tested"]}">'
+            f"{_STATE_CELL['not_tested']}</span></td>"
+        )
 
     state = family_state(rows)
     # Most significant first: corrected p where published, raw p otherwise, then
@@ -1261,22 +1283,60 @@ def _matrix_cell(rows: Sequence[BurdenRow]) -> str:
     if state is FamilyState.NO_ENRICHMENT:
         detail = f"n = {len(rows)}" if len(rows) > 1 else "&nbsp;"
         return (
-            f'<td><span class="cell no-enrichment">tested<br>'
-            f'<span class="sub">{detail}</span></span></td>'
+            f'<td><span class="cell no-enrichment" title="{_STATE_TITLE["no_enrichment"]}">'
+            f'{_STATE_CELL["no_enrichment"]}<br><span class="sub">{detail}</span></span></td>'
         )
 
-    effect = _effect(best)
+    # **The cell is a summary; the table below is the record.** So it carries the
+    # effect and one statistic and stops there. The full spelling -- the
+    # confidence interval, the name of the correction -- goes on the `title` and
+    # is in the table in full a screen further down.
+    #
+    # This is a width decision with a correctness edge. The interval and the
+    # correction name ran a cell to 61 characters, which set the column width for
+    # the whole grid and crowded the cells against each other. What may *not* be
+    # dropped is the measure: `_effect` has no branch that omits it, because an
+    # odds ratio of 3.1 and a de novo enrichment of 3.1 are different claims, and
+    # `_effect_compact` keeps that property.
+    kind = "corrected" if state is FamilyState.CORRECTED else "nominal"
     statistic = (
-        _corrected(best)
+        f"q {best.pvalue_adjusted:.3g}"
         if best.pvalue_adjusted is not None
         else (f"p {best.pvalue:.3g}" if best.pvalue is not None else _EM_DASH)
     )
     more = f'<span class="sub"> &middot; {len(rows)} rows</span>' if len(rows) > 1 else ""
-    kind = "corrected" if state is FamilyState.CORRECTED else "nominal"
+    full = f"{_effect(best)}; {_corrected(best) if best.pvalue_adjusted is not None else ''}".strip(
+        "; "
+    )
     return (
-        f'<td><span class="cell {kind}">{html.escape(effect)}<br>'
+        f'<td><span class="cell {kind}" title="{html.escape(full)}">'
+        f"{html.escape(_effect_compact(best))}<br>"
         f'<span class="sub">{html.escape(statistic)}</span>{more}</span></td>'
     )
+
+
+def _effect_compact(row: BurdenRow) -> str:
+    """The effect and its measure, without the interval. For the matrix cell only.
+
+    **The measure survives; only the interval is dropped.** `_effect`'s rule --
+    that no branch omits the measure, because an odds ratio of 3.1 and a de novo
+    enrichment of 3.1 are different claims -- is the one property this must not
+    trade for width. The interval is a different kind of thing: it qualifies the
+    estimate rather than naming it, and it is in the row's own table a screen
+    below, plus on this cell's `title`.
+
+    An unbounded effect still renders `OR &infin;` rather than a blank, for the
+    reason `_effect` does: it is the strongest result in the data and the one
+    `allow_nan=False` refuses to publish as a number.
+    """
+    if row.effect_measure is None:
+        return _EM_DASH
+    measure = _MEASURE_LABEL.get(row.effect_measure, row.effect_measure)
+    if row.effect_bound == "unbounded_above":
+        return f"{measure} ∞"
+    if row.effect is None:
+        return _EM_DASH
+    return f"{measure} {_fmt(row.effect)}"
 
 
 def _composite_note(rows: Sequence[BurdenRow]) -> str:
@@ -1527,7 +1587,12 @@ def build_gene_index_page(
                     "; ".join(diseases) or _EM_DASH,
                     fact.validity_state.value,
                     fact.atlas_curation.value,
-                    Markup(_dot_strip((concordance or {}).get(gene, {}))),
+                    Markup(
+                        _dot_strip(
+                            (concordance or {}).get(gene, {}),
+                            href=f"../{gene_page_path(HgncId(gene))}",
+                        )
+                    ),
                     str(burden_counts.get(gene, 0)) if burden_counts.get(gene) else _EM_DASH,
                     groups or _EM_DASH,
                 ),

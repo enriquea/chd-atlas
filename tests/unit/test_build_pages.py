@@ -21,6 +21,7 @@ from chd_atlas.build.pages import (
     build_gene_index_page,
     build_gene_pages,
 )
+from chd_atlas.build.paths import gene_page_path
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
@@ -1863,9 +1864,91 @@ def test_the_matrix_names_an_untested_design_rather_than_leaving_a_blank(
     section = page[page.index("Rare variant burden") :]
     matrix = section[section.index('<table class="matrix">') : section.index("</table>")]
 
-    assert "did not test this gene" in matrix
+    # **The cell reads short and explains itself on hover.** The full sentence
+    # set the column width for the whole table and pushed every cell wide enough
+    # to crowd its neighbours, so it moved to the `title` -- where it is still
+    # reachable, which is the half of this that must not regress.
+    assert ">not tested</span>" in matrix
+    assert 'title="this dataset did not test this gene"' in matrix
+
     # Every *data* cell says what it is in words and is never simply blank. The
     # one bare `<td>` is the corner of a table headed on both axes, which
     # carries no value by construction.
     assert matrix.count("<td></td>") == 1
     assert "<td></td>" not in matrix[matrix.index("<tbody>") :]
+
+
+def test_the_browse_strip_links_to_the_evidence_behind_it(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """The strip summarises the gene page's matrix, so it goes there.
+
+    A reader who reads the glyphs and wants the numbers behind them should not
+    have to travel back across the row to the gene column. The href is the same
+    one the gene cell carries, built from `gene_page_path` rather than written
+    out, so the two cannot point at different pages.
+
+    Scoped to the strip: the row already contains that URL in its first cell, so
+    a page-wide assertion passes with the strip linking nowhere.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity=validity_two,
+        burden_counts={},
+        concordance={
+            gene: {"tested": 0, "enriched": 0, "corrected": 0, "families": []} for gene in facts_two
+        },
+    )
+    page = _page(tmp_path, "index.html")
+
+    strip = page[page.index('<a class="strip strip-link"') :]
+    strip = strip[: strip.index("</a>")]
+    # Built from `gene_page_path` rather than written out, so the strip and the
+    # gene cell in the same row cannot point at different pages.
+    hrefs = {f'href="../{gene_page_path(gene)}"' for gene in (GATA4, TBX5)}
+    assert any(href in strip for href in hrefs)
+    assert "strip-tally" in strip
+
+
+def test_the_matrix_cell_drops_the_interval_but_never_the_measure(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The one property `_effect_compact` trades width for, and the one it does not.
+
+    The matrix cell is a summary, so it drops the confidence interval: that
+    qualifies the estimate rather than naming it, it is in the row's own table a
+    screen below, and carrying it ran a cell to 61 characters and set the column
+    width for the whole grid.
+
+    **The measure is not negotiable.** `_effect`'s rule is that no branch omits
+    it, because an odds ratio of 3.1 and a de novo enrichment of 3.1 are
+    different claims and a bare `3.1` equates them. A mutation matrix on
+    2026-08-05 found that dropping it from the compact form survived the entire
+    suite, which is the only reason this test exists.
+
+    An unbounded effect still renders `∞` rather than a blank, for the reason
+    `_effect` does: it is the strongest result in the data, and the one
+    `allow_nan=False` refuses to publish as a number.
+    """
+    rows = [
+        _burden_row(consequence_class="lof", effect=6.53, effect_bound=None, ci_low=2.1),
+        _burden_row(consequence_class="missense_damaging"),  # the unbounded fixture
+    ]
+    page = _burden_page(tmp_path, facts_uncurated, rows)
+    section = page[page.index("Rare variant burden") :]
+    matrix = section[section.index('<table class="matrix">') : section.index("</table>")]
+
+    # The measure travels with every number.
+    assert "OR 6.53" in matrix or "OR ∞" in matrix
+    assert (
+        re.search(r'class="cell (corrected|nominal)"[^>]*>(?!OR|enrichment|rate)', matrix) is None
+    )
+
+    # The interval does not -- it is in the table below and on the cell's title.
+    assert "95% CI" not in matrix
+    assert "95% CI" in section[section.index("</table>") :]
