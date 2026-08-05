@@ -61,6 +61,13 @@ _STATISTIC_COLUMNS = (
 )
 
 
+def _split(value: Any) -> list[str]:
+    """A `;`-joined cohort cell as a list, empty for a null or blank cell."""
+    if value is None:
+        return []
+    return [part for part in str(value).split(";") if part.strip()]
+
+
 def _blank(value: Any) -> bool:
     """True for a null cell, or a string that is empty once stripped.
 
@@ -156,6 +163,61 @@ def validate_burden(root: Path) -> list[ValidationIssue]:
         if low is not None and high is not None and low > high:
             error("BUR004", line, f"confidence interval is inverted: [{low}, {high}]")
 
+        # BUR012 -- the interval must contain the estimate it qualifies.
+        #
+        # This check was deliberately left out of the first version, whose test
+        # docstring recorded why: "a bracketing rule was considered and left out
+        # because it was not measured against the real data". It has now been
+        # measured -- 1,158 rows of `mirrors/burden.tsv` carry a finite effect
+        # and both bounds, and **zero** violate bracketing -- so the reason not
+        # to have it is gone.
+        #
+        # It is pure arithmetic with no statistical assumption behind it, and it
+        # is the exact signature of a column transcribed one cell out of place:
+        # `effect=5.0` with `[0.1, 0.2]` says a five-fold risk and an interval
+        # entirely below 1 in the same cell, and a reader cannot tell which half
+        # is the typo. `BUR004` catches only an inverted interval, which is the
+        # easier half of the same defect.
+        effect_value = row["effect"]
+        if effect_value is not None:
+            if low is not None and effect_value < low:
+                error(
+                    "BUR012",
+                    line,
+                    f"effect {effect_value} lies below its own confidence interval [{low}, {high}]",
+                )
+            elif high is not None and effect_value > high:
+                error(
+                    "BUR012",
+                    line,
+                    f"effect {effect_value} lies above its own confidence interval [{low}, {high}]",
+                )
+
+        # BUR013 -- no test returns a p-value of exactly zero. It is what an
+        # underflowed transcription of a very small published p looks like
+        # (1e-400 reads back as 0.0 through float64), and a page printing it
+        # claims certainty no study can have. `p == 1` is left alone: Fisher
+        # returns exactly 1 routinely, on 383 of the 1,192 committed rows.
+        if row["pvalue"] == 0:
+            error(
+                "BUR013",
+                line,
+                "p-value is exactly 0; no test returns that, so this is an "
+                "underflowed or mistranscribed value",
+            )
+
+        # BUR016 -- a collection cannot be its own control. `shared_cohorts`
+        # unions the two columns per study to surface reuse *between* studies, so
+        # reuse *within one row* is invisible to the one mechanism built to catch
+        # it. Zero rows violate this today.
+        overlap = set(_split(row["case_cohorts"])) & set(_split(row["control_cohorts"]))
+        if overlap:
+            error(
+                "BUR016",
+                line,
+                f"cohort(s) {sorted(overlap)} appear as both cases and controls in one comparison",
+            )
+
         # Neither direction alone is publishable: a p-value whose test is unnamed
         # cannot be interpreted, and a named test with no p-value is a column
         # that lost its number in transcription.
@@ -220,15 +282,36 @@ def validate_burden_references(
         for study in sorted(studies - known_studies):
             report("BUR010", f"study {study} is not in curation/publications.yaml")
 
-    # A burden row for a gene the registry does not carry can never reach a
-    # page, however the publication gate later widens -- `build_genes` iterates
-    # the registry. That is this project's characteristic failure: curated work
-    # that costs nothing to hold and reaches no reader.
+    # A burden row whose gene `mirrors/genes.tsv` does not carry is unreachable
+    # by any widening of the publication gate, since every downstream population
+    # derives from that registry.
+    #
+    # This comment claimed "`build_genes` iterates the registry" until
+    # 2026-08-05. It does not -- it iterates `gene_facts(..., published=...)`,
+    # the 23-gene published set -- so the stated rationale was false, and it
+    # pointed away from the real gap: 122 of the 145 genes in the mirror ARE in
+    # `genes.tsv` and still reach no published byte. BUR017 below reports that;
+    # this rule guards only the outer boundary.
     if known_genes is not None and "gene" in frame.columns:
         genes = {str(v) for v in frame["gene"].to_list() if v is not None}
         for gene in sorted(genes - known_genes):
             report("BUR011", f"gene {gene} is not in mirrors/genes.tsv")
 
+    # There is deliberately no rule here reporting that a burden row's gene is
+    # not *published*. 1,005 of the 1,192 committed rows, covering 122 of 145
+    # genes, reach no bundle and no page -- the mirror is wider than the gate so
+    # that widening D21 later needs no re-mirroring -- and two review lenses
+    # rightly flagged that nothing said so. But saying it here would mean
+    # deriving the published set inside `validate/`, which needs
+    # `build.validity.published_genes` and inverts the layering: the validator
+    # would depend on the builder it exists to gate.
+    #
+    # The gap is recorded where each audience meets it instead -- in
+    # `docs/data-api.md` for a consumer, and in CLAUDE.md's open queue for a
+    # curator. What was actually wrong was the *documentation*: BUR011's comment
+    # above claimed `build_genes` iterates the registry, which pointed away from
+    # the gap entirely. That claim is fixed; a warning on every build for a
+    # deliberate design choice is not the remedy.
     return issues
 
 
@@ -268,6 +351,41 @@ def _effect_issues(
             "BUR007",
             f"comparator '{comparator}' cannot produce effect_measure "
             f"'{measure}'; expected one of {allowed}",
+        )
+
+    # BUR014 -- half an interval. `ci_low` and `ci_high` arrive together or not
+    # at all, for the reason BUR005 pairs `pvalue` with `pvalue_test`: one
+    # without the other is a column that lost its number in transcription, and
+    # `pages._effect` drops the survivor silently rather than rendering half an
+    # interval. The one legitimate exception is an unbounded effect, whose
+    # `ci_high` is absent by construction -- all 34 such rows in the committed
+    # mirror -- so the rule is suspended exactly there.
+    low, high = row["ci_low"], row["ci_high"]
+    if not has_bound and (low is None) != (high is None):
+        issues.append(
+            ValidationIssue(
+                "BUR014",
+                Severity.ERROR,
+                f"{path}:row {line}",
+                f"a confidence interval needs both bounds; got ci_low={low!r}, "
+                f"ci_high={high!r} with no effect_bound to explain the missing one",
+            )
+        )
+
+    # BUR015 -- an interval belonging to nothing. BUR006 above requires a
+    # measure whenever there is an effect *or* a bound; a bare interval
+    # satisfies neither, so it slipped through both. A consumer reading `ci_low`
+    # off the bundle would get a number with no unit and no quantity, and the
+    # page renders an em dash and throws it away.
+    if not has_effect and not has_bound and (low is not None or high is not None):
+        issues.append(
+            ValidationIssue(
+                "BUR015",
+                Severity.ERROR,
+                f"{path}:row {line}",
+                f"confidence interval [{low}, {high}] is reported with no effect and "
+                f"no effect_bound, so it qualifies no quantity",
+            )
         )
 
     # An unbounded row that also carries a number contradicts itself, and which

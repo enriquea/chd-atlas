@@ -72,15 +72,20 @@ publications:
     doi: 10.1038/s41525-026-00582-z
     pmcid: PMC13230774
     own_lab: true
-    # 3,876, not the 4,747 the abstract reports. The abstract figure is the
-    # recruited set; 3,876 is the post-QC set every row of `mirrors/burden.tsv`
-    # is denominated on (1,471 syndromic + 2,405 non-syndromic), and it is the
-    # number the published odds ratios were computed from. Recording the larger
-    # one here would put a denominator on the page that no statistic beside it
-    # used.
+    # 3,876, not the 4,747 the abstract reports. 3,876 is the per-analysis set
+    # every row of `mirrors/burden.tsv` is denominated on (1,471 syndromic +
+    # 2,405 non-syndromic) and the number the published odds ratios were
+    # computed from. The paper does not reconcile the two figures, so no reason
+    # for the gap is asserted here. Recording the larger one would put a
+    # denominator on the page that no statistic beside it used.
     cohort_size: 3876
     # "Our cohort was predominantly of European ancestry (~92%), with limited
     # representation from other ancestries, which constrains the
     # generalisability of allele frequency estimates and genetic associations."
     ancestry:
       - predominantly European (~92%)
+    # 46,342 + 46,081 + 46,186 rows across the three sheets of Supplementary
+    # Data 3 — one Fisher test each, counted 2026-08-05 from the workbook. The
+    # atlas publishes 187 of them. Without this figure a gene page shows an
+    # uncorrected p of 0.0015 with nothing saying what it was drawn from.
+    tests_reported: 138609

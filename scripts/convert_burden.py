@@ -22,14 +22,22 @@ Each carries all four carrier counts, and the three differ only in which
 comparison the `fet.*` columns describe. That mapping was verified
 arithmetically rather than assumed: recomputing the odds ratio as
 (a/(N-a))/(c/(M-c)) agreed with the published value on 32,464 / 22,992 / 27,788
-testable rows for the matching stratum with **zero** disagreements, and
-disagreed on 22,579-32,051 rows for every mismatched pairing.
+testable rows for the matching stratum with **zero** disagreements. Every
+mismatched pairing disagreed on tens of thousands of rows. Only the zero is
+quoted as a figure: it is stable at every tolerance from 1e-2 to 5e-2, whereas
+the disagreement counts move with the tolerance, and an earlier draft of this
+docstring quoted a range no single tolerance reproduces.
 
 `maf` is `1E-3` and `analysis` is the sheet's own stratum, both constant within
 a sheet. Denominators are constant too -- 3,876 cases (1,471 syndromic + 2,405
 non-syndromic) against 45,082 controls -- and do **not** match the abstract's
-4,747 / 52,881, which is the pre-QC recruitment figure. The per-row values are
-what the odds ratios were computed from, so they are what the mirror carries.
+4,747 / 52,881. The paper does not reconcile the gap: it says it "assembled an
+exome dataset consisting of 57,628 samples (4747 CHD cases and 52,881
+controls)" and never states 3,876, 1,471 or 2,405 anywhere. So the reason for
+the difference is unstated, and this docstring does not invent one -- an earlier
+draft called 4,747 "the pre-QC recruitment figure", which the paper does not
+say. What is certain is which numbers the published odds ratios were computed
+from, and those are the ones the mirror carries.
 
 `Infinity` is the only non-numeric value anywhere in the four statistic columns:
 448 + 187 + 292 = 927 rows, always in `fet.odds_ratio` and `fet.ci_95_upper`

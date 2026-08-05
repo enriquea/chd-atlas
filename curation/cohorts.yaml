@@ -38,8 +38,9 @@ cohorts:
       Wellcome Sanger Institute. Cases are ascertained on developmental disorder
       rather than on heart disease, so its contribution is enriched for syndromic
       CHD. Individual-level data are under controlled access via the EGA. DDD
-      samples appear in more than one study this atlas cites, which is the reuse
-      the cohort columns exist to make visible.
+      contributed to several of the CHD exome studies this atlas plans to
+      curate, which is the sample reuse the cohort columns exist to make
+      visible; only one study cited today names it.
     url: https://www.ddduk.org/
   - id: nottingham
     name: University of Nottingham congenital heart disease collection

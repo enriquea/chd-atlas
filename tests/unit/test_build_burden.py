@@ -8,7 +8,7 @@ from pathlib import Path
 from chd_atlas.build.burden import (
     BurdenRow,
     burden_payload,
-    cohort_labels,
+    cohort_registry,
     load_burden,
     shared_cohorts,
 )
@@ -69,8 +69,9 @@ def test_rows_read_in_the_order_a_reader_needs_not_the_order_they_sort_in(
     `synonymous` -- the three classes the committed mirror carries -- a mutant
     collapsing `CONSEQUENCE_ORDER` to a constant survived, because those three
     happen to sort into reading order alphabetically anyway. `all_coding` sorts
-    first as a string and fourth in reading order, so it is what makes the
-    ordering rule observable at all.
+    first as a string and third among the four classes used here (fourth in the
+    five-member `CONSEQUENCE_ORDER`), so it is what makes the ordering rule
+    observable at all.
     """
     written = [
         {**_BASE, "cohort_stratum": stratum, "consequence_class": consequence}
@@ -205,15 +206,28 @@ def test_an_absent_mirror_loads_as_no_burden_rather_than_failing(tmp_path: Path)
     assert load_burden(tmp_path) == {}
 
 
-def test_a_cohort_missing_from_the_registry_keeps_its_id_as_its_label() -> None:
-    """The same fallback `build_genes` applies to a gene missing from
-    `mirrors/genes.tsv`, and for the same reason: an id is something a reader can
-    look up, and a blank is a broken page. Unreachable behind `build_site`, which
-    refuses on the BUR009 the absence reports.
+def test_the_registry_carries_the_description_not_only_the_name() -> None:
+    """The caveats a curator wrote reached no published byte.
+
+    `cohort_registry` returned `{id: name}` until 2026-08-05 and dropped
+    `description` -- which `models/cohort.py` says is where the caveats
+    qualifying every number drawn from a collection belong, and where the UK
+    Biobank entry records that its controls are adults recruited at 40-69 while
+    the CHD cases were largely enrolled in childhood. Measured that day on a real
+    build: no cohort description appeared in any of the 57 published files.
+
+    Returning the record rather than a projection of it is what makes a future
+    field reach the page by default instead of being silently dropped -- the
+    same argument `bundles._summaries` makes for passing a `ModalitySummary`
+    through rather than rebuilding it.
     """
-    labels = cohort_labels(
-        [Cohort(id="ddd", name="Deciphering Developmental Disorders (DDD)", description="d")]
+    cohort = Cohort(
+        id="ukbb",
+        name="UK Biobank",
+        description="Adults recruited at 40-69; survivorship bias against severe CHD.",
     )
 
-    assert labels == {"ddd": "Deciphering Developmental Disorders (DDD)"}
-    assert labels.get("pcgc", "pcgc") == "pcgc"
+    registry = cohort_registry([cohort])
+
+    assert registry == {"ukbb": cohort}
+    assert registry["ukbb"].description.startswith("Adults recruited")

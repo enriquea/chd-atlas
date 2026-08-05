@@ -14,11 +14,11 @@ page's job is to label them, not to choose between them.
 
 The one thing that is *not* published is anything this atlas computed. There is
 no pooled p-value across studies and no per-gene summary verdict, because the
-CHD literature reuses cohorts -- DDD contributes cases to more than one of the
-papers this atlas cites -- so a pooled statistic would count the same children
-twice. `shared_cohorts` is the alternative: it names the overlap instead of
-pretending it away, and it derives nothing beyond a set intersection over what
-each study already declared.
+CHD literature reuses cohorts -- DDD contributed to several of the papers this
+atlas plans to curate, though only one cited today names it -- so a pooled
+statistic would count the same children twice. `shared_cohorts` is the
+alternative: it names the overlap instead of pretending it away, and it
+derives nothing beyond a set intersection over what each study already declared.
 """
 
 from __future__ import annotations
@@ -261,14 +261,22 @@ def burden_payload(rows: Iterable[BurdenRow]) -> list[Json]:
     ]
 
 
-def cohort_labels(cohorts: Iterable[Cohort]) -> dict[str, str]:
-    """Cohort id -> display name, from `corpus.cohorts`.
+def cohort_registry(cohorts: Iterable[Cohort]) -> dict[str, Cohort]:
+    """Cohort id -> the curated record, from `corpus.cohorts`.
 
-    A page names collections rather than printing `cnchd`. A cohort absent from
-    the registry keeps its id as its label -- the same fallback `build_genes`
-    applies to a gene missing from `mirrors/genes.tsv`, and for the same reason:
-    an id is something a reader can still look up, and a blank is a broken page.
-    `validate_burden_references` reports the absence as BUR009 and the gate
-    refuses on it, so this fallback is unreachable behind `build_site`.
+    Returns the whole record rather than just the name. The first version
+    returned `{id: name}` and dropped `description` -- which is where
+    `models/cohort.py` says the caveats qualifying every number drawn from a
+    collection belong, and where a curator had written that UK Biobank's
+    controls are adults recruited at 40-69 while the CHD cases were largely
+    enrolled in childhood. Measured 2026-08-05: no cohort description reached a
+    single published byte. The curator wrote the caveat, the model documented
+    where it goes, and no reader could reach it.
+
+    A cohort absent from the registry keeps its id as its label at the render
+    site -- the same fallback `build_genes` applies to a gene missing from
+    `mirrors/genes.tsv`. `validate_burden_references` reports the absence as
+    BUR009 and the gate refuses on it, so that fallback is unreachable behind
+    `build_site`.
     """
-    return {str(cohort.id): cohort.name for cohort in cohorts}
+    return {str(cohort.id): cohort for cohort in cohorts}

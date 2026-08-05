@@ -159,7 +159,7 @@ atlas behind it at all.
       "symbol": "TBX5",
       "validity_state": "expert_curated",
       "variant_count": 0,
-      "burden_row_count": 9
+      "burden_row_count": 8
     }
   ]
 }
@@ -295,7 +295,7 @@ One gene's whole detail page, in one fetch.
   "functional": [],
   "variants": [],
   "omics": {},
-  "burden": [ { "study": "PMID:42230622", "cohort_stratum": "syndromic", … } ]
+  "burden": [ { "study": "PMID:42230622", "cohort_stratum": "all", … } ]
 }
 ```
 
@@ -427,8 +427,12 @@ and GenCC under, the same way it does for HPO.
 
 Published rare-variant burden statistics for the gene, one object per
 (study, cohort stratum, variant class, consequence class, frequency threshold).
-1,192 rows across 145 genes today, from one study; all 23 published genes are
-covered. `burden_row_count` on the browse row is this array's length.
+**187 rows reach the API**, across the 23 published genes, from one study.
+`mirrors/burden.tsv` holds 1,192 rows for 145 genes; the other 1,005 are for
+genes the site does not publish and reach no bundle and no page. They are held
+so that widening the publication gate later needs no re-mirroring, which is the
+same reason `mirrors/genes.tsv` registers 154 genes and 23 publish.
+`burden_row_count` on the browse row is this array's length.
 
 ```json
 {
@@ -450,7 +454,7 @@ covered. `burden_row_count` on the browse row is this array's length.
   "effect_bound": "unbounded_above",
   "ci_low": 28.1,
   "ci_high": null,
-  "pvalue": 3.13e-8,
+  "pvalue": 3.13e-08,
   "pvalue_test": "fisher_exact",
   "case_cohorts": ["cnchd", "ddd", "nottingham"],
   "control_cohorts": ["ukbb"],
@@ -506,9 +510,10 @@ Five obligations, each of which is a wrong claim if you get it wrong:
 
 `n_cases` and `n_controls` are the row's own denominators, and they are what the
 statistic beside them was computed from. They may differ from the figures a
-paper's abstract reports — for `PMID:42230622` they are the post-QC set (3,876
-cases, 1,471 syndromic + 2,405 non-syndromic, against 45,082 controls) while the
-abstract gives the recruited set. Do not substitute one for the other.
+paper's abstract reports — for `PMID:42230622` they are 3,876 cases (1,471
+syndromic + 2,405 non-syndromic) against 45,082 controls, while the abstract
+gives 4,747 and 52,881. The paper does not reconcile the two. Use the row's own
+denominators: they are the ones its statistic was computed from.
 
 ## `genes/<slug>.html`
 
@@ -656,7 +661,8 @@ HGNC id and leaves the mapping to the authority that maintains it.
       "pmcid": null,
       "own_lab": false,
       "cohort_size": null,
-      "ancestry": []
+      "ancestry": [],
+      "tests_reported": null
     }
   ]
 }

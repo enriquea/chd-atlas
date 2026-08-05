@@ -279,15 +279,53 @@ def validate_repository(root: Path) -> ValidationReport:
         issues.extend(validate_mirror_references(root, corpus))
         # Deliberately not folded into the `validate_burden` call above: these
         # need registries a failed corpus load empties, and the comparator rules
-        # must keep running when that happens. `known_genes` is already None on
-        # an unreadable registry, and `corpus.cohorts`/`corpus.publications` are
-        # only reachable here because `corpus_issues` was empty.
+        # must keep running when that happens.
+        #
+        # **Each registry is passed as None when it is empty, not as an empty
+        # set**, and this is the load-bearing part. The first version passed the
+        # sets unconditionally and broke the guarantee in §1 of CLAUDE.md that a
+        # missing registry must not report as hundreds of dangling references.
+        # Measured 2026-08-05 against the committed corpus:
+        #
+        #   deleting curation/cohorts.yaml   -> 4 BUR009 errors, none naming the cause
+        #   header-only mirrors/genes.tsv    -> 146 errors (1 REF001 + 145 BUR011),
+        #                                       against 1 error before this table existed
+        #
+        # `_known_genes` returns None only for a missing or unreadable file; a
+        # header-only mirror reads fine and yields an empty set, which is why the
+        # emptiness test lives here rather than there.
+        burden_path = root / "mirrors" / "burden.tsv"
+        cohort_ids = {str(cohort.id) for cohort in corpus.cohorts}
+        study_ids = {str(publication.id) for publication in corpus.publications}
+        if burden_path.is_file() and not cohort_ids:
+            issues.append(
+                ValidationIssue(
+                    "CUR004",
+                    Severity.ERROR,
+                    str(root / "curation" / "cohorts.yaml"),
+                    "cohort registry is missing or empty, so every cohort a burden "
+                    "row cites will be reported as dangling",
+                )
+            )
+        # CUR003 above fires only when an assertion or a functional record needs
+        # the registry. A burden row cites a publication too, so the same cause
+        # needs the same report when burden is the only thing citing one.
+        if burden_path.is_file() and not study_ids and not (corpus.assertions or corpus.functional):
+            issues.append(
+                ValidationIssue(
+                    "CUR003",
+                    Severity.ERROR,
+                    str(root / "curation" / "publications.yaml"),
+                    "publication registry is missing or empty, so every citation "
+                    "will be reported as dangling",
+                )
+            )
         issues.extend(
             validate_burden_references(
                 root,
-                known_cohorts={str(cohort.id) for cohort in corpus.cohorts},
-                known_genes=known_genes,
-                known_studies={str(publication.id) for publication in corpus.publications},
+                known_cohorts=cohort_ids or None,
+                known_genes=known_genes or None,
+                known_studies=study_ids or None,
             )
         )
         # Inside the same branch as the two above, and for the same reason: it

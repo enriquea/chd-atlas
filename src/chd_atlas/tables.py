@@ -650,7 +650,11 @@ BURDEN = TableSchema(
         # samples. `;`-joined, same convention as `genes.aliases`.
         Column("case_cohorts", pl.String, pattern=COHORT_LIST_PATTERN),
         Column("control_cohorts", pl.String, nullable=True, pattern=COHORT_LIST_PATTERN),
-        # Free text, rendered verbatim as a row footnote. Deliberately not a
+        # Free text, rendered verbatim as a footnote under the study's table by
+        # `pages._footnotes`. That sentence was false from this column's
+        # introduction until 2026-08-05: nothing read it, so a curator stating a
+        # CNV carrier rule would have got a green build, a correct bundle and no
+        # page text. Deliberately not a
         # controlled vocabulary yet: what "carrier" means for a CNV differs
         # between papers (any overlap, exonic overlap, whole gene), and inventing
         # the axis from a single example is how a vocabulary ends up wrong.

@@ -75,6 +75,19 @@
         "study_type": {
           "$ref": "#/$defs/StudyType"
         },
+        "tests_reported": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tests Reported"
+        },
         "title": {
           "minLength": 1,
           "title": "Title",

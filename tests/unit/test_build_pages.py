@@ -17,6 +17,7 @@ from chd_atlas.build.emit import Emitter
 from chd_atlas.build.pages import _SCOPE_RULE, build_gene_index_page, build_gene_pages
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
+from chd_atlas.models.cohort import Cohort
 from chd_atlas.models.literature import Publication
 from chd_atlas.vocab import (
     AtlasCuration,
@@ -979,6 +980,21 @@ def _burden_row(**overrides: object) -> BurdenRow:
     return BurdenRow(**payload)  # type: ignore[arg-type]
 
 
+_COHORTS = {
+    "cnchd": Cohort(id="cnchd", name="German Competence Network", description="German registry."),
+    "ddd": Cohort(
+        id="ddd",
+        name="Deciphering Developmental Disorders (DDD)",
+        description="Ascertained on developmental disorder, so enriched for syndromic CHD.",
+    ),
+    "ukbb": Cohort(
+        id="ukbb",
+        name="UK Biobank",
+        description="Adults recruited at 40-69; survivorship bias against severe CHD.",
+    ),
+    "pcgc": Cohort(id="pcgc", name="PCGC", description="Pediatric Cardiac Genomics Consortium."),
+}
+
 _PUBLICATION = Publication(
     id="PMID:42230622",
     title="Assessing the contribution of rare variants to congenital heart disease",
@@ -986,11 +1002,17 @@ _PUBLICATION = Publication(
     year=2026,
     authors=["Audain E", "Hitz MP"],
     study_type="case_control",  # type: ignore[arg-type]
+    own_lab=True,
+    tests_reported=138609,
 )
 
 
 def _burden_page(
-    tmp_path: Path, facts: dict[str, GeneFacts], rows: list[BurdenRow], name: str = "HGNC_4173.html"
+    tmp_path: Path,
+    facts: dict[str, GeneFacts],
+    rows: list[BurdenRow],
+    name: str = "HGNC_4173.html",
+    publications: dict[str, Publication] | None = None,
 ) -> str:
     emitter = Emitter(root=tmp_path)
     build_gene_pages(
@@ -999,9 +1021,9 @@ def _burden_page(
         symbols={GATA4: "GATA4", TBX5: "TBX5"},
         validity={GATA4: _validity(), TBX5: _validity()},
         assertions={},
-        publications={_PUBLICATION.id: _PUBLICATION},
+        publications=publications or {_PUBLICATION.id: _PUBLICATION},
         burden={GATA4: rows},
-        cohorts={"ddd": "Deciphering Developmental Disorders (DDD)", "ukbb": "UK Biobank"},
+        cohorts=_COHORTS,
     )
     return _page(tmp_path, name)
 
@@ -1062,7 +1084,7 @@ def test_an_unbounded_odds_ratio_renders_its_lower_bound_rather_than_a_blank(
     """
     page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
 
-    assert "OR unbounded (95% CI ≥28.1)" in page
+    assert "OR ∞ (95% CI 28.1–∞)" in page
     assert "<td>5 / 1,471</td>" in page
     assert "<td>0 / 45,082</td>" in page
 
@@ -1114,6 +1136,215 @@ def test_the_section_says_what_a_missing_row_means_and_what_synonymous_is_for(
     """
     page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
 
-    assert "no qualifying variant in either the cases or the controls" in page
+    assert "not a null result" in page
     assert "negative control" in page
-    assert "no pooled statistic across studies" in page
+    assert "uncorrected" in page
+
+
+def test_the_page_names_how_many_tests_the_study_ran(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The most serious finding of the 2026-08-05 review.
+
+    Measured on the built site that day: of the 187 burden rows the 23 published
+    gene pages render, **32 have p < 0.05 and 3 survive Bonferroni** over the
+    study's own 138,609 comparisons. So 29 rows read as significant and are not,
+    under a green `definitive` chip, on pages read by clinical geneticists.
+
+    The atlas publishes no corrected p -- the supplement carries none, and
+    computing one would be authoring a statistic (D12/D33). Naming the
+    denominator is the honest alternative: it is a count the study made, and it
+    is what lets a reader apply their own threshold. `0.05 / 138609` is stated
+    as the arithmetic it is, not as a threshold the study endorsed.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+
+    assert "138,609" in page
+    assert "uncorrected" in page
+    assert "3.6e-07" in page
+
+
+def test_the_cohort_caveats_a_curator_wrote_reach_the_reader(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """They reached no published byte until 2026-08-05.
+
+    `curation/cohorts.yaml` records that UK Biobank's participants are adults
+    while the CHD cases were largely enrolled in childhood -- a survivorship
+    bias that inflates every odds ratio on every page -- and `models/cohort.py`
+    says in as many words that `description` is where such caveats belong.
+    `cohort_registry` returned `{id: name}` and dropped them.
+
+    This is the project's characteristic failure in its purest form: the work
+    was done, it was correct, it was validated, and no reader could reach it.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+
+    assert "survivorship bias against severe CHD" in page
+    assert "enriched for syndromic CHD" in page
+    # In a `<details>`, so the caveats are one click from every table rather than
+    # repeated at full length above 23 of them -- and still in the document for
+    # a crawler, a `curl`, and a reader with no JavaScript.
+    assert "<details" in page
+
+
+def test_the_page_says_what_was_counted_not_only_how_many(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Four partition columns reached no page while populated on all 187 rows.
+
+    A section headed "Rare variant burden" never said what *rare* meant, and
+    `origin: any` -- a case-control count of variants regardless of inheritance
+    -- was indistinguishable from a trio's de novo count. `vocab.VariantOrigin`
+    warns about exactly that, and `tables.py` says the partition "exists to stop
+    two incomparable rows from *looking* comparable".
+
+    The origin label is asserted in full because the parenthetical is the whole
+    point: "any inheritance" alone would still let a reader assume de novo.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+
+    assert "MAF below 0.001" in page
+    assert "any inheritance (not a de novo test)" in page
+    assert "SNVs and indels" in page
+    assert "Fisher&#x27;s exact test" in page
+
+
+def test_a_study_by_an_author_of_this_atlas_says_so(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`own_lab` reached `publications.json` and zero HTML files.
+
+    Every burden table on the site today comes from one study whose first author
+    is this repository's author. A reader being asked to weigh those numbers
+    should not have to cross-reference a JSON payload to learn that.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    assert "this study is by an author of this atlas" in page
+
+    outside = _PUBLICATION.model_copy(update={"own_lab": False})
+    other = _burden_page(
+        tmp_path, facts_uncurated, [_burden_row()], publications={outside.id: outside}
+    )
+    assert "by an author of this atlas" not in other
+
+
+def test_a_de_novo_row_renders_the_expectation_it_was_compared_against(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_count(None, None)` rendered an em dash where the comparator belongs.
+
+    On a `mutation_model` row the modelled expected count is the only thing the
+    enrichment was computed against, and an em dash is indistinguishable from a
+    control count nobody recorded. Latent until a trio study lands, which is
+    precisely why it is pinned now.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(
+                comparator="mutation_model",
+                n_control_carriers=None,
+                n_controls=None,
+                control_cohorts=(),
+                expected_count=0.42,
+                effect=11.9,
+                effect_measure="enrichment_ratio",
+                effect_bound=None,
+                ci_high=30.0,
+                pvalue_test="poisson",
+            )
+        ],
+    )
+
+    assert "0.42 expected" in page
+    assert "enrichment 11.9" in page
+
+
+def test_a_method_note_is_rendered_as_the_footnote_the_schema_promises(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`tables.py` called `method_note` "rendered verbatim as a row footnote"
+    from the day the column existed, and nothing read it.
+
+    The column exists for the CNV case, where "carrier" means different things
+    in different papers, so the first curator to need it would have got a green
+    build, a correct bundle and no page text.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(method_note="Carrier means any exonic overlap of the deletion.")],
+    )
+
+    assert "Carrier means any exonic overlap of the deletion." in page
+
+
+def test_the_provenance_line_unions_every_row_rather_than_reading_the_first(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`case_cohorts` is a per-row column and was reported per study block.
+
+    A study whose strata drew on different collections published one row's
+    cohorts as if they were all of them -- and `shared_cohorts` reads the same
+    column with a *union* rule, so the "not independent" notice could name a
+    cohort the provenance line did not. Both union now, so they cannot disagree.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(case_cohorts=("cnchd",)),
+            _burden_row(cohort_stratum="all", case_cohorts=("ddd", "pcgc")),
+        ],
+    )
+
+    # Scoped to the provenance paragraph. Asserted page-wide, this passed with
+    # `_names` mutated to print bare ids, because `_cohort_notes` renders the
+    # same names in the `<details>` block below the table.
+    start = page.index('<p class="provenance">')
+    line = page[start : page.index("</p>", start)]
+    assert "German Competence Network" in line
+    assert "Deciphering Developmental Disorders (DDD)" in line
+    assert "PCGC" in line
+    assert "cnchd" not in line
+
+
+def test_a_study_heading_never_renders_a_nameless_author(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`Publication.authors` constrains the list, not its elements.
+
+    A whitespace-only first author passes every validator and rendered
+    "    et al. 2026" -- a study heading naming nobody. `authors[0]` was read
+    only by `search.py` before this section existed, so the page is where the
+    pre-existing model weakness first became visible. Same shape as the blank
+    `symbol` defect `runner.py::_cell` exists to catch.
+    """
+    nameless = _PUBLICATION.model_copy(update={"authors": ["   "]})
+    page = _burden_page(
+        tmp_path, facts_uncurated, [_burden_row()], publications={nameless.id: nameless}
+    )
+
+    assert "et al." not in page
+    assert "PMID:42230622</a>" in page
+
+
+def test_the_pooling_warning_is_absent_when_there_is_only_one_study(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """It asserted "these cohorts overlap" in the present tense on a page showing
+    one table, sending a reader to look for a second study that is not there and
+    undermining the caveats that *are* live. The corpus carries one study today,
+    so this is the branch every real page takes.
+    """
+    one = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
+    assert "no pooled statistic across studies" not in one
+
+    two = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(), _burden_row(study="PMID:8988165", case_cohorts=("ddd", "pcgc"))],
+    )
+    assert "no pooled statistic across studies" in two

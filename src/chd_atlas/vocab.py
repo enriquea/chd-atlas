@@ -281,9 +281,13 @@ class EffectBound(StrEnum):
     927 of 138,609 rows across its three strata report `Infinity`, always in
     `fet.odds_ratio` and `fet.ci_95_upper` together and nowhere else.
 
-    Those rows carry the *strongest* signal in the study -- TAB2, 6 syndromic
-    carriers against 0 of 45,082 controls -- so dropping them would discard the
-    result the reader most wants. They cannot be published as a number either:
+    Those rows carry the *strongest* signal in the study -- TAB2, 5 syndromic
+    carriers of 1,471 against 0 of 45,082 controls -- so dropping them would
+    discard the result the reader most wants. (This said "6 syndromic carriers"
+    until 2026-08-05; 6 is the *all-cases* count, of 3,876. Verified against the
+    mirror, the published bundle and the paper's own Table 1.)
+
+    They cannot be published as a number either:
     `encode_json` sets `allow_nan=False`, and `Infinity` is accepted by Python's
     `json.loads` but rejected by `JSON.parse`, so it would break every page
     while the manifest checksum still verified.

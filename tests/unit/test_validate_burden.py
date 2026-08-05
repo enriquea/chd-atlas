@@ -353,3 +353,86 @@ def test_an_unknown_comparator_is_left_to_the_column_check(tmp_path: Path) -> No
     """
     codes = _codes(tmp_path, {**_ROW, "comparator": "sibling_rate"}, {**_ROW, "gene": "HGNC:11603"})
     assert [code for code in codes if code.startswith("BUR")] == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "code"),
+    [
+        # BUR012 -- the interval must contain the estimate it qualifies. The
+        # signature of a column transcribed one cell out of place: "OR 5.0" and
+        # an interval entirely below 1 say opposite clinical things in one cell,
+        # and a reader cannot tell which half is the typo. BUR004 catches only
+        # the inverted interval, which is the easier half of the same defect.
+        pytest.param(
+            {"effect": "5.0", "effect_bound": "", "ci_low": "0.1", "ci_high": "0.2"},
+            "BUR012",
+            id="effect-above-its-interval",
+        ),
+        pytest.param(
+            {"effect": "0.05", "effect_bound": "", "ci_low": "0.1", "ci_high": "0.2"},
+            "BUR012",
+            id="effect-below-its-interval",
+        ),
+        # BUR013 -- no test returns exactly 0. This is what 1e-400 looks like
+        # after float64 underflow, and a page printing it claims certainty no
+        # study can have.
+        pytest.param({"pvalue": "0"}, "BUR013", id="p-exactly-zero"),
+        # BUR014 -- half an interval, with no effect_bound to explain it. Same
+        # rule and rationale as BUR005's pvalue/pvalue_test pairing.
+        pytest.param(
+            {"effect": "5.0", "effect_bound": "", "ci_low": "0.5", "ci_high": ""},
+            "BUR014",
+            id="lower-bound-only",
+        ),
+        pytest.param(
+            {"effect": "5.0", "effect_bound": "", "ci_low": "", "ci_high": "9.9"},
+            "BUR014",
+            id="upper-bound-only",
+        ),
+        # BUR015 -- an interval qualifying nothing. BUR006 requires a measure
+        # when there is an effect *or* a bound; a bare interval satisfies
+        # neither, so it slipped past both.
+        pytest.param(
+            {
+                "effect": "",
+                "effect_measure": "",
+                "effect_bound": "",
+                "ci_low": "0.5",
+                "ci_high": "9.9",
+            },
+            "BUR015",
+            id="interval-with-no-quantity",
+        ),
+        # BUR016 -- a collection cannot be its own control. `shared_cohorts`
+        # unions the two columns to surface reuse *between* studies, so reuse
+        # *within one row* is invisible to the one mechanism built to catch it.
+        pytest.param({"case_cohorts": "cnchd;ukbb"}, "BUR016", id="cohort-on-both-sides"),
+    ],
+)
+def test_a_statistic_that_contradicts_itself_is_refused(
+    tmp_path: Path, mutation: dict[str, str], code: str
+) -> None:
+    """Six rules added after adversarial review, each measured before adding.
+
+    None fires on the committed mirror: 0 of 1,158 rows with a finite effect and
+    both bounds violate bracketing, 0 of 1,192 report p exactly 0 or carry half
+    an interval outside the 34 unbounded rows, 0 carry an interval with no
+    quantity, and 0 name a cohort on both sides. So each is a guard on data that
+    is clean today, added because the defect it catches is silent and the fix a
+    curator would apply is different in each case.
+    """
+    assert code in _codes(tmp_path, {**_ROW, **mutation})
+
+
+def test_an_unbounded_row_is_the_one_interval_allowed_to_be_half_present(
+    tmp_path: Path,
+) -> None:
+    """BUR014's single exception, asserted so it cannot be tightened away.
+
+    All 34 unbounded rows in the committed mirror have `ci_low` and no
+    `ci_high`. A rule requiring both bounds unconditionally would reject every
+    one of them -- which is to say, the strongest results in the study.
+    """
+    assert validate_burden(_write(tmp_path, _ROW)) == []
+    assert _ROW["effect_bound"] == "unbounded_above"
+    assert _ROW["ci_high"] == ""
