@@ -179,6 +179,47 @@ STYLESHEET: Final = """
   }
   .cell .sub { font-size: 0.72rem; opacity: 0.85; }
 
+  /* The front page's hero band, census cards and call to action. Every rule
+     below is written against a token declared above, so the dark theme is
+     covered by construction rather than by a second media query that someone
+     has to remember to update. */
+  .hero {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.3rem 1.4rem; margin: 1.5rem 0 0;
+  }
+  .figures { display: flex; flex-wrap: wrap; gap: 1.1rem 2.75rem; margin: 0 0 1rem; }
+  .figure { display: flex; flex-direction: column; }
+  .figure-value {
+    font-size: 2.2rem; line-height: 1.05; font-weight: 600;
+    font-variant-numeric: tabular-nums; color: var(--evidence);
+  }
+  .figure-label { font-size: 0.85rem; color: var(--muted); }
+  .hero-note { margin: 0 0 1rem; font-size: 0.9rem; color: var(--muted); }
+  .cta {
+    display: inline-block; background: var(--evidence); color: var(--on-evidence);
+    text-decoration: none; border-radius: 5px; padding: 0.45rem 0.95rem;
+  }
+  .cta:hover { text-decoration: underline; }
+  .cta:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  /* A `<dl>` because it is one -- label and value -- restyled from the base
+     two-column list into cards. `dl.stats` is (0,1,1) and the base `dl` rule
+     below is (0,0,1), so the two do not fight over `grid-template-columns`.
+     Each pair is wrapped in a `.stat` div, which HTML5 permits inside a `<dl>`
+     and which is what lets one label and its value be one card. */
+  dl.stats {
+    grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+    gap: 0.6rem; margin: 1rem 0;
+  }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.6rem 0.75rem;
+  }
+  .stat dt { font-size: 0.82rem; line-height: 1.3; }
+  .stat dd {
+    font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums;
+    margin-top: 0.15rem;
+  }
+
   .reading-notes { margin: 1rem 0; }
   .reading-notes summary { cursor: pointer; color: var(--muted); }
   .reading-notes summary:focus-visible, .cohort-notes summary:focus-visible {
@@ -264,6 +305,29 @@ RESEARCH_USE_NOTICE: Final = (
     "This atlas is under active development. It is "
     "<strong>not a clinical decision-support tool</strong> and must not be used to make "
     "or guide a diagnostic, treatment or any other clinical decision."
+)
+
+
+# What each of the four `FamilyState`s means, in the order `concordance` ranks
+# them: strongest support first, absence last.
+#
+# **One definition, three legends.** `pages._STRIP_LEGEND` captions the browse
+# page's dot strip, `pages._MATRIX_LEGEND` captions the gene page's evidence
+# matrix, and `landing.py` teaches the same glyphs on the front page. The three
+# draw different markup — `.dot` glyphs, `.cell-key` swatches — but they must
+# describe the same four states in the same words, and this project's single
+# most repeated defect is duplicated prose going stale in one copy while staying
+# internally consistent (CLAUDE.md section 4.24). Sharing the sentence is what
+# makes that impossible rather than unlikely.
+#
+# The apostrophe is `&#x27;` rather than a literal, because these strings are
+# interpolated into HTML by three call sites and one of them may one day put one
+# inside an attribute. `render` is where escaping decisions live.
+EVIDENCE_STATE_LABELS: Final[tuple[str, ...]] = (
+    "enriched, and survives that study&#x27;s own correction",
+    "enriched nominally, or no correction published",
+    "tested, no enrichment detected",
+    "not tested by that dataset",
 )
 
 

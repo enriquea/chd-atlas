@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
@@ -149,7 +150,39 @@ from chd_atlas.corpus import Corpus
 # `len(families)`; and render `not_tested` distinguishably from
 # `no_enrichment`, because collapsing them is what turns "nobody looked" into
 # "somebody looked and found nothing".
-SCHEMA_VERSION: Final = "2.6"
+#
+# 2.7 adds `genes`, `burden_rows` and `cohort_families` to `counts`. Additive,
+# so MINOR: every 2.6 key is present and unchanged.
+#
+# It is a correctness fix, not a convenience. Every `counts` key through 2.6
+# counted a `corpus` collection, so the object described *the curation* while
+# reading as a census of the build -- measured 2026-08-05 it published
+# `assertions: 1, datasets: 0, functional: 0` for a site publishing 23 genes and
+# 290 burden statistics, and named neither. A consumer summarising the atlas from
+# this object reported an empty one. `index.html` had the same omission and is
+# fixed in the same release, because `docs/data-api.md` describes the page as
+# stating "the rest of `counts`" -- they are one census in two formats and must
+# not be able to disagree.
+#
+# So `counts` is now a census of what the build *published*, not of what the
+# curation holds. The distinction matters for reading a diff against 2.6:
+# `genes` is D21's published population (23), not `len(corpus.assertions)`'s
+# genes (1) and not the 154 genes either validity mirror covers.
+#
+# `burden_rows` counts rows reaching a published bundle -- 290 -- not the 1,475
+# in `mirrors/burden.tsv`. The mirror is deliberately wider than the publication
+# gate, so 127 of its 150 genes publish no page; a count of the mirror here would
+# advertise evidence no consumer of this API can fetch. It is exactly the sum of
+# every `genes/index.json` row's `burden_row_count`, and a consumer may check it
+# that way.
+#
+# `cohort_families`, and deliberately **not** `independent_datasets` even though
+# that is the key every gene bundle carries. `counts` already has `datasets`,
+# which means *omics* datasets and is 0; two adjacent keys reading `datasets: 0`
+# and `independent_datasets: 3` is a misreading waiting to happen. This is the
+# length of any bundle's `independent_datasets.families` array, which is the same
+# for every gene by construction.
+SCHEMA_VERSION: Final = "2.7"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is
@@ -236,27 +269,57 @@ def source_commit(root: Path) -> str | None:
     return commit.strip() or None
 
 
-def write_manifest(corpus: Corpus, emitter: Emitter, commit: str | None) -> None:
+def write_manifest(
+    corpus: Corpus,
+    emitter: Emitter,
+    commit: str | None,
+    counts: Mapping[str, int],
+) -> None:
     """Write `manifest.json` and seal the emitter. The build ends here.
 
     `emitter.checksums` is complete only once every other builder has run, so
     this must be the last thing a build emits. Sealing is what makes that a rule
     rather than an intention — see `Emitter.seal`.
+
+    `counts` carries the figures this module cannot derive from a `Corpus`: the
+    published gene population, the burden rows reaching a bundle, and the number
+    of cohort families. They are passed in rather than recomputed for the reason
+    `runner.py` threads `published` to three builders — the front page, the
+    browse payload and this manifest must state one census, and the only way
+    they cannot disagree is to count the same objects. Merged over the corpus
+    counts rather than nested under a key of their own, because a consumer
+    reading `counts` wants the census, not a lesson about which half of it came
+    from where.
     """
+    corpus_counts = {
+        "assertions": len(corpus.assertions),
+        "datasets": len(corpus.datasets),
+        "featured": len(corpus.featured),
+        "functional": len(corpus.functional),
+        "phenotypes": len(corpus.phenotypes),
+        "publications": len(corpus.publications),
+    }
+    # A build count silently shadowing a corpus count would republish one figure
+    # under another's name, and `sort_keys` would leave the output looking
+    # perfectly ordinary. `datasets` is the live hazard: it means *omics*
+    # datasets here and a caller reaching for the cohort-family count is one
+    # plausible keystroke from overwriting it. `raise`, never `assert` -- `-O`
+    # strips `assert`, and this is a guard on a mistake no test would otherwise
+    # see.
+    collisions = sorted(set(counts) & set(corpus_counts))
+    if collisions:
+        raise ValueError(
+            f"build counts {collisions} would shadow the corpus counts of the same name; "
+            f"rename them rather than overwriting a figure derived from the corpus"
+        )
+
     emitter.write_json(
         "manifest.json",
         {
             "schema_version": SCHEMA_VERSION,
             "source_commit": commit,
             "status": STATUS,
-            "counts": {
-                "assertions": len(corpus.assertions),
-                "datasets": len(corpus.datasets),
-                "featured": len(corpus.featured),
-                "functional": len(corpus.functional),
-                "phenotypes": len(corpus.phenotypes),
-                "publications": len(corpus.publications),
-            },
+            "counts": {**corpus_counts, **counts},
             # A snapshot, not an ordering. Sorting here was specified and then
             # dropped: `encode_json` passes `sort_keys=True`, which orders keys
             # at every level, so an unsorted mapping encodes to the same bytes.

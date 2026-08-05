@@ -22,6 +22,7 @@ from chd_atlas.build.pages import (
     build_gene_pages,
 )
 from chd_atlas.build.paths import gene_page_path
+from chd_atlas.build.render import EVIDENCE_STATE_LABELS
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
@@ -1925,6 +1926,44 @@ def test_the_gene_and_its_symbol_both_link_to_the_page_and_the_strip_does_not(
     strip = strip[: strip.index("</span></span>")]
     assert "<a " not in strip
     assert "strip-tally" in strip
+
+
+def test_the_browse_strips_four_glyphs_are_all_named_in_its_legend(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """A key naming three of four states leaves the fourth as an unexplained mark.
+
+    Measured by mutation 2026-08-05: replacing every label in `_STRIP_LEGEND`
+    with a single letter survived this whole file. The gene page's matrix legend
+    was guarded and the browse page's strip legend was not, which is the same
+    asymmetry — and the same direction — as the missing matrix caption an
+    adversarial review caught one release earlier.
+
+    Asserted against `EVIDENCE_STATE_LABELS` rather than against four literals.
+    Both legends here and the front page's key build from that constant, so this
+    checks the shared definition actually reaches the page; a literal here would
+    pass on a legend that had quietly stopped using it.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity=validity_two,
+        burden_counts={},
+        concordance={
+            gene: {"tested": 0, "enriched": 0, "corrected": 0, "families": []} for gene in facts_two
+        },
+    )
+    page = _page(tmp_path, "index.html")
+    legend = page[page.index("</table>") :]
+
+    for label in EVIDENCE_STATE_LABELS:
+        assert label in legend, f"the strip legend no longer names {label!r}"
+    for state in ("dot full", "dot half", "dot none", "dot untested"):
+        assert f'<span class="{state}">' in legend
 
 
 def test_the_matrix_cell_drops_the_interval_but_never_the_measure(
