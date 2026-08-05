@@ -297,13 +297,18 @@ def burden_payload(rows: Iterable[BurdenRow]) -> list[Json]:
 
 @dataclass(frozen=True)
 class BurdenCensus:
-    """The three burden figures, derived once and rendered in two places.
+    """The three burden figures, derived once and published in three places.
 
-    The hero band and the `What's published` list state the same numbers. They
-    come from one object for the same reason `published` is threaded down from
-    `build_site` rather than recomputed: two derivations are two things that
-    drift, and a front page whose headline figure contradicts its own table two
-    screens below is worse than one carrying neither.
+    `index.html`'s hero band, its `What's published` list, and `manifest.json`'s
+    `counts`. They come from one object for the same reason `published` is
+    threaded down from `build_site` rather than recomputed: three derivations are
+    three things that drift, and a front page whose headline figure contradicts
+    its own table two screens below — or the payload a program reads instead of
+    the page — is worse than one carrying neither.
+
+    That is also why this lives in `burden.py` rather than in `landing.py`, where
+    it was first written. A census with two consumers in different layers belongs
+    to neither of them.
     """
 
     rows: int
@@ -324,7 +329,8 @@ def burden_census(
     127 genes publish no page (CLAUDE.md section 10 records that asymmetry as
     intended, so re-mirroring is not needed the day D21 widens). A front page
     counting the mirror would advertise 1,475 statistics a reader cannot reach
-    from any link on it. It counts the 290 that reach a published bundle.
+    from any link on it, and `manifest.json` would promise a consumer five times
+    the rows it can fetch. It counts the 290 that reach a published bundle.
 
     **`families` is the dataset count, never `len({row.study for row in rows})`.**
     A cohort family is a connected component over shared sample collections, so
