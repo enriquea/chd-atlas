@@ -21,13 +21,24 @@ HGNC_PATTERN: Final = r"^HGNC:\d+$"
 SEQUENCE_ONTOLOGY_PATTERN: Final = r"^SO:\d{7}$"
 MODIFICATION_PATTERN: Final = r"^MOD:\d{5}$"
 MONDO_PATTERN: Final = r"^MONDO:\d{7}$"
+# Named for the same reason as the four above: `mirrors/burden.tsv` keys every
+# row on the publication it was transcribed from, so this grammar now has a
+# reader on the TSV side as well as in `Pmid` below.
+PMID_PATTERN: Final = r"^PMID:\d+$"
+# A cohort id in `curation/cohorts.yaml`, and the members of the `;`-joined
+# `case_cohorts` / `control_cohorts` columns. Same lowercase-token grammar as
+# `ContrastId`; `;` is excluded from the token so the joined form below cannot
+# be ambiguous.
+COHORT_ID_PATTERN: Final = r"^[a-z0-9]+(_[a-z0-9]+)*$"
+COHORT_LIST_PATTERN: Final = r"^[a-z0-9]+(_[a-z0-9]+)*(;[a-z0-9]+(_[a-z0-9]+)*)*$"
 # Official UniProt accession grammar, with an optional isoform suffix.
 UNIPROT_PATTERN: Final = (
     r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+)?$"
 )
 
 HgncId = NewType("HgncId", Annotated[str, StringConstraints(pattern=HGNC_PATTERN)])
-Pmid = NewType("Pmid", Annotated[str, StringConstraints(pattern=r"^PMID:\d+$")])
+Pmid = NewType("Pmid", Annotated[str, StringConstraints(pattern=PMID_PATTERN)])
+CohortId = NewType("CohortId", Annotated[str, StringConstraints(pattern=COHORT_ID_PATTERN)])
 Doi = NewType("Doi", Annotated[str, StringConstraints(pattern=r"^10\.\d{4,9}/\S+$")])
 Pmcid = NewType("Pmcid", Annotated[str, StringConstraints(pattern=r"^PMC\d+$")])
 PhenotypeId = NewType(

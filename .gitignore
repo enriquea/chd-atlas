@@ -237,6 +237,14 @@ docs/superpowers/
 # a design is being worked out. Same rule as docs/superpowers/: local only.
 .superpowers/
 
+# Raw upstream downloads a curator reprocesses into mirrors/ — journal
+# supplementary workbooks, bulk archive dumps. Local only, and deliberately so:
+# they are large, their redistribution terms are the article's rather than the
+# data's, and the reviewable artifact is the extracted mirror TSV, not the
+# workbook it came from. Provenance travels instead as a URL and a sha256
+# recorded beside each mirror, so a curator can prove they hold the same file.
+local/
+
 # File-manager droppings. Never curated content; the stray-entry sweeps ignore
 # them too, see OS_METADATA in src/chd_atlas/fs.py.
 .DS_Store

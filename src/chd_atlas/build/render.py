@@ -96,6 +96,24 @@ STYLESHEET: Final = """
   }
   .notice p { margin: 0; }
   .scope-rule { color: var(--muted); font-size: 0.9rem; }
+  /* The burden section's four paragraph kinds. `.notice-inline` and
+     `.provenance` were emitted by `pages.py` with no rule at all, so the single
+     most important safety message this site can print -- "these two studies are
+     not independent ... must not be combined" -- rendered as ordinary body text
+     while the research-use notice got a bordered amber box. Found by review
+     2026-08-05. */
+  .notice-inline {
+    border-left: 3px solid var(--notice-border); background: var(--notice-bg);
+    border-radius: 0 4px 4px 0; padding: 0.5rem 0.75rem; margin: 1rem 0;
+  }
+  .method, .provenance { color: var(--muted); font-size: 0.9rem; margin: 0.35rem 0; }
+  .disclosure {
+    color: var(--muted); font-size: 0.9rem; margin: 0.35rem 0; font-style: italic;
+  }
+  .footnotes { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
+  .cohort-notes { margin: 1rem 0; font-size: 0.9rem; }
+  .cohort-notes summary { cursor: pointer; color: var(--muted); }
+  .cohort-notes li { margin: 0.5rem 0; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; margin: 0; }
   dt { color: var(--muted); }
   dd { margin: 0; overflow-wrap: break-word; }

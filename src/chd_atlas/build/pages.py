@@ -60,9 +60,10 @@ mapping in sorted order for the reason every other loop in this build does.
 from __future__ import annotations
 
 import html
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Final
 
+from chd_atlas.build.burden import BurdenRow, shared_cohorts
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
@@ -79,6 +80,7 @@ from chd_atlas.build.render import (
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.identifiers import HgncId
 from chd_atlas.models.assertion import LesionAssertion
+from chd_atlas.models.cohort import Cohort
 from chd_atlas.models.literature import Publication
 from chd_atlas.vocab import AtlasCuration, Classification, ValiditySource
 
@@ -129,6 +131,112 @@ _VALIDITY_HEADERS: Final = (
 )
 
 _EVIDENCE_HEADERS: Final = ("class", "strength", "summary", "publication")
+
+# Three of these read as something else on the same page, which review measured
+# on 2026-08-05:
+#
+# * `cohort` held `all cases / syndromic / non-syndromic` -- strata of the case
+#   set -- six lines below a provenance paragraph using "cohort" for the sample
+#   *collections* (`cnchd`, `ddd`, `ukbb`), which is also what
+#   `curation/cohorts.yaml` is named for. `case group` is the stratum.
+# * `variants` held `loss-of-function / synonymous`; in a row whose other four
+#   cells are numbers, that header invites reading it as a count. It became
+#   "variant class" on 2026-08-05 and that was worse: this column renders
+#   `consequence_class`, while the method line above the table renders the real
+#   `variant_class` ("SNVs and indels"). One phrase meant two things on one page
+#   and was wrong in the more prominent place. Raised by review on #17.
+#   `test_the_variant_column_is_headed_for_the_column_it_renders` pins it.
+# * `cases` and `controls` hold "carriers / total", and nothing said so. The
+#   denominator must travel with the numerator -- six carriers is a different
+#   claim in 3,876 people than in 45,082 -- and the header is where a reader
+#   looks for what a cell means. `_BURDEN_PREAMBLE` states the rule as well.
+_BURDEN_HEADERS: Final = (
+    "case group",
+    "consequence",
+    "cases (carriers / n)",
+    "controls (carriers / n)",
+    "effect",
+    "p (uncorrected)",
+)
+
+_STRATUM_LABEL: Final[dict[str, str]] = {
+    "all": "all cases",
+    "syndromic": "syndromic",
+    "nonsyndromic": "non-syndromic",
+}
+
+_CONSEQUENCE_LABEL: Final[dict[str, str]] = {
+    "lof": "loss-of-function",
+    "missense_damaging": "missense (damaging)",
+    "missense_all": "missense (all)",
+    "all_coding": "all coding",
+    "synonymous": "synonymous",
+}
+
+# Spelled out beside every number, because the abbreviation is the difference
+# between two claims. See `_effect`.
+_MEASURE_LABEL: Final[dict[str, str]] = {
+    "odds_ratio": "OR",
+    "enrichment_ratio": "enrichment",
+    "rate_ratio": "rate ratio",
+}
+
+# The four partition columns that reached no page until 2026-08-05. Each is
+# populated on all 187 published rows, and without them a section headed "Rare
+# variant burden" never says what *rare* means and a case-control count of
+# rare inherited variants reads exactly like a trio's de novo count.
+_VARIANT_CLASS_LABEL: Final[dict[str, str]] = {
+    "snv_indel": "SNVs and indels",
+    "cnv_deletion": "CNV deletions",
+    "cnv_duplication": "CNV duplications",
+    "sv_other": "other structural variants",
+}
+
+_ORIGIN_LABEL: Final[dict[str, str]] = {
+    "de_novo": "de novo only",
+    "inherited": "inherited only",
+    "any": "any inheritance (not a de novo test)",
+}
+
+_LESION_LABEL: Final[dict[str, str]] = {}
+
+_TEST_LABEL: Final[dict[str, str]] = {
+    "fisher_exact": "Fisher's exact test",
+    "poisson": "Poisson test",
+    "binomial": "binomial test",
+}
+
+# Attribution, in the voice `_validity_section` and `landing.py` already use for
+# republished content. The `<h2>` alone said "Rare variant burden" while its
+# sibling says "Mirrored gene-disease validity", and the `_not_curated` notice
+# above it scopes itself to *classifications* -- so nothing between the heading
+# and the table said whose numbers these are.
+_MIRRORED_NOTICE: Final = (
+    "<p>Every count and statistic below is an upstream study's, republished exactly as "
+    "published. The atlas computes none of them and adds no assessment of them.</p>"
+)
+
+# Rendered only when a gene carries rows from more than one study. Rendered
+# unconditionally it asserted "these cohorts overlap" in the present tense on a
+# page showing a single table, sending a reader to look for a second study that
+# is not there.
+_POOLING_NOTICE: Final = (
+    "<p>The atlas computes <strong>no pooled statistic across studies</strong>: these "
+    "cohorts overlap, so combining them would count the same people twice.</p>"
+)
+
+# What the numbers do not say. Every clause was measured; see `_burden_section`.
+_BURDEN_PREAMBLE: Final = (
+    "<p><code>cases</code> and <code>controls</code> each show <em>carriers / total "
+    "sequenced</em>. A consequence class missing from a study's table is <strong>not a "
+    "null result</strong>: no variant of that class was seen in either group, so there "
+    "was nothing to compare and the study reported no row for it.</p>"
+    "<p>The <strong>synonymous</strong> row is the study's own negative control &mdash; "
+    "synonymous variants should show no enrichment. Read it on the same uncorrected "
+    "scale as the rows above it: a <em>strongly</em> enriched synonymous row is a "
+    "warning about that gene's comparison, while a nominally significant one is what a "
+    "scan of this size produces by chance.</p>"
+)
 
 _CITATION_HEADERS: Final = ("id", "title", "year")
 
@@ -416,6 +524,382 @@ def _evidence_section(
     )
 
 
+def _study_label(pmid: str, publications: Mapping[str, Publication]) -> str:
+    """ "Audain et al. 2026", or the bare PMID when the record is missing.
+
+    The fallback is a guard on a bypassed gate -- BUR010 reports a burden row
+    citing an unregistered study and `build_site` refuses on it -- and it renders
+    the PMID rather than an em dash for the reason `build_genes` falls back to an
+    HGNC id: an identifier is something a reader can still look up.
+    """
+    publication = publications.get(pmid)
+    if publication is None:
+        return pmid
+    # `Publication.authors` constrains the *list* to `min_length=1`, not its
+    # elements, so a whitespace-only first author passes every validator and
+    # renders "    et al. 2026" -- a study heading naming nobody. Same defect
+    # `runner.py::_cell` exists to catch on the mirror side, reaching a page for
+    # the first time here: `authors[0]` was previously read only by `search.py`.
+    author = publication.authors[0].strip()
+    if not author:
+        return pmid
+    return f"{author} et al. {publication.year}"
+
+
+def _count(carriers: int | None, total: int | None) -> str:
+    """ "6 / 3,876" -- the numerator with the denominator it was measured against.
+
+    Never the numerator alone. Six carriers is a different claim in 3,876 cases
+    than in 45,082, and the two columns of this table hold exactly that contrast.
+    The separator is a literal `,` via `:,`, which is locale-independent, so two
+    builds on two machines render the same bytes.
+    """
+    if carriers is None or total is None:
+        return _EM_DASH
+    return f"{carriers:,} / {total:,}"
+
+
+def _effect(row: BurdenRow) -> str:
+    """The effect size, its measure, and its interval -- never a bare number.
+
+    **This is the guard the single `effect` column was chosen against.** One
+    column holding both odds ratios and de novo enrichments is what lets this
+    schema absorb a fifth study without a migration, and it is also the one place
+    two incomparable quantities could silently merge: an odds ratio of 3.1 and an
+    enrichment of 3.1 are different claims, and a cell reading "3.1" under a
+    header reading "effect" equates them. `_MEASURE_LABEL` is therefore consulted
+    on every row and there is no branch that omits it.
+
+    `unbounded` rather than a number, and rather than a blank. Fisher's exact
+    test returns an infinite odds ratio where no control carries, which is the
+    strongest result in the data and also the one `encode_json`'s
+    `allow_nan=False` refuses to publish. The lower bound survives and is the
+    whole finding: TAB2's syndromic row says the true odds ratio is at least
+    28.1, which a blank cell would have thrown away.
+    """
+    if row.effect_measure is None:
+        return _EM_DASH
+    measure = _MEASURE_LABEL.get(row.effect_measure, row.effect_measure)
+    if row.effect_bound == "unbounded_above":
+        # `∞ (95% CI 0.298–∞)`, not `unbounded (95% CI ≥0.298)`.
+        #
+        # Measured 2026-08-05 on the built site: 19 cells render an unbounded
+        # odds ratio and **11 of them have a lower bound below 1** -- GATA6 and
+        # TBX5 at ≥0.298 with p = 0.079, among others. The old wording led with
+        # the word "unbounded", which reads as "infinitely enriched", and put
+        # the bound that contradicts it in a parenthesis at lower salience, in a
+        # `≥` notation that is not how a Fisher interval is written. Eleven times
+        # out of nineteen the parenthetical was the entire message.
+        #
+        # The conventional form puts the interval in the reader's usual shape,
+        # so an interval spanning 1 is visible as one. `∞` is safe here and not
+        # in the payload: this is HTML text, while `allow_nan=False` governs the
+        # JSON, which carries `null` plus `effect_bound`.
+        low = _fmt(row.ci_low) if row.ci_low is not None else None
+        return f"{measure} ∞" + (f" (95% CI {low}–∞)" if low else "")
+    if row.effect is None:
+        return _EM_DASH
+    value = f"{measure} {_fmt(row.effect)}"
+    if row.ci_low is None or row.ci_high is None:
+        return value
+    return f"{value} (95% CI {_fmt(row.ci_low)}–{_fmt(row.ci_high)})"
+
+
+def _fmt(value: float) -> str:
+    """A statistic at three significant figures, without scientific notation.
+
+    `f"{1810.0:.3g}"` is `1.81e+03`. Measured on the built site, that spelling
+    reached four confidence-interval upper bounds -- `1.81e+03`, `2.35e+03`,
+    `2.18e+03`, `1.36e+03` -- sitting mid-column beside plain decimals like
+    `1.3`. The upper bound is the number that says "do not act on this", and in
+    the least legible glyph in the table a skimming reader can take `1.81e+03`
+    for `1.81`, turning an uninformative interval into a narrow-looking one.
+
+    Values at or above 1,000 render as separated integers instead: `1,810`.
+    Three significant figures are already far more precision than an interval
+    that wide carries. `:,` is locale-independent, like `_count`'s.
+
+    Not used for p-values: there an exponent is correct and expected, and
+    `2.45e-07` is how a reader wants to see it.
+    """
+    if abs(value) >= 1000:
+        return f"{value:,.0f}"
+    return f"{value:.3g}"
+
+
+def _burden_section(
+    rows: Sequence[BurdenRow],
+    publications: Mapping[str, Publication],
+    cohorts: Mapping[str, Cohort],
+) -> str:
+    """Published rare-variant burden, one table per study.
+
+    Three things this section has to say that the numbers alone do not, each of
+    which a reader would otherwise get wrong:
+
+    * **The rows are per study and are never pooled.** The CHD literature reuses
+      cohorts, so a pooled p-value counts the same children twice. Declining to
+      compute one does not stop a reader doing it by eye, so where two studies
+      share a collection the section names it (`shared_cohorts`).
+    * **A consequence class with no row had no carrier in either group** -- not
+      "was not tested". Measured over the committed mirror: zero of its 1,192
+      rows have no case carrier *and* no control carrier, so a 2x2 of all zeros
+      supports no test and the study emitted no row. The matrix is genuinely
+      sparse -- 42 of 145 genes are missing at least one cell -- so a reader
+      meets a gap often enough for the distinction to matter.
+    * **The synonymous row is the study's own negative control.** Synonymous
+      variants should show no enrichment; where one does, that gene's comparison
+      is poorly calibrated. It is sorted last within each stratum so it reads as
+      what it is -- the row that says whether to believe the two above it.
+
+    Returns `""` for a gene with no burden rows rather than an empty section:
+    unlike the validity table, whose header names the columns and whose emptiness
+    is itself an answer, an empty burden table would say "this gene was studied
+    and nothing was found", which is a claim no study made.
+    """
+    if not rows:
+        return ""
+
+    overlaps = shared_cohorts(rows)
+    blocks: list[str] = []
+    for study in sorted({row.study for row in rows}):
+        study_rows = [row for row in rows if row.study == study]
+        table = data_table(
+            _BURDEN_HEADERS,
+            [
+                Row(
+                    cells=(
+                        _STRATUM_LABEL.get(row.cohort_stratum, row.cohort_stratum),
+                        _CONSEQUENCE_LABEL.get(row.consequence_class, row.consequence_class),
+                        _count(row.n_case_carriers, row.n_cases),
+                        _controls(row),
+                        _effect(row),
+                        f"{row.pvalue:.3g}" if row.pvalue is not None else _EM_DASH,
+                    )
+                )
+                for row in study_rows
+            ],
+        )
+        blocks.append(
+            f"<h3>"
+            f'<a href="{html.escape(_pubmed(study))}">'
+            f"{html.escape(_study_label(study, publications))}</a></h3>"
+            f"{_disclosure(study, publications)}"
+            f"{_method_line(study_rows, publications.get(study))}"
+            f"{_provenance(study_rows, cohorts)}"
+            f"{table}"
+            f"{_footnotes(study_rows)}"
+        )
+
+    shared = "".join(
+        f'<p class="notice-inline"><strong>These two studies are not independent.</strong> '
+        f"{html.escape(_study_label(left, publications))} and "
+        f"{html.escape(_study_label(right, publications))} both draw on "
+        f"{html.escape(_names(common, cohorts))}, so their results describe partly "
+        f"the same people and must not be combined.</p>"
+        for (left, right), common in overlaps.items()
+    )
+
+    # The pooling sentence is conditional. Rendered unconditionally it asserted
+    # "these cohorts overlap" in the present tense on a page showing one table,
+    # sending a reader to look for a second study that is not there and
+    # undermining the caveats that *are* live.
+    pooling = _POOLING_NOTICE if len({row.study for row in rows}) > 1 else ""
+
+    return (
+        "<h2>Rare variant burden</h2>"
+        + _MIRRORED_NOTICE
+        + _BURDEN_PREAMBLE
+        + pooling
+        + shared
+        + "".join(blocks)
+        + _cohort_notes(rows, cohorts)
+    )
+
+
+def _controls(row: BurdenRow) -> str:
+    """The control column, which a de novo row fills with an expectation.
+
+    `_count(None, None)` renders an em dash, and on a `mutation_model` row that
+    dash is where the *entire comparator* belongs: the modelled expected count
+    is the only thing the enrichment was computed against, and an em dash is
+    indistinguishable from a control count nobody recorded.
+    """
+    if row.comparator == "mutation_model" and row.expected_count is not None:
+        return f"{_fmt(row.expected_count)} expected"
+    return _count(row.n_control_carriers, row.n_controls)
+
+
+def _disclosure(study: str, publications: Mapping[str, Publication]) -> str:
+    """Say so when the study is by an author of this atlas.
+
+    `Publication.own_lab` exists to record exactly this and reached
+    `publications.json` and zero HTML files. Every burden table on the site
+    today is from `PMID:42230622`, whose first author is this repository's
+    author -- a reader weighing those numbers should be told without having to
+    cross-reference a JSON payload.
+    """
+    publication = publications.get(study)
+    if publication is None or not publication.own_lab:
+        return ""
+    return (
+        '<p class="disclosure">Declaration: this study is by an author of this atlas. '
+        "Its numbers are republished here exactly as published, and this atlas adds no "
+        "assessment of them.</p>"
+    )
+
+
+def _labelled(values: Iterable[str | None], labels: Mapping[str, str]) -> list[str]:
+    """Distinct values of one column, mapped to display text, sorted.
+
+    Sorted because these come from a `set`, whose iteration order varies with
+    `PYTHONHASHSEED` -- and this string is part of a page's bytes and therefore
+    its checksum. Sorted on the label rather than the raw value so the rendered
+    line reads in the order it is shown.
+    """
+    return sorted({labels.get(value, value) for value in values if value is not None})
+
+
+def _method_line(rows: Sequence[BurdenRow], publication: Publication | None) -> str:
+    """What was counted, and against how many other tests.
+
+    **Four of the eight partition columns reached no page.** `variant_class`,
+    `origin`, `maf_max` and `lesion_group` are populated on every one of the 187
+    published rows and appeared nowhere, so a section headed "Rare variant
+    burden" never said what *rare* meant, and a case-control count of
+    rare-inherited variants was indistinguishable from a trio's de novo count.
+    `tables.py` states the case against exactly this: the partition "exists to
+    stop two incomparable rows from *looking* comparable".
+
+    Rendered per study rather than per row, from the distinct values across the
+    block. Every field is single-valued within a study today; a study carrying
+    two frequency thresholds renders both, which says what the block contains
+    without claiming which row is which -- the JSON is row-precise and the
+    preamble says so.
+
+    The multiple-testing sentence is the other half, and the more serious one.
+    Measured 2026-08-05 over the built site: 32 of the 187 published rows have
+    p < 0.05 and **3** survive Bonferroni over the study's own 138,609 tests, so
+    29 rows read as significant and are not. The atlas publishes no corrected
+    p -- the supplement carries none, and computing one would be authoring a
+    statistic (D12/D33) -- but naming the denominator is a fact the study
+    supplies, and it is what lets a reader apply their own threshold.
+    """
+    parts: list[str] = []
+    for values, labels in (
+        ([row.variant_class for row in rows], _VARIANT_CLASS_LABEL),
+        ([row.origin for row in rows], _ORIGIN_LABEL),
+        ([row.lesion_group for row in rows], _LESION_LABEL),
+        ([row.pvalue_test for row in rows], _TEST_LABEL),
+    ):
+        rendered = _labelled(values, labels)
+        if rendered:
+            parts.append(", ".join(rendered))
+    mafs = sorted({row.maf_max for row in rows if row.maf_max is not None})
+    if mafs:
+        parts.insert(1, "MAF below " + ", ".join(f"{value:g}" for value in mafs))
+
+    sentence = html.escape("; ".join(parts)) + "." if parts else ""
+
+    correction = ""
+    if publication is not None and publication.tests_reported:
+        total = publication.tests_reported
+        threshold = 0.05 / total
+        correction = (
+            f" p-values are <strong>uncorrected</strong>, and this study reported "
+            f"{total:,} such comparisons &mdash; a Bonferroni threshold over that many "
+            f"is p &lt; {threshold:.2g}. Judge every p below against the whole scan, "
+            f"not against 0.05."
+        )
+    elif any(row.pvalue is not None for row in rows):
+        correction = " p-values are <strong>uncorrected</strong> as published."
+
+    if not sentence and not correction:
+        return ""
+    return f'<p class="method">{sentence}{correction}</p>'
+
+
+def _provenance(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str:
+    """The collections a study's rows drew on, unioned across all of them.
+
+    Read off `study_rows[0]` until 2026-08-05, which stated one row's cohorts
+    over the whole block. `case_cohorts` and `control_cohorts` are per-row
+    columns, so a study whose strata draw on different collections published a
+    provenance line the data contradicted -- and `shared_cohorts` reads the same
+    columns with a *union* rule, so the "not independent" notice could name a
+    cohort the provenance line did not. Both now union, so they cannot disagree.
+    """
+    cases = sorted({identifier for row in rows for identifier in row.case_cohorts})
+    controls = sorted({identifier for row in rows for identifier in row.control_cohorts})
+    return (
+        f'<p class="provenance">Cases: {html.escape(_names(cases, cohorts))}. '
+        f"Controls: {html.escape(_names(controls, cohorts) or 'none (see the method above)')}.</p>"
+    )
+
+
+def _footnotes(rows: Sequence[BurdenRow]) -> str:
+    """`method_note`, rendered -- which `tables.py` said it was and it was not.
+
+    The column's comment reads "rendered verbatim as a row footnote", and no
+    code path read it. It exists for the CNV case, where "carrier" means
+    different things in different papers (any overlap, exonic, whole gene), so
+    the first curator to need it would have got a green build, a correct bundle
+    and no page text.
+    """
+    notes = sorted({row.method_note.strip() for row in rows if row.method_note})
+    if not notes:
+        return ""
+    items = "".join(f"<li>{html.escape(note)}</li>" for note in notes)
+    return f'<ul class="footnotes">{items}</ul>'
+
+
+def _cohort_notes(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str:
+    """What each collection is, and the caveats that qualify every number here.
+
+    **These reached no published byte.** `curation/cohorts.yaml` records, for
+    UK Biobank, that its participants are adults recruited at 40-69 while a
+    substantial proportion of the CHD cases were enrolled in childhood -- a
+    survivorship bias that inflates every odds ratio on all 23 pages -- and that
+    the combined cohort is ~92% European. `models/cohort.py` says in as many
+    words that `description` is where such caveats belong. `cohort_labels`
+    returned `{id: name}` and dropped them, so the curator wrote the caveat, the
+    model documented it, and no reader could reach it.
+
+    In a `<details>` element: the caveats are long, they repeat on 23 pages, and
+    a reader who has read them once should not have to scroll past them again.
+    `<details>` is native HTML, needs no script, and its contents are in the
+    document for a crawler, a `curl` and a reader with JavaScript disabled.
+    """
+    cited = sorted(
+        {identifier for row in rows for identifier in (*row.case_cohorts, *row.control_cohorts)}
+    )
+    items = [
+        f"<li><strong>{html.escape(cohorts[identifier].name)}</strong> &mdash; "
+        f"{html.escape(cohorts[identifier].description)}</li>"
+        for identifier in cited
+        if identifier in cohorts
+    ]
+    if not items:
+        return ""
+    return (
+        '<details class="cohort-notes"><summary>About these cohorts, and what '
+        "qualifies every number above</summary><ul>" + "".join(items) + "</ul></details>"
+    )
+
+
+def _names(ids: Sequence[str], cohorts: Mapping[str, Cohort]) -> str:
+    """Cohort ids rendered as the collections they name, comma-separated.
+
+    An id with no record renders as the id, which a reader can still look up;
+    BUR009 reports the absence and the gate refuses, so this is a guard on a
+    bypassed gate.
+    """
+    record = {identifier: cohorts.get(identifier) for identifier in ids}
+    return ", ".join(
+        value.name if value is not None else identifier for identifier, value in record.items()
+    )
+
+
 def build_gene_pages(
     facts: Mapping[str, GeneFacts],
     emitter: Emitter,
@@ -424,6 +908,8 @@ def build_gene_pages(
     validity: Mapping[str, GeneValidity],
     assertions: Mapping[str, list[LesionAssertion]],
     publications: Mapping[str, Publication],
+    burden: Mapping[str, Sequence[BurdenRow]],
+    cohorts: Mapping[str, Cohort],
 ) -> None:
     """Emit one HTML page per gene in `facts`.
 
@@ -461,6 +947,13 @@ def build_gene_pages(
                 if fact.atlas_curation is AtlasCuration.CURATED
                 else _not_curated(fact)
             )
+            # After the atlas's own section, not between it and the mirrored
+            # validity table. `_not_curated` says "the classification above is
+            # an expert panel's", and a burden table sitting above that sentence
+            # would put nine rows of statistics -- which are not classifications
+            # -- inside what it refers to. It also keeps the atlas's own curation
+            # adjacent to the notice about whether there is any.
+            + _burden_section(burden.get(gene, ()), publications, cohorts)
             + "</div></div>"
         )
         emitter.write_text(

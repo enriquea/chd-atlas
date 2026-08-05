@@ -83,7 +83,23 @@ from chd_atlas.corpus import Corpus
 # corpus). Additive in a stronger sense than a field is: no consumer of the data
 # API is affected by a page appearing beside a payload, and every page is
 # checksummed into `files` like any other published byte.
-SCHEMA_VERSION: Final = "2.2"
+#
+# 2.3 adds `burden` to every gene bundle and `burden_row_count` to every
+# `genes/index.json` row: the per-study rare-variant burden statistics from
+# `mirrors/burden.tsv`, 1,192 rows covering 145 genes including all 23 the site
+# publishes. Additive, so MINOR — a 2.2 reader keeps working, and both keys are
+# always present (an empty array and a zero for a gene no study reported), so a
+# consumer never has to guard for a missing one.
+#
+# The display warning that accompanied 2.2's population change applies here in a
+# sharper form, and `docs/data-api.md` carries it: `effect` must never be
+# rendered without `effect_measure` beside it, because an odds ratio of 3.1 and
+# a de novo enrichment of 3.1 are different claims sharing one column; and
+# `effect` is `null` on 34 rows whose odds ratio the study published as
+# infinite, where `effect_bound` is `unbounded_above` and `ci_low` carries the
+# whole finding. A consumer treating that null as "not tested" would drop the
+# strongest results in the data.
+SCHEMA_VERSION: Final = "2.3"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

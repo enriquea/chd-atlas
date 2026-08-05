@@ -117,6 +117,7 @@ def test_registry_covers_every_mirror_table() -> None:
         "phospho",
         "clingen_validity",
         "gencc_submissions",
+        "burden",
     }
 
 
@@ -788,8 +789,8 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
     `str.contains`:
 
     1. Every non-null value of every pattern-bearing column in every committed
-       mirror table -- 98,844 values total (3,653 x 2 in `clingen_gene_validity.tsv`,
-       30,410 x 3 in `gencc_submissions.tsv`, 154 x 2 in `genes.tsv`) -- produces
+       mirror table -- 103,612 values total, counted per table beside the
+       assertion below -- produces
        the identical offender set (here, the empty set: curated data is clean)
        under both engines, for every pattern actually used in a schema:
        `HGNC_PATTERN`, `MONDO_PATTERN`, `UNIPROT_PATTERN` and the inline
@@ -806,7 +807,12 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
        so this was measured to make no difference), case, leading zeros,
        full-width and Arabic-Indic Unicode digits (both engines' `\\d` are
        Unicode-aware), stray `^`/`$` characters, and a 1,000-digit value --
-       run against every pattern.
+       run against every pattern. `PMID_PATTERN` and `COHORT_LIST_PATTERN`
+       joined the set on 2026-08-04 with `mirrors/burden.tsv`, and brought the
+       `;` separator cases with them: `COHORT_LIST_PATTERN` is the first
+       pattern here with alternation under repetition, so the empty token a
+       leading, trailing or doubled `;` produces is a disagreement this set
+       would otherwise never have looked for.
 
     Every pattern here already carries `^` and `$` (`re.fullmatch` anchors both
     ends implicitly; `str.contains` does not), so no pattern needed the Python
@@ -825,6 +831,8 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
         r"^MOD:\d{5}$",
         r"^SGC-\d+$",
         r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+)?$",
+        r"^PMID:\d+$",
+        r"^[a-z0-9]+(_[a-z0-9]+)*(;[a-z0-9]+(_[a-z0-9]+)*)*$",
     }
 
     adversarial = [
@@ -852,6 +860,27 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
         "A0A123",
         "SGC-102815",
         "SGC-102815\n",
+        "PMID:8988165",
+        "PMID:8988165\n",
+        "pmid:8988165",
+        "PMID:",
+        # `COHORT_LIST_PATTERN` is the first pattern here with alternation under
+        # repetition, which is where two regex engines are likeliest to differ.
+        # The separator cases matter most: a trailing, leading or doubled `;`
+        # each produces an empty token, and an engine that let one through would
+        # publish a cohort id no registry can resolve.
+        "ddd",
+        "ddd;ukbb",
+        "cnchd;ddd;nottingham",
+        "ukbb_500k",
+        "ddd;",
+        ";ddd",
+        "ddd;;ukbb",
+        "DDD",
+        "ddd ukbb",
+        "ddd;ukbb\n",
+        "_ddd",
+        "ddd_",
         "",
         "\n",
         "HGNC:123$",
@@ -881,7 +910,12 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
             assert py_offenders == pl_offenders, (path, column.name, column.pattern)
             total_compared += sum(1 for v in values if v is not None)
 
-    assert total_compared == 98_844
+    # 3,653 x 2 in `clingen_gene_validity.tsv`, 30,410 x 3 in
+    # `gencc_submissions.tsv`, 154 x 2 in `genes.tsv`, and 1,192 x 4 in
+    # `burden.tsv` (`study`, `gene`, `case_cohorts`, `control_cohorts` -- every
+    # burden row today is case-control, so `control_cohorts` is non-null on all
+    # of them and contributes a full column rather than a partial one).
+    assert total_compared == 103_612
 
     for pattern in patterns:
         compiled = re.compile(pattern)

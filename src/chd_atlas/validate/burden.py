@@ -1,0 +1,413 @@
+# src/chd_atlas/validate/burden.py
+"""Cross-column rules for ``mirrors/burden.tsv``.
+
+`validate_table` checks each column against its own declaration and cannot see
+that `comparator` decides which *other* columns must be present. That dependency
+is the whole point of the burden schema: the four kinds of published burden
+evidence this atlas harmonises -- case-control, de novo enrichment against a
+mutation model, de novo against unaffected siblings, and a bare case series --
+differ from one another in exactly one place, which is what "expected" was.
+
+A row whose statistic does not match its comparator is not a formatting problem.
+It is an odds ratio presented as a de novo enrichment, or a p-value on a
+comparison that had nothing to compare against -- a claim the published study
+did not make, which the charter ranks worse than publishing nothing.
+
+Every check here reports rather than raises, per the project's split: validators
+collect issues, and `build_site` is what refuses.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from chd_atlas.issues import Severity, ValidationIssue
+from chd_atlas.tables import BURDEN, read_table
+from chd_atlas.vocab import EFFECT_MEASURES, BurdenComparator, EffectBound
+
+# What each comparator requires and what it forbids. Read as: a case-control row
+# must carry both control columns and must not carry a modelled expectation,
+# because it did not model one -- it observed it.
+_REQUIRED: dict[BurdenComparator, tuple[str, ...]] = {
+    BurdenComparator.CONTROL_COHORT: ("n_control_carriers", "n_controls", "control_cohorts"),
+    BurdenComparator.MUTATION_MODEL: ("expected_count",),
+    BurdenComparator.NONE: (),
+}
+_FORBIDDEN: dict[BurdenComparator, tuple[str, ...]] = {
+    BurdenComparator.CONTROL_COHORT: ("expected_count",),
+    BurdenComparator.MUTATION_MODEL: ("n_control_carriers", "n_controls", "control_cohorts"),
+    BurdenComparator.NONE: (
+        "n_control_carriers",
+        "n_controls",
+        "control_cohorts",
+        "expected_count",
+    ),
+}
+
+# A case series compares the count with nothing, so it can support no statistic
+# at all. Listed separately from `_FORBIDDEN` because the defect is a different
+# one -- not a mismatched comparator but a claim with no basis -- and a curator
+# fixes it differently: by deleting the statistic, or by naming the comparator
+# that actually produced it.
+# Hoisted out of the per-row loop below. Rebuilt per row it cost 0.92 ms over
+# the committed 1,192-row mirror against 0.03 ms hoisted -- a saving of under a
+# millisecond, so this is a readability change and not a performance one.
+_COMPARATORS: frozenset[str] = frozenset(item.value for item in BurdenComparator)
+
+_STATISTIC_COLUMNS = (
+    "effect",
+    "effect_measure",
+    "effect_bound",
+    "ci_low",
+    "ci_high",
+    "pvalue",
+    "pvalue_test",
+)
+
+
+def _split(value: Any) -> list[str]:
+    """A `;`-joined cohort cell as a list, empty for a null or blank cell."""
+    if value is None:
+        return []
+    return [part for part in str(value).split(";") if part.strip()]
+
+
+def _blank(value: Any) -> bool:
+    """True for a null cell, or a string that is empty once stripped.
+
+    `read_table` maps `""` to null, so the string branch only fires on a value
+    that is whitespace -- which renders as nothing on a page while passing every
+    presence check, the same defect `_NonBlankStr` exists to catch on the
+    curation side.
+    """
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def validate_burden(root: Path) -> list[ValidationIssue]:
+    """Check every burden row's statistic against the comparator it declares.
+
+    Returns an empty list when the table is absent -- there is no burden mirror
+    before any is curated -- and also when it is unreadable or missing a column,
+    both of which `validate_table` reports as TBL000/TBL001 at the same path. No
+    skip warning is emitted for those two, unlike REF000/SRC000/ONT000: those
+    exist because a failed load would bury one real error under hundreds of
+    cascading false ones, whereas here the cause is already reported as an
+    ERROR against the same file, so the build refuses either way.
+    """
+    path = root / "mirrors" / "burden.tsv"
+    if not path.is_file():
+        return []
+    frame, _ = read_table(path, BURDEN)
+    if frame is None:
+        return []
+    if any(column not in frame.columns for column in BURDEN.column_names):
+        return []
+
+    issues: list[ValidationIssue] = []
+
+    def error(code: str, row: int, message: str) -> None:
+        issues.append(ValidationIssue(code, Severity.ERROR, f"{path}:row {row}", message))
+
+    for index, row in enumerate(frame.iter_rows(named=True)):
+        # +2 for the header line and 0-based index, matching every other
+        # row-level location in this project.
+        line = index + 2
+        raw = row["comparator"]
+        # An unknown comparator is TBL004's to report; carrying on here would
+        # KeyError on the tables below and abort validation of every later row.
+        if raw not in _COMPARATORS:
+            continue
+        comparator = BurdenComparator(raw)
+
+        for column in _REQUIRED[comparator]:
+            if _blank(row[column]):
+                error(
+                    "BUR001",
+                    line,
+                    f"comparator '{comparator}' requires '{column}', which is empty",
+                )
+        for column in _FORBIDDEN[comparator]:
+            if not _blank(row[column]):
+                error(
+                    "BUR001",
+                    line,
+                    f"comparator '{comparator}' cannot carry '{column}', which holds "
+                    f"{row[column]!r}",
+                )
+
+        if comparator is BurdenComparator.NONE:
+            for column in _STATISTIC_COLUMNS:
+                if not _blank(row[column]):
+                    error(
+                        "BUR002",
+                        line,
+                        f"a case series compares its count with nothing, so it cannot "
+                        f"report '{column}' ({row[column]!r})",
+                    )
+
+        issues.extend(_effect_issues(row, comparator, line, path))
+
+        # A carrier count above its denominator is arithmetically impossible and
+        # means a column was transcribed into the wrong slot -- the failure mode
+        # a per-column range check cannot see, because both numbers are
+        # individually valid non-negative integers.
+        for carriers, total in (
+            ("n_case_carriers", "n_cases"),
+            ("n_control_carriers", "n_controls"),
+        ):
+            a, b = row[carriers], row[total]
+            if a is not None and b is not None and a > b:
+                error(
+                    "BUR003",
+                    line,
+                    f"'{carriers}' ({a}) exceeds '{total}' ({b})",
+                )
+
+        low, high = row["ci_low"], row["ci_high"]
+        if low is not None and high is not None and low > high:
+            error("BUR004", line, f"confidence interval is inverted: [{low}, {high}]")
+
+        # BUR012 -- the interval must contain the estimate it qualifies.
+        #
+        # This check was deliberately left out of the first version, whose test
+        # docstring recorded why: "a bracketing rule was considered and left out
+        # because it was not measured against the real data". It has now been
+        # measured -- 1,158 rows of `mirrors/burden.tsv` carry a finite effect
+        # and both bounds, and **zero** violate bracketing -- so the reason not
+        # to have it is gone.
+        #
+        # It is pure arithmetic with no statistical assumption behind it, and it
+        # is the exact signature of a column transcribed one cell out of place:
+        # `effect=5.0` with `[0.1, 0.2]` says a five-fold risk and an interval
+        # entirely below 1 in the same cell, and a reader cannot tell which half
+        # is the typo. `BUR004` catches only an inverted interval, which is the
+        # easier half of the same defect.
+        effect_value = row["effect"]
+        if effect_value is not None:
+            if low is not None and effect_value < low:
+                error(
+                    "BUR012",
+                    line,
+                    f"effect {effect_value} lies below its own confidence interval [{low}, {high}]",
+                )
+            elif high is not None and effect_value > high:
+                error(
+                    "BUR012",
+                    line,
+                    f"effect {effect_value} lies above its own confidence interval [{low}, {high}]",
+                )
+
+        # BUR013 -- no test returns a p-value of exactly zero. It is what an
+        # underflowed transcription of a very small published p looks like
+        # (1e-400 reads back as 0.0 through float64), and a page printing it
+        # claims certainty no study can have. `p == 1` is left alone: Fisher
+        # returns exactly 1 routinely, on 383 of the 1,192 committed rows.
+        if row["pvalue"] == 0:
+            error(
+                "BUR013",
+                line,
+                "p-value is exactly 0; no test returns that, so this is an "
+                "underflowed or mistranscribed value",
+            )
+
+        # BUR016 -- a collection cannot be its own control. `shared_cohorts`
+        # unions the two columns per study to surface reuse *between* studies, so
+        # reuse *within one row* is invisible to the one mechanism built to catch
+        # it. Zero rows violate this today.
+        overlap = set(_split(row["case_cohorts"])) & set(_split(row["control_cohorts"]))
+        if overlap:
+            error(
+                "BUR016",
+                line,
+                f"cohort(s) {sorted(overlap)} appear as both cases and controls in one comparison",
+            )
+
+        # Neither direction alone is publishable: a p-value whose test is unnamed
+        # cannot be interpreted, and a named test with no p-value is a column
+        # that lost its number in transcription.
+        if _blank(row["pvalue"]) != _blank(row["pvalue_test"]):
+            error(
+                "BUR005",
+                line,
+                f"'pvalue' ({row['pvalue']!r}) and 'pvalue_test' "
+                f"({row['pvalue_test']!r}) must be given together",
+            )
+
+    return issues
+
+
+def validate_burden_references(
+    root: Path,
+    *,
+    known_cohorts: set[str] | None,
+    known_genes: set[str] | None,
+    known_studies: set[str] | None,
+) -> list[ValidationIssue]:
+    """Check that every burden row points at something that exists.
+
+    Kept separate from `validate_burden` because the two need different inputs
+    and must fail independently: the comparator rules read nothing but the table
+    and so must still run when the corpus fails to load, while these need
+    registries that a failed load empties. Merging them would make one bad
+    publication file silently take the comparator checks with it.
+
+    Each registry is `None` when it could not be read, which is deliberately
+    distinct from empty -- the same rule `_known_genes` follows in the runner.
+    Checking thousands of rows against an empty registry would report one issue
+    per row and bury the single error that caused it.
+
+    Distinct values are checked once rather than per row, so a table with one
+    unknown cohort yields one issue and not one per row that names it.
+    """
+    path = root / "mirrors" / "burden.tsv"
+    if not path.is_file():
+        return []
+    frame, _ = read_table(path, BURDEN)
+    if frame is None:
+        return []
+
+    issues: list[ValidationIssue] = []
+
+    def report(code: str, message: str) -> None:
+        issues.append(ValidationIssue(code, Severity.ERROR, str(path), message))
+
+    if known_cohorts is not None and {"case_cohorts", "control_cohorts"} <= set(frame.columns):
+        cited: set[str] = set()
+        # `_split`, not a second inline split. The two disagreed on a
+        # whitespace-only token: `"ddd; "` yielded `['ddd', ' ']` here and
+        # `['ddd']` in `validate_burden`, so one validator reported
+        # `BUR009 cohort ' ' is not in curation/cohorts.yaml` while the other
+        # silently ignored it. Raised by review on #17.
+        for column in ("case_cohorts", "control_cohorts"):
+            for value in frame[column].to_list():
+                cited.update(_split(value))
+        for cohort in sorted(cited - known_cohorts):
+            report("BUR009", f"cohort '{cohort}' is not in curation/cohorts.yaml")
+
+    if known_studies is not None and "study" in frame.columns:
+        studies = {str(v) for v in frame["study"].to_list() if v is not None}
+        for study in sorted(studies - known_studies):
+            report("BUR010", f"study {study} is not in curation/publications.yaml")
+
+    # A burden row whose gene `mirrors/genes.tsv` does not carry is unreachable
+    # by any widening of the publication gate, since every downstream population
+    # derives from that registry.
+    #
+    # This comment claimed "`build_genes` iterates the registry" until
+    # 2026-08-05. It does not -- it iterates `gene_facts(..., published=...)`,
+    # the 23-gene published set -- so the stated rationale was false, and it
+    # pointed away from the real gap: 122 of the 145 genes in the mirror ARE in
+    # `genes.tsv` and still reach no published byte. BUR017 below reports that;
+    # this rule guards only the outer boundary.
+    if known_genes is not None and "gene" in frame.columns:
+        genes = {str(v) for v in frame["gene"].to_list() if v is not None}
+        for gene in sorted(genes - known_genes):
+            report("BUR011", f"gene {gene} is not in mirrors/genes.tsv")
+
+    # There is deliberately no rule here reporting that a burden row's gene is
+    # not *published*. 1,005 of the 1,192 committed rows, covering 122 of 145
+    # genes, reach no bundle and no page -- the mirror is wider than the gate so
+    # that widening D21 later needs no re-mirroring -- and two review lenses
+    # rightly flagged that nothing said so. But saying it here would mean
+    # deriving the published set inside `validate/`, which needs
+    # `build.validity.published_genes` and inverts the layering: the validator
+    # would depend on the builder it exists to gate.
+    #
+    # The gap is recorded where each audience meets it instead -- in
+    # `docs/data-api.md` for a consumer, and in CLAUDE.md's open queue for a
+    # curator. What was actually wrong was the *documentation*: BUR011's comment
+    # above claimed `build_genes` iterates the registry, which pointed away from
+    # the gap entirely. That claim is fixed; a warning on every build for a
+    # deliberate design choice is not the remedy.
+    return issues
+
+
+def _effect_issues(
+    row: dict[str, Any], comparator: BurdenComparator, line: int, path: Path
+) -> list[ValidationIssue]:
+    """Rules tying `effect`, `effect_measure` and `effect_bound` together.
+
+    Split out because these three columns constrain each other in both
+    directions and inlining them would bury the comparator contract above.
+
+    The measure is mandatory whenever there is an effect *or* a bound, because
+    "unbounded" is as meaningless without it as "3.1" is: the reader has to know
+    whether an unbounded odds ratio or an unbounded enrichment is being claimed.
+    """
+    issues: list[ValidationIssue] = []
+
+    def error(code: str, message: str) -> None:
+        issues.append(ValidationIssue(code, Severity.ERROR, f"{path}:row {line}", message))
+
+    effect, measure, bound = row["effect"], row["effect_measure"], row["effect_bound"]
+    has_effect = not _blank(effect)
+    has_bound = not _blank(bound)
+
+    if (has_effect or has_bound) and _blank(measure):
+        error(
+            "BUR006",
+            "an effect size must name its measure: an odds ratio of 3.1 and a de "
+            "novo enrichment of 3.1 are different claims",
+        )
+    if not has_effect and not has_bound and not _blank(measure):
+        error("BUR006", f"'effect_measure' is {measure!r} but no effect is reported")
+
+    if not _blank(measure) and measure not in {item.value for item in EFFECT_MEASURES[comparator]}:
+        allowed = sorted(item.value for item in EFFECT_MEASURES[comparator])
+        error(
+            "BUR007",
+            f"comparator '{comparator}' cannot produce effect_measure "
+            f"'{measure}'; expected one of {allowed}",
+        )
+
+    # BUR014 -- half an interval. `ci_low` and `ci_high` arrive together or not
+    # at all, for the reason BUR005 pairs `pvalue` with `pvalue_test`: one
+    # without the other is a column that lost its number in transcription, and
+    # `pages._effect` drops the survivor silently rather than rendering half an
+    # interval. The one legitimate exception is an unbounded effect, whose
+    # `ci_high` is absent by construction -- all 34 such rows in the committed
+    # mirror -- so the rule is suspended exactly there.
+    low, high = row["ci_low"], row["ci_high"]
+    if not has_bound and (low is None) != (high is None):
+        issues.append(
+            ValidationIssue(
+                "BUR014",
+                Severity.ERROR,
+                f"{path}:row {line}",
+                f"a confidence interval needs both bounds; got ci_low={low!r}, "
+                f"ci_high={high!r} with no effect_bound to explain the missing one",
+            )
+        )
+
+    # BUR015 -- an interval belonging to nothing. BUR006 above requires a
+    # measure whenever there is an effect *or* a bound; a bare interval
+    # satisfies neither, so it slipped through both. A consumer reading `ci_low`
+    # off the bundle would get a number with no unit and no quantity, and the
+    # page renders an em dash and throws it away.
+    if not has_effect and not has_bound and (low is not None or high is not None):
+        issues.append(
+            ValidationIssue(
+                "BUR015",
+                Severity.ERROR,
+                f"{path}:row {line}",
+                f"confidence interval [{low}, {high}] is reported with no effect and "
+                f"no effect_bound, so it qualifies no quantity",
+            )
+        )
+
+    # An unbounded row that also carries a number contradicts itself, and which
+    # of the two a reader believes decides whether the gene looks significant.
+    if has_bound and bound == EffectBound.UNBOUNDED_ABOVE.value:
+        if has_effect:
+            error(
+                "BUR008",
+                f"'effect_bound' is 'unbounded_above' but 'effect' holds {effect!r}; "
+                f"an unbounded effect has no finite value",
+            )
+        if not _blank(row["ci_high"]):
+            error(
+                "BUR008",
+                f"'effect_bound' is 'unbounded_above' but 'ci_high' holds {row['ci_high']!r}",
+            )
+    return issues
