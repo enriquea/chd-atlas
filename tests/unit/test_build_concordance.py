@@ -329,10 +329,33 @@ def test_an_untested_family_is_published_and_excluded_from_the_denominator() -> 
     ]
 
 
-def test_a_gene_no_study_reported_still_publishes_every_key() -> None:
+def test_a_gene_no_study_reported_gets_a_not_tested_entry_per_family() -> None:
     """An object whose shape varies is a trap for a consumer reading a field off
     one gene and expecting it on the next -- the rule `burden_payload` follows.
+
+    **This asserted the wrong condition under the right name.** It passed
+    `gene_concordance([], ())`, which is an empty *corpus*, and concluded that a
+    gene no study reported gets `families: []`. It does not: the corpus-wide
+    family list is iterated whatever the gene has, so an unreported gene gets one
+    `not_tested` entry per family. That is the whole point -- every gene shows the
+    same slots, so a dataset that did not test this gene reads as an absence
+    rather than as a shorter list. The old assertion let a false sentence stand in
+    `docs/data-api.md` and in `manifest.py`'s changelog, both of which said
+    `families` is `[]` for such a gene.
     """
+    families = (frozenset({"PMID:1"}), frozenset({"PMID:2"}))
+
+    assert gene_concordance([], families) == {
+        "tested": 0,
+        "enriched": 0,
+        "corrected": 0,
+        "families": [
+            {"studies": ["PMID:1"], "state": "not_tested"},
+            {"studies": ["PMID:2"], "state": "not_tested"},
+        ],
+    }
+
+    # `[]` happens only when the corpus itself has no burden rows at all.
     assert gene_concordance([], ()) == {
         "tested": 0,
         "enriched": 0,

@@ -144,7 +144,22 @@ STYLESHEET: Final = """
     font-variant-numeric: tabular-nums; white-space: nowrap;
   }
   .strip-legend { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
+  /* The matrix key: a swatch per state, drawn from the same rules as the cells
+     so the key cannot drift from what it describes. */
+  .cell-key {
+    display: inline-block; width: 13px; height: 13px; border-radius: 3px;
+    vertical-align: -2px; border: 1px solid transparent;
+  }
+  .cell-key.corrected { background: var(--evidence); }
+  .cell-key.nominal { background: var(--evidence-soft); border-color: var(--evidence); }
+  .cell-key.no-enrichment { background: var(--surface); border-color: var(--border); }
+  .cell-key.not-tested { border: 1px dashed var(--border); }
 
+  /* The matrix is the widest thing on the page. Without this the *body*
+     scrolls sideways on a narrow screen, which moves the whole layout rather
+     than the table. `.scroll` was emitted by `_evidence_matrix` with no rule
+     anywhere -- found by review before the deploy. */
+  .scroll { overflow-x: auto; }
   table.matrix { border-collapse: separate; border-spacing: 3px; margin: 1rem 0; }
   table.matrix th { font-size: 0.8rem; }
   table.matrix th[scope="row"] { text-align: right; white-space: nowrap; }

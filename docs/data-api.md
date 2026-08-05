@@ -170,7 +170,7 @@ atlas behind it at all.
       "symbol": "TBX5",
       "validity_state": "expert_curated",
       "variant_count": 0,
-      "burden_row_count": 8,
+      "burden_row_count": 14,
       "independent_datasets": {
         "tested": 2,
         "enriched": 2,
@@ -317,6 +317,14 @@ One gene's whole detail page, in one fetch.
   "variants": [],
   "omics": {},
   "burden": [ { "study": "PMID:42230622", "cohort_stratum": "all", … } ]
+  "independent_datasets": {
+    "tested": 2, "enriched": 2, "corrected": 1,
+    "families": [
+      { "studies": ["PMID:34324492"], "state": "not_tested" },
+      { "studies": ["PMID:40127276"], "state": "corrected" },
+      { "studies": ["PMID:42230622"], "state": "nominal" }
+    ]
+  }
 }
 ```
 
@@ -664,8 +672,12 @@ agreement, and a synonymous row is never support: it is the negative control.
 3. **`not_tested` must render distinguishably from `no_enrichment`.** Collapsing
    them is what turns "nobody looked" into "somebody looked and found nothing".
 
-`families` is always present and ordered deterministically; it is `[]` for a
-gene no study reported.
+`families` is always present, ordered deterministically, and **always carries one
+entry per cohort family in the whole corpus** — three today. A gene no study
+reported gets three `not_tested` entries, not an empty array; `[]` occurs only if
+the corpus has no burden data at all. That is deliberate: every gene shows the
+same slots, so a dataset that did not test this gene is visible as an absence
+rather than as a shorter list.
 
 **The browse page heads this column "burden across studies", not
 `independent_datasets`.** The key names what is counted for a program; the
