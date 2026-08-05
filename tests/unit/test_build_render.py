@@ -175,7 +175,7 @@ def test_a_table_with_no_rows_still_renders_its_header() -> None:
     html = data_table(headers=["variant", "consequence"], rows=[])
 
     assert "<thead>" in html
-    assert "<th>variant</th><th>consequence</th>" in html
+    assert '<th scope="col">variant</th><th scope="col">consequence</th>' in html
     assert "<tbody></tbody>" in html
 
 
