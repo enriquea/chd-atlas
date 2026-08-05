@@ -1958,3 +1958,58 @@ def test_the_matrix_cell_drops_the_interval_but_never_the_measure(
     # The interval does not -- it is in the table below and on the cell's title.
     assert "95% CI" not in matrix
     assert "95% CI" in section[section.index("</table>") :]
+
+
+def test_the_browse_headers_and_cells_line_up(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """Each column holds what its header says it holds.
+
+    **`data_table` zips headers to cells by position and cannot detect a
+    mismatch**, so inserting a header without moving its cell silently heads one
+    column for a field two places away. That happened: "burden across studies"
+    went in after `definitive for` while the strip stayed after `atlas
+    curation`, and the whole suite passed -- 774 tests, none of which read a
+    cell against its own header.
+
+    This project already has `test_the_consequence_column_is_headed_for_the_
+    column_it_renders` for exactly this failure on the burden table. The browse
+    table had no equivalent, which is why the defect survived a build, a review
+    of the rendered page, and a push.
+
+    Asserted by pairing each header with a value only that column can produce,
+    so a swap of any two columns fails rather than merely a shift of one.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity=validity_two,
+        burden_counts={TBX5: 4},
+        concordance={
+            gene: {"tested": 2, "enriched": 1, "corrected": 1, "families": []} for gene in facts_two
+        },
+    )
+    page = _page(tmp_path, "index.html")
+
+    headers = [
+        re.sub(r"<[^>]+>", "", cell)
+        for cell in re.findall(r"<th[^>]*>.*?</th>", page[: page.index("</thead>")])
+    ]
+    row = next(r for r in re.findall(r"<tr[^>]*>(.*?)</tr>", page, re.S) if f">{TBX5}<" in r)
+    cells = [re.sub(r"<[^>]+>", "", cell) for cell in re.findall(r"<td>(.*?)</td>", row, re.S)]
+
+    assert len(headers) == len(cells), "a header was added without a cell, or the reverse"
+    by_header = dict(zip(headers, cells, strict=True))
+
+    assert by_header["gene"] == TBX5
+    assert by_header["symbol"] == "TBX5"
+    assert by_header["confidence"] == "definitive"
+    # Only the strip renders a tally; only `validity` renders a validity state.
+    assert "tested" in by_header["burden across studies"]
+    assert by_header["validity"] == "expert_curated"
+    assert by_header["atlas curation"] in {"curated", "not_yet_curated"}
+    assert by_header["burden rows"] == "4"

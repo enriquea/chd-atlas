@@ -1593,9 +1593,15 @@ def build_gene_index_page(
                     Link(text=symbol, href=f"../{gene_page_path(HgncId(gene))}"),
                     confidence or _EM_DASH,
                     "; ".join(diseases) or _EM_DASH,
+                    # Position matters and was wrong for one commit: the header
+                    # was inserted after `definitive for` while the cell stayed
+                    # after `atlas curation`, so the column was headed for a
+                    # field two places away. `data_table` zips headers to cells
+                    # by position and cannot detect that -- see
+                    # `test_the_browse_headers_and_cells_line_up`.
+                    Markup(_dot_strip((concordance or {}).get(gene, {}))),
                     fact.validity_state.value,
                     fact.atlas_curation.value,
-                    Markup(_dot_strip((concordance or {}).get(gene, {}))),
                     str(burden_counts.get(gene, 0)) if burden_counts.get(gene) else _EM_DASH,
                     groups or _EM_DASH,
                 ),
