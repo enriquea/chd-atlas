@@ -42,7 +42,15 @@ STRATUM_ORDER: Final[tuple[str, ...]] = ("all", "syndromic", "nonsyndromic")
 # calibrates them. `synonymous` last is a deliberate reading order rather than an
 # ordering of importance -- it is the row that tells you whether to believe the
 # two above it.
+#
+# `damaging` is first because it is the *composite* of `lof` and
+# `missense_damaging`, and the primary analysis of the study that reports it
+# (PMID:40127276 defines its 60 genes by it). Putting the union above its two
+# components makes them read as a breakdown of the headline; putting it after
+# them, or alphabetically -- where it would land first anyway, by coincidence --
+# would make three rows read as three independent findings.
 CONSEQUENCE_ORDER: Final[tuple[str, ...]] = (
+    "damaging",
     "lof",
     "missense_damaging",
     "missense_all",

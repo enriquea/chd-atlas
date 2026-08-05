@@ -32,6 +32,86 @@ publications:
     study_type: family_linkage
     doi: 10.1038/ng0197-30
     own_lab: false
+  - id: PMID:40127276
+    title: >-
+      Genomic analysis of 11,555 probands identifies 60 dominant congenital heart
+      disease genes.
+    journal: Proceedings of the National Academy of Sciences of the United States of America
+    year: 2025
+    authors:
+      - Sierant MC
+      - Jin SC
+      - Bilguvar K
+      - Morton SU
+      - Dong W
+      - Jiang W
+      - Lu Z
+      - Li B
+      - López-Giráldez F
+      - Tikhonova I
+      - Zeng X
+      - Lu Q
+      - Choi J
+      - Zhang J
+      - Nelson-Williams C
+      - Knight JR
+      - Zhao H
+      - Cao J
+      - Mane S
+      - Sedore SC
+      - Gruber PJ
+      - Lek M
+      - Goldmuntz E
+      - Deanfield J
+      - Giardini A
+      - Mital S
+      - Russell M
+      - Gaynor JW
+      - King E
+      - Wagner M
+      - Srivastava D
+      - Shen Y
+      - Bernstein D
+      - Porter GA Jr
+      - Newburger JW
+      - Seidman JG
+      - Roberts AE
+      - Yandell M
+      - Yost HJ
+      - Tristani-Firouzi M
+      - Kim R
+      - Chung WK
+      - Gelb BD
+      - Seidman CE
+      - Brueckner M
+      - Lifton RP
+    # Read off the paper, which runs two designs and combines them. Its de novo
+    # arm is 3,887 parent-offspring trios sequenced by MIPseq and WES, which is
+    # what `trio_wes` names; its case-control arm compares 11,555 probands
+    # against gnomAD. `meta_analysis` would be the wrong reading despite the
+    # paper's own word for the combining step: this study generated its data
+    # (MIPseq on 5,929 probands), where PMID:34324492 aggregates other people's
+    # published variants and is the entry here that earns that value.
+    study_type: trio_wes
+    doi: 10.1073/pnas.2420343122
+    pmcid: PMC12002227
+    own_lab: false
+    # 11,555 CHD probands. The de novo arm uses the 3,887 of them who are
+    # complete trios; the case-control arm uses all 11,555. Both denominators
+    # travel on the burden rows themselves, so this is the study's cohort and
+    # not either arm's.
+    cohort_size: 11555
+    # 248 prespecified panel genes, and the study's JL-FDR accounts for exactly
+    # that number -- "to generate meta-analysis P-values and FDR statistics that
+    # account for the number of genes tested". Counted 2026-08-05 from Dataset
+    # S6, which carries 248 gene rows with no duplicates. Unlike PMID:42230622,
+    # this study publishes a corrected p on every row, so the page points at
+    # that column rather than leaning on this denominator.
+    tests_reported: 248
+    # NO ANCESTRY FIELD. The paper reports none -- searched 2026-08-05 for
+    # "ancestry", "ancestries", "European" and "self-reported race" across its
+    # full text, with no match. Leaving the list empty says that; inventing a
+    # composition from the recruiting centres would not.
   - id: PMID:42230622
     title: >-
       Assessing the contribution of rare variants to congenital heart disease

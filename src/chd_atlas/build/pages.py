@@ -189,6 +189,10 @@ _STRATUM_LABEL: Final[dict[str, str]] = {
 }
 
 _CONSEQUENCE_LABEL: Final[dict[str, str]] = {
+    # Names its two components rather than saying "damaging", so a reader who
+    # meets this row first is told what it is the union of before they reach the
+    # two rows below it. `_composite_note` says the rest.
+    "damaging": "damaging (LOF + missense)",
     "lof": "loss-of-function",
     "missense_damaging": "missense (damaging)",
     "missense_all": "missense (all)",
@@ -219,6 +223,15 @@ _ORIGIN_LABEL: Final[dict[str, str]] = {
     "de_novo": "de novo only",
     "inherited": "inherited only",
     "any": "any inheritance (not a de novo test)",
+    # Says what was excluded and what is unknown, because that is the whole
+    # content of the value: de novo variants were removed, and most of what
+    # remains was never phased. "inherited" would claim transmission the study
+    # did not observe for the singleton majority.
+    # No internal semicolon: `_method_line` joins its parts with "; " and the
+    # origin labels within a part with ", ", so a label containing one produced
+    # "de novo excluded; transmission otherwise known or unknown, de novo only"
+    # -- which reads as three clauses at two nesting levels and parses as none.
+    "transmitted_or_unphased": "de novo excluded (transmission otherwise known or unknown)",
 }
 
 _LESION_LABEL: Final[dict[str, str]] = {}
@@ -758,6 +771,7 @@ def _burden_section(
             f"{_disclosure(study, publications)}"
             f"{_method_line(study_rows, publications.get(study))}"
             f"{_provenance(study_rows, cohorts)}"
+            f"{_composite_note(study_rows)}"
             f"{table}"
             f"{_footnotes(study_rows)}"
         )
@@ -917,6 +931,37 @@ def _provenance(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> str
     return (
         f'<p class="provenance">Cases: {html.escape(_names(cases, cohorts))}. '
         f"Controls: {html.escape(_names(controls, cohorts) or 'none (see the method above)')}.</p>"
+    )
+
+
+def _composite_note(rows: Sequence[BurdenRow]) -> str:
+    """Say that the `damaging` rows are the union of the two below them.
+
+    Without it a reader meets three consequence rows and reads three findings,
+    then adds up carrier counts that already include each other. Measured on
+    CHD7 in PMID:40127276: the damaging de novo row is 20 mutations, and the
+    loss-of-function and damaging-missense rows below it are 16 and 4 of *those
+    same* 20.
+
+    The composite is not droppable in favour of its parts -- it carries its own
+    p-value, which is not a function of theirs, and it is the analysis the study
+    defines its results by -- so the relationship has to be stated rather than
+    designed away.
+
+    Conditional on the study actually reporting both a composite and a
+    component. Rendered unconditionally it would assert a decomposition that
+    does not exist for the two studies whose tables carry no `damaging` row at
+    all, which is the defect `_POOLING_NOTICE` was made conditional for.
+    """
+    consequences = {row.consequence_class for row in rows}
+    if "damaging" not in consequences or not consequences & {"lof", "missense_damaging"}:
+        return ""
+    return (
+        '<p class="notice-inline">The <strong>damaging (LOF + missense)</strong> rows are '
+        "the <strong>union</strong> of the loss-of-function and damaging-missense rows "
+        "below them, not a third independent result &mdash; the same variants are counted "
+        "in both. They are shown because this study defines its findings by the composite, "
+        "and because its p-value is not derivable from the other two.</p>"
     )
 
 

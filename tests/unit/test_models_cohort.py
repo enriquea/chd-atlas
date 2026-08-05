@@ -87,4 +87,12 @@ def test_the_committed_registry_parses_and_covers_every_cited_cohort() -> None:
         "gain_controls",
         "wtccc_controls",
         "ottawa_controls",
+        # PMID:40127276. `pcgc` carries the constraint that makes this registry
+        # do its job prospectively rather than only descriptively: its entry
+        # records that it subsumes Jin et al. 2017's trios, so a curator who
+        # later adds that paper meets the double-count before writing the row.
+        # `shared_cohorts` could never surface it, because the overlap is inside
+        # one study's cohort list rather than between two.
+        "pcgc",
+        "gnomad_controls",
     }

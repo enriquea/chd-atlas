@@ -350,6 +350,19 @@ class ConsequenceClass(StrEnum):
     MISSENSE_ALL = "missense_all"
     SYNONYMOUS = "synonymous"
     ALL_CODING = "all_coding"
+    # Loss-of-function and damaging missense counted together, which is the
+    # composite most CHD burden papers report as their *primary* analysis --
+    # PMID:40127276's 60 genes are defined by it. Distinct from `ALL_CODING`,
+    # which would additionally include tolerated missense and synonymous
+    # variants and so is a different denominator, and not derivable from the two
+    # component rows: the composite carries its own p-value, which is not a
+    # function of theirs.
+    #
+    # A page showing all three must say that this row is the union of the other
+    # two rather than a third independent result. `build/burden.py` orders it
+    # first for that reason -- it is the headline, and its components read as a
+    # breakdown of it rather than as separate findings.
+    DAMAGING = "damaging"
 
 
 class VariantOrigin(StrEnum):

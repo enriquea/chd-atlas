@@ -65,33 +65,44 @@ def test_rows_read_in_the_order_a_reader_needs_not_the_order_they_sort_in(
     `nonsyndromic` would come before `syndromic` and both before `all`, which
     puts the headline figure last.
 
-    Consequence: result, other result, then the control.
+    Consequence: the composite, then its two components, then the other results,
+    then the control.
 
     **`all_coding` is in this fixture because without it the test proved
     nothing.** Measured 2026-08-05: with only `lof`, `missense_damaging` and
-    `synonymous` -- the three classes the committed mirror carries -- a mutant
-    collapsing `CONSEQUENCE_ORDER` to a constant survived, because those three
-    happen to sort into reading order alphabetically anyway. `all_coding` sorts
-    first as a string and third among the four classes used here (fourth in the
-    five-member `CONSEQUENCE_ORDER`), so it is what makes the ordering rule
+    `synonymous` -- the three classes the committed mirror carried then -- a
+    mutant collapsing `CONSEQUENCE_ORDER` to a constant survived, because those
+    three happen to sort into reading order alphabetically anyway. `all_coding`
+    sorts first as a string and fourth among the five classes used here (fourth
+    in the six-member `CONSEQUENCE_ORDER`), so it is what makes the ordering rule
     observable at all.
+
+    `damaging` joined on 2026-08-05 with PMID:40127276 and does *not* replace
+    that argument: it sorts first both alphabetically and by reading order, so a
+    fixture carrying it alone would prove nothing either. It is here because its
+    position is load-bearing for a different reason -- it is the union of the two
+    rows after it, and above them they read as its breakdown rather than as two
+    more findings.
     """
     written = [
         {**_BASE, "cohort_stratum": stratum, "consequence_class": consequence}
         for stratum in ("syndromic", "nonsyndromic", "all")
-        for consequence in ("synonymous", "all_coding", "missense_damaging", "lof")
+        for consequence in ("synonymous", "all_coding", "missense_damaging", "lof", "damaging")
     ]
     rows = load_burden(_write(tmp_path, *written))["HGNC:17075"]
 
     assert [(row.cohort_stratum, row.consequence_class) for row in rows] == [
+        ("all", "damaging"),
         ("all", "lof"),
         ("all", "missense_damaging"),
         ("all", "all_coding"),
         ("all", "synonymous"),
+        ("syndromic", "damaging"),
         ("syndromic", "lof"),
         ("syndromic", "missense_damaging"),
         ("syndromic", "all_coding"),
         ("syndromic", "synonymous"),
+        ("nonsyndromic", "damaging"),
         ("nonsyndromic", "lof"),
         ("nonsyndromic", "missense_damaging"),
         ("nonsyndromic", "all_coding"),

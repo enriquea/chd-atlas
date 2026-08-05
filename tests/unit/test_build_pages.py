@@ -1642,3 +1642,33 @@ def test_a_count_unit_nothing_has_taught_the_renderer_still_names_itself(
 
     assert "<td>5 genomes / 1,471</td>" in body
     assert "<td>5 / 1,471</td>" not in body
+
+
+def test_the_composite_row_is_named_as_a_union_of_the_two_below_it(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Three consequence rows must not read as three independent findings.
+
+    PMID:40127276 reports `damaging (LOF + missense)` alongside its two
+    components, and the composite is the analysis its 60 genes are defined by.
+    Measured on CHD7: the damaging de novo row is 20 mutations and the two rows
+    below it are 16 and 4 of *those same* 20, so a reader adding them up gets 40
+    from 20 variants.
+
+    The note is conditional, and both halves are asserted. A study reporting only
+    components must not be told its rows decompose something that is not there --
+    the defect `_POOLING_NOTICE` was made conditional for, where an
+    unconditional sentence sent readers hunting for a second study that did not
+    exist.
+    """
+    components = [
+        _burden_row(consequence_class="lof"),
+        _burden_row(consequence_class="missense_damaging"),
+    ]
+    composite = [_burden_row(consequence_class="damaging"), *components]
+
+    with_composite = _burden_page(tmp_path, facts_uncurated, composite)
+    assert "union</strong> of the loss-of-function" in with_composite
+
+    without = _burden_page(tmp_path / "b", facts_uncurated, components)
+    assert "union</strong> of the loss-of-function" not in without

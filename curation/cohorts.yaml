@@ -97,6 +97,38 @@ cohorts:
     description: >-
       1,704 controls from the Ottawa Heart Institute series. Not screened for
       congenital heart disease.
+  - id: pcgc
+    name: Pediatric Cardiac Genomics Consortium (CHD GENES)
+    description: >-
+      11,555 CHD probands and 7,774 parents -- 3,887 complete trios and 7,668
+      singletons -- recruited to the Congenital Heart Disease Network Study of
+      the Pediatric Cardiac Genomics Consortium (ClinicalTrials.gov
+      NCT01196182) across thirteen centres in the US and UK, and the case set of
+      PMID:40127276. THIS COLLECTION SUBSUMES THE COHORTS OF THE EARLIER PCGC
+      EXOME PAPERS, including Jin et al. 2017 (PMID:28991257), whose ~2,871
+      trios are a subset of these 3,887. Curating one of those papers alongside
+      PMID:40127276 would publish the same children twice under two study ids,
+      which is the double counting design decision D33 forbids -- and it would
+      be invisible to `shared_cohorts`, because the overlap is inside one
+      study's cohort list rather than between two. Recorded here so that a later
+      curator meets the constraint before writing the row rather than after.
+    url: https://benchtobassinet.com/
+  - id: gnomad_controls
+    name: gnomAD exomes and genomes, excluding TopMed
+    description: >-
+      133,743 individuals with exome or genome sequence from the gnomAD
+      database after removing samples also present in TopMed, used as the
+      control set for the case-control arm of PMID:40127276. THREE CAVEATS
+      QUALIFY EVERY STATISTIC COMPUTED AGAINST IT. It is a population reference
+      rather than a screened control group -- gnomAD excludes individuals with
+      severe paediatric disease at the cohort level but does not ascertain heart
+      phenotypes, so an adult with an undiagnosed lesion counts as a control.
+      Its denominators are ALLELE counts rather than numbers of people, and vary
+      gene by gene with sequencing coverage, so a control carrying two
+      qualifying variants is counted twice. And no parental or sample-level data
+      were available to the study, so the control side has no transmission
+      information to match the case side's.
+    url: https://gnomad.broadinstitute.org/
   - id: ukbb
     name: UK Biobank (whole-exome sequencing)
     description: >-
