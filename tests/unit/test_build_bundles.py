@@ -2,13 +2,14 @@
 import json
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
 from chd_atlas.build.bundles import build_genes
 from chd_atlas.build.burden import BurdenRow
-from chd_atlas.build.emit import Emitter
+from chd_atlas.build.concordance import cohort_families, gene_concordance
+from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.corpus import Corpus
@@ -118,6 +119,33 @@ def _gene_validity(**overrides: object) -> GeneValidity:
     return GeneValidity(**payload)  # type: ignore[arg-type]
 
 
+_EMPTY_CONCORDANCE: Final[dict[str, Json]] = {
+    "tested": 0,
+    "enriched": 0,
+    "corrected": 0,
+    "families": [],
+}
+
+
+def _no_burden() -> dict[str, Json]:
+    """The concordance mapping for a corpus where no study reported anything.
+
+    `build_genes` takes it as a required argument rather than deriving it, so
+    the runner's single derivation reaches the bundles, the gene pages and the
+    browse page alike. A default would let a caller forget it and publish zeros
+    indistinguishable from a measured "no dataset tested this" -- this project's
+    characteristic failure -- so the tests supply it explicitly.
+
+    A real `dict` over the genes these fixtures publish, **not a
+    `defaultdict`**. `_concordance_for` refuses a gene the mapping does not
+    contain, and a `defaultdict` reports `__contains__` as `False` for exactly
+    the keys it would happily invent -- so it would trip the guard while looking
+    like it satisfied it. That is the guard working, and it is why this returns
+    the population rather than a fallback.
+    """
+    return {gene: dict(_EMPTY_CONCORDANCE) for gene in SYMBOLS}
+
+
 def _read(root: Path, relative: str) -> dict[str, Any]:
     """One emitted artifact, read back from the file that was written."""
     payload: dict[str, Any] = json.loads((root / relative).read_text())
@@ -161,6 +189,7 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
         validity=validity,
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert _entries(tmp_path) == [
@@ -180,6 +209,17 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
             "functional_count": 0,
             "variant_count": 0,
             "burden_row_count": 0,
+            # Every key present even where no study reported the gene, so a
+            # consumer reads one shape rather than guarding for a missing one.
+            # `families` is empty rather than absent for the same reason
+            # `burden` is an empty array: "no study reported this" must not be
+            # indistinguishable from "the build dropped it".
+            "independent_datasets": {
+                "tested": 0,
+                "enriched": 0,
+                "corrected": 0,
+                "families": [],
+            },
             "bundle": "genes/HGNC_11604.json",
         }
     ]
@@ -223,6 +263,7 @@ def test_a_published_gene_the_atlas_has_not_curated_gets_a_row_and_a_bundle(
         validity=validity,
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     rows = _by_gene(tmp_path)
@@ -255,6 +296,7 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert set(_read(tmp_path, "genes/HGNC_11604.json")) == {
@@ -265,6 +307,7 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         "atlas_curation",
         "has_conflicting_evidence",
         "has_source_discordance",
+        "independent_datasets",
         "validity",
         "lesion_groups",
         "publications",
@@ -297,6 +340,7 @@ def test_a_gene_with_no_mirrored_validity_publishes_the_uncurated_shape(
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["validity"] == {
@@ -342,6 +386,7 @@ def test_every_validity_record_carries_the_same_key_set_regardless_of_source(
         validity=validity,
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
@@ -384,6 +429,7 @@ def test_the_bundle_does_not_resort_the_records_validity_py_already_ordered(
         validity=validity,
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
@@ -416,6 +462,7 @@ def test_every_bundle_path_the_index_advertises_was_written(tmp_path: Path) -> N
         validity={},
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     advertised = [str(entry["bundle"]) for entry in _entries(tmp_path)]
@@ -477,6 +524,7 @@ def test_a_contested_gene_is_flagged_in_both_the_index_and_the_bundle(
         validity=validity,
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     entries = _by_gene(tmp_path)
@@ -533,6 +581,7 @@ def test_confidence_is_broken_down_by_lesion_group(tmp_path: Path) -> None:
         validity=validity,
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     entry = _entries(tmp_path)[0]
@@ -573,6 +622,7 @@ def test_evidence_counts_are_carried_per_evidence_class(tmp_path: Path) -> None:
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert _entries(tmp_path)[0]["evidence_counts"] == {"functional_model": 1, "genetic_case": 2}
@@ -613,6 +663,7 @@ def test_the_browse_counts_match_the_bundle_they_link_to(tmp_path: Path) -> None
         validity={},
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     counted = {
@@ -659,6 +710,7 @@ def test_a_gene_absent_from_the_registry_keeps_its_hgnc_id_as_its_label(
         validity={},
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     entries = _by_gene(tmp_path)
@@ -680,6 +732,7 @@ def test_a_bundle_carries_its_assertions_in_full(tmp_path: Path) -> None:
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -726,6 +779,7 @@ def test_a_bundle_carries_every_functional_record_about_the_gene(tmp_path: Path)
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -759,6 +813,7 @@ def test_a_bundle_carries_the_omics_summaries_verbatim(tmp_path: Path) -> None:
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["omics"] == {
@@ -789,6 +844,7 @@ def test_a_bundle_embeds_its_variants_rather_than_linking_them(tmp_path: Path) -
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -809,6 +865,7 @@ def test_a_gene_with_no_omics_or_variants_gets_empty_containers(tmp_path: Path) 
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -846,6 +903,7 @@ def test_a_bundle_holds_only_its_own_genes_evidence(tmp_path: Path) -> None:
         validity={},
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     bundle = _read(tmp_path, "genes/HGNC_4173.json")
@@ -888,6 +946,7 @@ def test_the_index_is_ordered_by_hgnc_id_rather_than_by_symbol(tmp_path: Path) -
         validity={},
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5, GATA4]
@@ -925,6 +984,7 @@ def test_bundle_assertions_and_functional_records_are_ordered_by_id(tmp_path: Pa
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -974,6 +1034,7 @@ def test_a_bundle_lists_the_publications_its_evidence_cites(tmp_path: Path) -> N
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["publications"] == [
@@ -1030,6 +1091,7 @@ def test_a_gene_with_evidence_but_outside_the_published_set_is_not_published(
         validity={},
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5]
@@ -1065,6 +1127,7 @@ def test_a_bundle_that_cannot_be_written_leaves_no_index_at_all(tmp_path: Path) 
             validity={},
             published={TBX5},
             burden={},
+            concordance=_no_burden(),
         )
 
     assert not (tmp_path / "genes" / "index.json").exists()
@@ -1089,6 +1152,7 @@ def test_the_index_is_emitted_for_an_empty_corpus(tmp_path: Path) -> None:
         validity={},
         published=set(),
         burden={},
+        concordance=_no_burden(),
     )
 
     assert _read(tmp_path, "genes/index.json") == {"genes": []}
@@ -1149,6 +1213,7 @@ def test_a_contested_gene_names_every_declared_lesion_group_as_conflicting(
         validity=validity,
         published={TBX5},
         burden={},
+        concordance=_no_burden(),
     )
 
     entry = _entries(tmp_path)[0]
@@ -1206,6 +1271,7 @@ def test_the_conflicting_groups_are_a_subset_of_the_groups_that_carry_confidence
         validity=validity,
         published={TBX5, GATA4},
         burden={},
+        concordance=_no_burden(),
     )
 
     for entry in _entries(tmp_path):
@@ -1275,6 +1341,12 @@ def test_the_bundle_carries_a_genes_burden_rows_and_the_browse_row_counts_them(
         validity={},
         published={TBX5, GATA4},
         burden={TBX5: rows},
+        # Derived the way the runner derives it, so this asserts the real
+        # shape rather than a hand-written one.
+        concordance={
+            **_no_burden(),
+            TBX5: gene_concordance(rows, cohort_families(rows)),
+        },
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -1292,3 +1364,35 @@ def test_the_bundle_carries_a_genes_burden_rows_and_the_browse_row_counts_them(
     # missing key: "no study reported this gene" must not read as a dropped join.
     assert rows_by_gene[GATA4]["burden_row_count"] == 0
     assert _read(tmp_path, "genes/HGNC_4173.json")["burden"] == []
+
+
+def test_a_published_gene_with_no_concordance_derived_fails_loudly(tmp_path: Path) -> None:
+    """`build_genes` refuses rather than defaulting, and the refusal names the gap.
+
+    `concordance` is a required argument precisely so a caller cannot forget it.
+    But a caller can still build it over the wrong population -- the published
+    set changed, the mapping did not -- and the failure a silent default would
+    produce is the worst kind this project has: a bundle publishing
+    `"tested": 0`, which is indistinguishable from the true statement that no
+    study reported that gene.
+
+    So the guard `raise`s, and it says which gene and why. `raise` rather than
+    `assert`: `-O` strips `assert`.
+
+    A mutation matrix on 2026-08-05 found this guard unguarded -- disabling it
+    survived the whole suite -- which is the only reason this test exists.
+    """
+    emitter = Emitter(root=tmp_path)
+
+    with pytest.raises(KeyError, match="no concordance derived for published gene"):
+        build_genes(
+            _corpus(),
+            emitter,
+            symbols=SYMBOLS,
+            omics={},
+            variants={},
+            validity={},
+            published={TBX5},
+            burden={},
+            concordance={},
+        )

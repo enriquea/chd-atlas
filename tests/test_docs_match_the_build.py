@@ -293,3 +293,44 @@ def test_the_burden_census_in_the_doc_is_the_census_the_build_publishes(site: Pa
     # And the claim that the composite is a union rather than a partition, which
     # is what stops a consumer double-counting when it aggregates.
     assert "double-counts" in section
+
+
+def test_the_independent_datasets_section_states_the_shape_the_build_publishes(
+    site: Path,
+) -> None:
+    """The census guard, applied to the new section before it can go stale.
+
+    The burden section drifted by a whole study because its counts were written
+    once and never re-measured, and the numbers stayed internally consistent so
+    reading them found nothing. This section is pinned from the day it lands
+    rather than after the same thing happens to it.
+
+    The three display obligations are asserted as *text*, not as numbers,
+    because they are what stops the object being rendered as a verdict — and a
+    later edit that softens them should fail here rather than ship.
+    """
+    doc = DOC.read_text()
+    start = doc.index("### `independent_datasets`")
+    section = re.sub(r"\s+", " ", doc[start : doc.index("\n## ", start)])
+
+    published = [
+        json.loads(path.read_text())["independent_datasets"]
+        for path in sorted((site / "genes").glob("HGNC_*.json"))
+    ]
+    states = {entry["state"] for gene in published for entry in gene["families"]}
+
+    # Every state the build can emit is documented; a fifth would fail here.
+    assert states <= {"corrected", "nominal", "no_enrichment", "not_tested"}
+    for state in states:
+        assert f"| `{state}` |" in section, f"{state!r} is emitted and undocumented"
+
+    # `tested` is the denominator, and it is never `len(families)` where any
+    # family did not test the gene. Measured on the real corpus rather than
+    # asserted, so the doc's claim is checked against what ships.
+    assert any(gene["tested"] < len(gene["families"]) for gene in published), (
+        "no published gene has an untested family, so the denominator claim is untested"
+    )
+
+    assert "never be rendered as one" in section
+    assert "never `len(families)`" in section
+    assert "KDM6A causes Kabuki syndrome" in section

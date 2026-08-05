@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from chd_atlas.build.burden import BurdenRow
+from chd_atlas.build.concordance import cohort_families, evidence_axes
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.pages import (
@@ -20,6 +21,7 @@ from chd_atlas.build.pages import (
     build_gene_index_page,
     build_gene_pages,
 )
+from chd_atlas.build.paths import gene_page_path
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
@@ -1056,13 +1058,35 @@ _PUBLICATION = Publication(
 )
 
 
+_OTHER_PUBLICATIONS = {
+    "PMID:34324492": Publication(
+        id="PMID:34324492",
+        title="Integrative analysis of genomic variants",
+        journal="PLoS genetics",
+        year=2021,
+        authors=["Audain E", "Wilsdon A"],
+        study_type="meta_analysis",  # type: ignore[arg-type]
+        own_lab=True,
+        tests_reported=11515,
+    ),
+}
+
+
 def _burden_page(
     tmp_path: Path,
     facts: dict[str, GeneFacts],
     rows: list[BurdenRow],
     name: str = "HGNC_4173.html",
     publications: dict[str, Publication] | None = None,
+    families: tuple[frozenset[str], ...] | None = None,
+    axes: tuple[tuple[str, str], ...] | None = None,
 ) -> str:
+    """Render one gene page.
+
+    `families` and `axes` default to the derivation the runner performs, so a
+    test that does not care about the matrix still renders a real one rather
+    than an empty section -- and a test that does care can pin them.
+    """
     emitter = Emitter(root=tmp_path)
     build_gene_pages(
         facts,
@@ -1073,6 +1097,8 @@ def _burden_page(
         publications=publications or {_PUBLICATION.id: _PUBLICATION},
         burden={GATA4: rows},
         cohorts=_COHORTS,
+        families=families if families is not None else cohort_families(rows),
+        axes=axes if axes is not None else evidence_axes(rows),
     )
     return _page(tmp_path, name)
 
@@ -1431,16 +1457,26 @@ def test_a_study_heading_never_renders_a_nameless_author(
     assert "PMID:42230622</a>" in page
 
 
-def test_the_pooling_warning_is_absent_when_there_is_only_one_study(
+def test_the_pooling_notice_is_the_matrix_caption_and_no_longer_conditional(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
-    """It asserted "these cohorts overlap" in the present tense on a page showing
-    one table, sending a reader to look for a second study that is not there and
-    undermining the caveats that *are* live. The corpus carries one study today,
-    so this is the branch every real page takes.
+    """**Relocated, deliberately, and the condition went with it.**
+
+    It used to render only where a gene carried two studies, because asserting
+    "these cohorts overlap" above a single table sent a reader hunting for a
+    second study that was not there.
+
+    The evidence matrix changed what it qualifies. A summary that *counts
+    datasets* is adjacent to pooling and invites exactly the arithmetic this
+    sentence forbids -- so it is now the caption directly beneath the matrix,
+    and it belongs there whenever the matrix does, one study or three. Folding
+    it while introducing the thing it guards against would have been the worst
+    available pairing.
     """
     one = _burden_page(tmp_path, facts_uncurated, [_burden_row()])
-    assert "no pooled statistic across studies" not in one
+    assert "no pooled statistic across studies" in one
+    # Immediately after the matrix, not four paragraphs above it.
+    assert one.index("</table>") < one.index("no pooled statistic across studies")
 
     two = _burden_page(
         tmp_path,
@@ -1471,6 +1507,11 @@ def test_the_consequence_column_is_headed_for_the_column_it_renders(
     # validity table, which is rendered first. Same trap as the provenance test.
     section = page[page.index("Rare variant burden") :]
 
+    # Past the evidence matrix: it is now the first table in this section and
+    # has its own `<thead>`. The comment above already records that
+    # `page.index("<thead>")` finds the validity table; the matrix is the same
+    # trap one layer in.
+    section = section[section.index("</table>") :]
     header = section[section.index("<thead>") : section.index("</thead>")]
     assert '<th scope="col">consequence</th>' in header
     assert "variant class" not in header
@@ -1480,7 +1521,11 @@ def test_the_consequence_column_is_headed_for_the_column_it_renders(
     # The real `variant_class` is on the page exactly once, in the method line,
     # and never in this table.
     assert "SNVs and indels" not in body
-    assert page.count("SNVs and indels") == 1
+    # Twice on the page, and neither is in this table: once as an evidence-matrix
+    # column head, and once in the folded method line. It read `== 1` until the
+    # matrix landed, when the column head made it 2 -- the number is asserted
+    # rather than loosened so a third occurrence has to be a deliberate change.
+    assert page.count("SNVs and indels") == 2
 
 
 def test_the_browse_page_shows_how_much_burden_evidence_each_gene_has(
@@ -1654,6 +1699,8 @@ def test_every_count_cell_names_what_it_counted(
     ]
     section = _burden_page(tmp_path, facts_uncurated, rows)
     section = section[section.index("Rare variant burden") :]
+    # Past the evidence matrix, whose cells also carry counts.
+    section = section[section.index("</table>") :]
     body = section[section.index("<tbody>") : section.index("</tbody>")]
 
     assert "<td>5 carriers / 1,471</td>" in body
@@ -1689,6 +1736,10 @@ def test_a_count_unit_nothing_has_taught_the_renderer_still_names_itself(
     """
     page = _burden_page(tmp_path, facts_uncurated, [_burden_row(count_unit="genomes")])
     section = page[page.index("Rare variant burden") :]
+    # Past the evidence matrix, which is now the first table in this section and
+    # has a `<tbody>` of its own. Slicing on the first one silently measured the
+    # matrix instead -- the same trap this file records twice already.
+    section = section[section.index("</table>") :]
     body = section[section.index("<tbody>") : section.index("</tbody>")]
 
     assert "<td>5 genomes / 1,471</td>" in body
@@ -1723,3 +1774,242 @@ def test_the_composite_row_is_named_as_a_union_of_the_two_below_it(
 
     without = _burden_page(tmp_path / "b", facts_uncurated, components)
     assert "union</strong> of the loss-of-function" not in without
+
+
+def test_every_particular_caveat_survives_outside_the_fold(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """**The fold rule needs a test, not good intentions.**
+
+    A caveat may fold if it is *general* -- true on every gene page, teaching
+    how to read the table. It must stay visible if it is *particular* -- it
+    fired because of this gene's data and changes what a reader concludes about
+    this gene.
+
+    This project has twice measured that a caveat nobody reads is nearly a
+    caveat that does not exist, so folding a particular one later has to turn
+    this red. Asserted against the page with every `<details>` block removed,
+    which is what "unfolded" means to the reader who never clicks.
+
+    The multiple-testing warning is in this list deliberately. It was the
+    sharpest finding of the 2026-08-05 review -- 32 of 187 published rows clear
+    0.05 and 3 survive Bonferroni over the study's own 138,609 comparisons --
+    so `_method_line` returns it separately from the design clause, which does
+    fold. Reuniting them would bury it one release after it was added.
+    """
+    rows = [
+        _burden_row(consequence_class="lof"),
+        _burden_row(
+            study="PMID:34324492",
+            consequence_class="lof",
+            case_cohorts=("taa_cases",),
+            method_note="Cases include 777 sporadic thoracic aortic aneurysm probands.",
+        ),
+    ]
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        rows,
+        publications={_PUBLICATION.id: _PUBLICATION, **_OTHER_PUBLICATIONS},
+    )
+    unfolded = re.sub(r"<details.*?</details>", "", page, flags=re.S)
+
+    # The atlas's claim about itself.
+    assert "computes none of them" in unfolded
+    # The relocated pooling caption -- it qualifies the matrix directly above it.
+    assert "count the same people twice" in unfolded
+    # A row's own method note: this is where the TAA contamination, which is not
+    # congenital heart disease, reaches a reader at all.
+    assert "thoracic aortic aneurysm" in unfolded
+    # The multiple-testing denominator.
+    assert "138,609" in unfolded
+
+
+def test_the_general_reading_notes_are_folded_out_of_the_way(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The other half of the rule, so "fold everything" fails as loudly as
+    "fold nothing".
+
+    These three paragraphs are identical on all 23 pages and teach how to read
+    the table rather than saying anything about this gene. Nothing is lost by
+    folding them: the unit word is still in every count cell, and the matrix
+    renders `not tested` as its own state rather than as a gap.
+    """
+    page = _burden_page(tmp_path, facts_uncurated, [_burden_row(consequence_class="synonymous")])
+    unfolded = re.sub(r"<details.*?</details>", "", page, flags=re.S)
+
+    for general in ("every cell names what it counted", "negative control"):
+        assert general in page, f"{general!r} must still be on the page"
+        assert general not in unfolded, f"{general!r} must be behind the fold"
+
+
+def test_the_matrix_names_an_untested_design_rather_than_leaving_a_blank(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The holes are the point, and a blank cell is indistinguishable from a bug.
+
+    Columns come from the whole corpus, so a design nobody ran for this gene
+    renders as absent instead of vanishing. Nobody has published a CNV de novo
+    analysis for any gene, and that quadrant is empty on every page: the shape
+    of the literature is itself information.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [_burden_row(consequence_class="lof")],
+        families=(frozenset({"PMID:42230622"}), frozenset({"PMID:34324492"})),
+        axes=(("snv_indel", "control_cohort"), ("cnv_deletion", "control_cohort")),
+    )
+    section = page[page.index("Rare variant burden") :]
+    matrix = section[section.index('<table class="matrix">') : section.index("</table>")]
+
+    # **The cell reads short and explains itself on hover.** The full sentence
+    # set the column width for the whole table and pushed every cell wide enough
+    # to crowd its neighbours, so it moved to the `title` -- where it is still
+    # reachable, which is the half of this that must not regress.
+    assert ">not tested</span>" in matrix
+    assert 'title="this dataset did not test this gene"' in matrix
+
+    # Every *data* cell says what it is in words and is never simply blank. The
+    # one bare `<td>` is the corner of a table headed on both axes, which
+    # carries no value by construction.
+    assert matrix.count("<td></td>") == 1
+    assert "<td></td>" not in matrix[matrix.index("<tbody>") :]
+
+
+def test_the_gene_and_its_symbol_both_link_to_the_page_and_the_strip_does_not(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """Where the affordance belongs, and where it does not.
+
+    Both name cells link: `HGNC:11604` is the identifier a reader cites and
+    `TBX5` is the name they scan for, and linking only the id put the affordance
+    on the string nobody reaches for.
+
+    **The strip is deliberately not a link.** It was one briefly, on the
+    reasoning that it summarises the gene page's matrix -- but the row already
+    links to that page twice, and a third link wrapped around a tally puts the
+    affordance on a number rather than on a name. Each dot keeps its `title`,
+    which is the detail the cell owes a reader.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity=validity_two,
+        burden_counts={},
+        concordance={
+            gene: {"tested": 0, "enriched": 0, "corrected": 0, "families": []} for gene in facts_two
+        },
+    )
+    page = _page(tmp_path, "index.html")
+    href = f'href="../{gene_page_path(TBX5)}"'
+
+    # Twice: once from the id, once from the symbol.
+    assert page.count(href) == 2
+    assert f"<a {href}>{TBX5}</a>" in page
+    assert f"<a {href}>TBX5</a>" in page
+
+    # And the strip carries no anchor at all.
+    strip = page[page.index('<span class="strip">') :]
+    strip = strip[: strip.index("</span></span>")]
+    assert "<a " not in strip
+    assert "strip-tally" in strip
+
+
+def test_the_matrix_cell_drops_the_interval_but_never_the_measure(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The one property `_effect_compact` trades width for, and the one it does not.
+
+    The matrix cell is a summary, so it drops the confidence interval: that
+    qualifies the estimate rather than naming it, it is in the row's own table a
+    screen below, and carrying it ran a cell to 61 characters and set the column
+    width for the whole grid.
+
+    **The measure is not negotiable.** `_effect`'s rule is that no branch omits
+    it, because an odds ratio of 3.1 and a de novo enrichment of 3.1 are
+    different claims and a bare `3.1` equates them. A mutation matrix on
+    2026-08-05 found that dropping it from the compact form survived the entire
+    suite, which is the only reason this test exists.
+
+    An unbounded effect still renders `∞` rather than a blank, for the reason
+    `_effect` does: it is the strongest result in the data, and the one
+    `allow_nan=False` refuses to publish as a number.
+    """
+    rows = [
+        _burden_row(consequence_class="lof", effect=6.53, effect_bound=None, ci_low=2.1),
+        _burden_row(consequence_class="missense_damaging"),  # the unbounded fixture
+    ]
+    page = _burden_page(tmp_path, facts_uncurated, rows)
+    section = page[page.index("Rare variant burden") :]
+    matrix = section[section.index('<table class="matrix">') : section.index("</table>")]
+
+    # The measure travels with every number.
+    assert "OR 6.53" in matrix or "OR ∞" in matrix
+    assert (
+        re.search(r'class="cell (corrected|nominal)"[^>]*>(?!OR|enrichment|rate)', matrix) is None
+    )
+
+    # The interval does not -- it is in the table below and on the cell's title.
+    assert "95% CI" not in matrix
+    assert "95% CI" in section[section.index("</table>") :]
+
+
+def test_the_browse_headers_and_cells_line_up(
+    tmp_path: Path,
+    facts_two: dict[str, GeneFacts],
+    validity_two: dict[str, GeneValidity],
+) -> None:
+    """Each column holds what its header says it holds.
+
+    **`data_table` zips headers to cells by position and cannot detect a
+    mismatch**, so inserting a header without moving its cell silently heads one
+    column for a field two places away. That happened: "burden across studies"
+    went in after `definitive for` while the strip stayed after `atlas
+    curation`, and the whole suite passed -- 774 tests, none of which read a
+    cell against its own header.
+
+    This project already has `test_the_consequence_column_is_headed_for_the_
+    column_it_renders` for exactly this failure on the burden table. The browse
+    table had no equivalent, which is why the defect survived a build, a review
+    of the rendered page, and a push.
+
+    Asserted by pairing each header with a value only that column can produce,
+    so a swap of any two columns fails rather than merely a shift of one.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        facts_two,
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity=validity_two,
+        burden_counts={TBX5: 4},
+        concordance={
+            gene: {"tested": 2, "enriched": 1, "corrected": 1, "families": []} for gene in facts_two
+        },
+    )
+    page = _page(tmp_path, "index.html")
+
+    headers = [
+        re.sub(r"<[^>]+>", "", cell)
+        for cell in re.findall(r"<th[^>]*>.*?</th>", page[: page.index("</thead>")])
+    ]
+    row = next(r for r in re.findall(r"<tr[^>]*>(.*?)</tr>", page, re.S) if f">{TBX5}<" in r)
+    cells = [re.sub(r"<[^>]+>", "", cell) for cell in re.findall(r"<td>(.*?)</td>", row, re.S)]
+
+    assert len(headers) == len(cells), "a header was added without a cell, or the reverse"
+    by_header = dict(zip(headers, cells, strict=True))
+
+    assert by_header["gene"] == TBX5
+    assert by_header["symbol"] == "TBX5"
+    assert by_header["confidence"] == "definitive"
+    # Only the strip renders a tally; only `validity` renders a validity state.
+    assert "tested" in by_header["burden across studies"]
+    assert by_header["validity"] == "expert_curated"
+    assert by_header["atlas curation"] in {"curated", "not_yet_curated"}
+    assert by_header["burden rows"] == "4"
