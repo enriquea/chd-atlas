@@ -169,17 +169,29 @@ def test_the_documented_manifest_census_is_the_census_the_build_publishes(site: 
     Checksums and the commit stay placeholders and are not asserted: both change
     with every commit, so pinning them would guarantee this document is wrong by
     the next one.
+
+    **Parsed, not substring-matched, and the difference is not cosmetic.** The
+    first version of this test asserted `f'"{key}": {value}' in section`, which
+    is unanchored: with the build at `burden_rows: 29` and the doc still saying
+    `290`, the needle `"burden_rows": 29` is a substring of `"burden_rows": 290`
+    and the test passes. Any documented figure having the build's figure as a
+    prefix slips through — exactly the stale-census failure this guard exists to
+    catch. Found by review 2026-08-06. `_example` already parses the fenced
+    block, so comparing dicts is both stronger and less code.
+
+    The whole `counts` object is compared, not key by key, so a key the document
+    invents or drops fails here too.
     """
     doc = DOC.read_text()
     start = doc.index("## `manifest.json`")
     section = doc[start : doc.index("\n## ", start)]
+    documented = _example("## `manifest.json`")
     manifest = json.loads((site / "manifest.json").read_text())
 
     assert f'"schema_version": "{manifest["schema_version"]}"' in section
-    for key, value in sorted(manifest["counts"].items()):
-        assert f'"{key}": {value}' in section, (
-            f"the build counts {key}={value}; the documented example disagrees"
-        )
+    assert documented["counts"] == manifest["counts"], (
+        f"the build counts {manifest['counts']}; the documented example says {documented['counts']}"
+    )
 
 
 def test_the_contested_example_is_labelled_with_the_payload_it_comes_from(site: Path) -> None:

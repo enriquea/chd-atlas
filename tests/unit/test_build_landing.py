@@ -15,7 +15,7 @@ from chd_atlas.build.burden import BurdenCensus, BurdenRow, burden_census
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.landing import build_landing
 from chd_atlas.build.paths import LANDING
-from chd_atlas.build.render import EVIDENCE_STATE_LABELS, RESEARCH_USE_NOTICE, STYLESHEET
+from chd_atlas.build.render import RESEARCH_USE_NOTICE, STYLESHEET
 from chd_atlas.build.runner import build_site
 from chd_atlas.build.validity import GeneValidity, uncurated
 from chd_atlas.corpus import Corpus
@@ -489,19 +489,47 @@ def test_the_front_page_teaches_the_glyphs_before_a_reader_meets_them(tmp_path: 
     different words -- the failure mode CLAUDE.md records as the most repeated
     one in this project.
 
-    Asserted against the shared constant *and* against the four `.dot` classes:
-    the labels alone would pass on a key rendering four identical glyphs, and the
-    classes alone would pass on four correct glyphs captioned with prose that had
-    drifted.
+    **The captions are literals here, deliberately, and reading them from
+    `EVIDENCE_STATE_LABELS` instead is what made this test blind.** The original
+    version looped `for label in EVIDENCE_STATE_LABELS: assert label in text`
+    and, separately, checked the four `.dot` classes were present. Both loops
+    pass under any permutation of the constant, because the needles come from
+    the thing being permuted. Measured 2026-08-06: swapping two entries survived
+    all 787 tests and published a page whose key captions the untested glyph
+    "tested, no enrichment detected".
+
+    So each glyph is asserted *adjacent to its own sentence*, spelled out. A
+    caption that leaves its state now fails, and so does one that is reworded in
+    `render.py` without this test being reconsidered -- which is the point: these
+    four sentences are a published contract, not an implementation detail.
+
+    The power caveat is checked too. The front page teaches this notation to a
+    reader meeting it for the first time, and teaching `no enrichment detected`
+    without "not evidence against a gene" sets the prior the caveat exists to
+    prevent.
     """
     corpus = Corpus(root=Path("."), assertions=(_assertion(),))
 
     text = _build(corpus, {TBX5: "TBX5"}, {TBX5: uncurated()}, tmp_path)
 
-    for label in EVIDENCE_STATE_LABELS:
-        assert label in text
-    for state in ("dot full", "dot half", "dot none", "dot untested"):
-        assert f'<span class="{state}">' in text
+    for css, caption in (
+        ("dot full", "enriched, and survives that study&#x27;s own correction"),
+        ("dot half", "enriched nominally, or no correction published"),
+        ("dot none", "tested, no enrichment detected"),
+        ("dot untested", "not tested by that dataset"),
+    ):
+        assert f'<span class="{css}">' in text, f"the key no longer draws {css!r}"
+        pair = re.search(rf'<span class="{re.escape(css)}">[^<]*</span>\s*([^<]+)<', text)
+        assert pair, f"{css!r} is not followed by a caption"
+        assert pair.group(1).strip() == caption, (
+            f"{css!r} is captioned {pair.group(1).strip()!r}, expected {caption!r}"
+        )
+    assert "not evidence against a gene" in text
+    # Each glyph and its caption wrapped as one unbreakable unit. Without this
+    # the line breaks straight after the glyph and the last caption renders with
+    # no mark beside it -- measured on the built page at desktop width, and not
+    # fixable with `&nbsp;` because `.dot` is an atomic inline box.
+    assert text.count('<span class="legend-item">') == 4
 
 
 def test_the_browse_page_is_the_pages_call_to_action(tmp_path: Path) -> None:
@@ -524,7 +552,7 @@ def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
 ) -> None:
     """Three artifacts, one set of numbers, checked against a real build.
 
-    `docs/data-api.md` describes `index.html` as stating "the rest of `counts`",
+    `docs/data-api.md` describes `index.html` as stating "every key of `counts`",
     which makes the page and the manifest one census in two formats. They are
     derived from a single `burden_census` call in `build_site` precisely so they
     cannot disagree -- and a test that only read fixtures could not see them
@@ -537,6 +565,15 @@ def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
     127 of those genes publish no page, so a census counting the mirror would
     advertise five times the evidence the site serves. Summed over the published
     bundles rather than over the mirror for that reason.
+
+    **Every shared key, not a sample.** This checked three of the nine keys the
+    page and the manifest both state until review 2026-08-06 pointed out that
+    the invariant was claimed for the whole census and guarded for a third of it
+    -- so a cross-wire between, say, the `Publications cited` and `Phenotype
+    terms (HPO)` cards publishes a false front-page figure with the manifest
+    still correct and nothing failing. The mapping is asserted exhaustive
+    against `counts`, so a key added to the manifest without a card on the page
+    fails here rather than quietly leaving the claim narrower than it reads.
     """
     text = (real_build / "index.html").read_text(encoding="utf-8")
     manifest = json.loads((real_build / "manifest.json").read_text(encoding="utf-8"))
@@ -546,12 +583,27 @@ def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
 
     assert counts["burden_rows"] == fetchable
     assert counts["genes"] == len(bundles)
-    for label, key in (
-        ("Burden statistics", "burden_rows"),
-        ("Independent datasets", "cohort_families"),
-        ("Genes published", "genes"),
-    ):
-        match = re.search(rf"<dt>{label}</dt>\s*<dd>([\d,]+)</dd>", text)
+
+    # The card label the page prints for each manifest count. `re.escape` on the
+    # label because "Phenotype terms (HPO)" carries regex metacharacters.
+    cards = {
+        "assertions": "Curated gene-disease assertions",
+        "burden_rows": "Burden statistics",
+        "cohort_families": "Independent datasets",
+        "datasets": "Omics datasets",
+        "featured": "Featured manuscripts",
+        "functional": "Functional evidence records",
+        "genes": "Genes published",
+        "phenotypes": "Phenotype terms (HPO)",
+        "publications": "Publications cited",
+    }
+    assert set(cards) == set(counts), (
+        "the manifest census and the front page's cards have drifted apart; "
+        f"manifest-only={sorted(set(counts) - set(cards))} "
+        f"page-only={sorted(set(cards) - set(counts))}"
+    )
+    for key, label in sorted(cards.items()):
+        match = re.search(rf"<dt>{re.escape(label)}</dt>\s*<dd>([\d,]+)</dd>", text)
         assert match, f"the page no longer publishes a {label!r} row"
         assert int(match.group(1).replace(",", "")) == counts[key], label
 

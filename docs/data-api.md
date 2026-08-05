@@ -145,9 +145,11 @@ wrong by the next one.
 The page a person opens directly rather than fetches as JSON, and the entry
 point to the other 24. It states what the atlas is, the same development-status
 and research-use statement `status` above is the machine-readable half of, and
-the real counts behind it — every key of `counts`, plus the genes carrying
-mirrored ClinGen/GenCC validity — read from the same build that produced this
-document's other examples rather than written by hand. It links to
+the real counts behind it — every key of `counts`, plus three figures that are
+not manifest keys: the genes carrying mirrored ClinGen/GenCC validity, the genes
+carrying burden evidence, and the genes this atlas has itself curated. All are
+read from the same build that produced this document's other examples rather
+than written by hand. It links to
 `genes/index.html`, `genes/index.json`, `manifest.json`, `sources.json` and the
 repository. Self-contained: no external request, no build timestamp,
 byte-identical between two builds of one commit like everything else here.

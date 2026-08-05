@@ -347,6 +347,18 @@ def burden_census(
     `len(published)`. They are equal today, at 23 of 23, and stating the
     published-gene count under a burden label would keep reading as 23 on the
     day a gene is published with no burden evidence at all.
+
+    **`families` is the one figure here NOT restricted to `published`, and that
+    asymmetry is deliberate.** `rows` and `genes` count what a reader can reach;
+    `families` counts the cohort families in the corpus, including any whose
+    studies tested no published gene. Restricting it would be worse, not better:
+    a family exists because two studies share a sample collection, and dropping
+    a member because none of its genes cleared the publication gate can split
+    one family into what then presents as two independent datasets -- inventing
+    independence D33 exists to deny. So the front page can state a family count
+    one higher than the number of families any published gene was tested by.
+    Reviewed 2026-08-06 and kept; the alternative was measured and inverts a
+    real overlap.
     """
     rows = 0
     genes = 0
