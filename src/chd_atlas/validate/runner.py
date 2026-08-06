@@ -31,6 +31,7 @@ from chd_atlas.validate.referential import (
 from chd_atlas.validate.scope import (
     scope_candidates,
     validate_curation_is_in_scope,
+    validate_scope_attribution,
     validate_scope_terms,
 )
 from chd_atlas.validate.sort_order import validate_sort_order
@@ -129,7 +130,10 @@ def _known_genes(root: Path) -> set[str] | None:
 
 def _mirrored_validity(
     root: Path,
-) -> tuple[dict[str, str], dict[str, set[str]], dict[str, set[str]]] | None:
+) -> (
+    tuple[dict[str, str], dict[str, set[str]], dict[str, set[str]], dict[str, frozenset[str]]]
+    | None
+):
     """Disease labels and gene/disease cross-links, from every validity mirror.
 
     Returns three mappings the scope validators need, built once from both
@@ -139,6 +143,9 @@ def _mirrored_validity(
     - a MONDO term -> the label its authority (ClinGen or GenCC) published
     - a MONDO term -> every HGNC id curated under it
     - an HGNC id -> every MONDO term it is curated under
+    - a MONDO term -> every authority that curated a record naming it, which
+      is a ClinGen expert panel name or a GenCC submitter name; SCP005 checks
+      each scope entry's claimed attribution against this
 
     None is deliberately distinct from an empty result, for exactly the reason
     `_known_genes` returns None: checking every scope term against an empty
@@ -151,6 +158,7 @@ def _mirrored_validity(
     labels: dict[str, str] = {}
     genes_by_disease: dict[str, set[str]] = {}
     diseases_by_gene: dict[str, set[str]] = {}
+    by_authority: dict[str, set[str]] = {}
     read_any = False
     # GenCC first, so ClinGen's label overwrites it below: ClinGen is the
     # primary source for gene-disease validity and GenCC harmonises rather
@@ -171,7 +179,15 @@ def _mirrored_validity(
         if frame is None or not {"disease", "disease_label", "gene"}.issubset(frame.columns):
             continue
         read_any = True
-        for disease, label, gene in frame.select(["disease", "disease_label", "gene"]).iter_rows():
+        # The column naming the body that made each call: ClinGen records carry
+        # the expert panel, GenCC rows the submitter. Selected separately from
+        # the three above because either mirror may lack it without the other
+        # checks being affected -- `validate_table` reports a missing column as
+        # TBL001 over the same file, so skipping it here loses nothing.
+        who = "gcep" if schema_name == "clingen_validity" else "submitter"
+        curators = frame[who].to_list() if who in frame.columns else [None] * frame.height
+        rows = frame.select(["disease", "disease_label", "gene"]).iter_rows()
+        for (disease, label, gene), curator in zip(rows, curators, strict=True):
             if disease is None:
                 continue
             if label is not None:
@@ -179,7 +195,16 @@ def _mirrored_validity(
             if gene is not None:
                 genes_by_disease.setdefault(str(disease), set()).add(str(gene))
                 diseases_by_gene.setdefault(str(gene), set()).add(str(disease))
-    return (labels, genes_by_disease, diseases_by_gene) if read_any else None
+            if curator is not None:
+                by_authority.setdefault(str(disease), set()).add(str(curator))
+    if not read_any:
+        return None
+    return (
+        labels,
+        genes_by_disease,
+        diseases_by_gene,
+        {term: frozenset(names) for term, names in by_authority.items()},
+    )
 
 
 def _relative_to_root(issues: list[ValidationIssue], root: Path) -> list[ValidationIssue]:
@@ -355,9 +380,11 @@ def validate_repository(root: Path) -> ValidationReport:
                 )
             )
             issues.extend(validate_scope_terms(corpus.chd_scope, None, scope_location))
+            issues.extend(validate_scope_attribution(corpus.chd_scope, None, scope_location))
         else:
-            labels, genes_by_disease, diseases_by_gene = mirrored
+            labels, genes_by_disease, diseases_by_gene, authorities = mirrored
             issues.extend(validate_scope_terms(corpus.chd_scope, labels, scope_location))
+            issues.extend(validate_scope_attribution(corpus.chd_scope, authorities, scope_location))
             scope_terms = {str(entry.id) for entry in corpus.chd_scope}
             in_scope_genes = {
                 gene for term in scope_terms for gene in genes_by_disease.get(term, set())

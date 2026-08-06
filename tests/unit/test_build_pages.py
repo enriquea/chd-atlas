@@ -814,7 +814,20 @@ def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
     for name in ("index.html", "HGNC_11604.html", "HGNC_4173.html"):
         page = _page(tmp_path, name)
         assert _SCOPE_RULE in page, f"{name} does not state the inclusion rule"
-        assert "for a disease in this atlas's CHD scope" in page
+        # **The published provenance claim, corrected 2026-08-06.** Every page
+        # used to say a gene is definitive "for a disease in this atlas's CHD
+        # scope", which told 24 published pages that this atlas decides what
+        # counts as congenital heart disease. It does not, and its owner -- not
+        # a clinician -- said so: scope is now a selection among terms external
+        # authorities already use, and `curation/chd_scope.yaml` names the
+        # authority for every term.
+        #
+        # The negative assertion is the load-bearing half. Without it a future
+        # edit could restore the old sentence beside the new one and satisfy
+        # every positive check here.
+        assert "this atlas's CHD scope" not in page
+        assert "an external authority treats as congenital heart disease" in page
+        assert "No disease is in scope on this atlas's own judgement" in page
         assert "not the same as definitive for congenital heart disease" in page
 
 
