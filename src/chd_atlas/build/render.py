@@ -69,6 +69,16 @@ STYLESHEET: Final = """
     --fg: #1a1a1a; --bg: #ffffff; --muted: #555555; --border: #d0d0d0;
     --notice-bg: #fff4e5; --notice-border: #b45309; --link: #0b5fa5;
     --chip-bg: rgba(127, 127, 127, 0.15); --definitive: #1a7f37; --warn: #b02a37;
+    /* The validity ladder, one hue at four intensities -- the same idiom as
+       --evidence below and for the same reason. ClinGen's four supportive rungs
+       are ordinal, so a ramp is what they mean; a second hue would invent an
+       axis. `ungraded` is drawn as absence (outline, muted) rather than as the
+       bottom of the ramp: no panel graded the gene, which is not a weaker grade
+       but a different question, and 16 of the 92 genes published are in it. */
+    --grade-4: #1a7f37; --grade-4-fg: #ffffff;
+    --grade-3: #4e9c66; --grade-3-fg: #ffffff;
+    --grade-2: #a9d3b6; --grade-2-fg: #14301d;
+    --grade-1: #dcebe1; --grade-1-fg: #1f4029;
     /* The evidence hue, deliberately NOT the green of --definitive and not
        a red/green pair. `significant` is not `true` on this site, and a
        green tick beside a nominal-only result would undo every caveat
@@ -82,6 +92,10 @@ STYLESHEET: Final = """
       --fg: #e8e8e8; --bg: #14161a; --muted: #a8a8a8; --border: #3a3d42;
       --notice-bg: #3a2a12; --notice-border: #d99a3d; --link: #6cb6f5;
       --definitive: #3fb950; --warn: #f85149;
+      --grade-4: #2ea043; --grade-4-fg: #06120a;
+      --grade-3: #1f6f34; --grade-3-fg: #eaf6ec;
+      --grade-2: #1b4527; --grade-2-fg: #cfe6d6;
+      --grade-1: #16301d; --grade-1-fg: #b8d4c1;
       --evidence: #58abc7; --evidence-soft: #172a33; --on-evidence: #0f151a;
       --surface: #1b1f25;
     }
@@ -249,8 +263,17 @@ STYLESHEET: Final = """
     display: inline-block; background: var(--chip-bg); border-radius: 3px;
     padding: 0.1rem 0.45rem; font-size: 0.85rem; margin: 0 0.25rem 0.25rem 0;
   }
-  .chip-definitive { background: var(--definitive); color: #fff; }
+  .chip-definitive { background: var(--grade-4); color: var(--grade-4-fg); }
+  .chip-strong { background: var(--grade-3); color: var(--grade-3-fg); }
+  .chip-moderate { background: var(--grade-2); color: var(--grade-2-fg); }
+  .chip-limited { background: var(--grade-1); color: var(--grade-1-fg); }
+  .chip-ungraded {
+    background: transparent; color: var(--muted); border: 1px dashed var(--border);
+  }
   .chip-warn { background: var(--warn); color: #fff; }
+  .grade-key { margin: 1rem 0; font-size: 0.9rem; }
+  .grade-key summary { cursor: pointer; color: var(--muted); }
+  .grade-key dt { margin-top: 0.5rem; }
   .layout { display: grid; grid-template-columns: 15rem 1fr; gap: 2rem; }
   @media (max-width: 46rem) { .layout { grid-template-columns: 1fr; } }
   .rail { font-size: 0.9rem; }
@@ -398,6 +421,113 @@ def evidence_legend(*, swatches: bool) -> str:
         for state, label in EVIDENCE_STATE_LABELS.items()
     )
     return f'<p class="strip-legend">{items}</p>'
+
+
+# The chip class each mirrored grade renders in, keyed by the grade's own value.
+#
+# **Keyed, never zipped against an ordered ladder.** `EVIDENCE_STATE_LABELS`
+# above was a positional zip until a mutant swapping two of its entries survived
+# all 787 tests and published a page that contradicted itself; this is the same
+# shape of mapping and gets the same treatment.
+#
+# The three contested rungs map to `warn` and are here even though
+# `validity.published_genes` admits no gene headlined by `disputed` or `refuted`
+# -- the floor excludes them, and `_clingen_contests` vetoes admission on GenCC
+# agreement where a panel contests. That makes this a guard on a bypassed gate,
+# the same idiom as `encode_json`'s `allow_nan=False`: if the gate ever changes,
+# a contested gene renders in the caution colour rather than raising `KeyError`
+# mid-build or, worse, borrowing the green of `definitive`.
+# `no_known_association` is *not* on a bypassed path -- it sits at rank 0 but
+# outside `CONTESTED`, so a gene ClinGen recorded it for can still be admitted on
+# GenCC agreement -- which is exactly why it must not fall through to a default.
+GRADE_CHIP_KIND: Final[dict[str, str]] = {
+    "definitive": "definitive",
+    "strong": "strong",
+    "moderate": "moderate",
+    "limited": "limited",
+    "disputed": "warn",
+    "refuted": "warn",
+    "no_known_association": "warn",
+}
+
+# What each rung means, in the words of the authority that defined it.
+#
+# **These gloss ClinGen's Gene-Disease Validity SOP; the atlas authors none of
+# them** (D12). Before 2026-08-06 the site needed no key: every published gene
+# was `definitive` and the only chip was green. The widened gate publishes four
+# rungs, and a reader who meets `limited` on a clinical genetics resource with no
+# statement of what a panel meant by it will supply their own meaning.
+#
+# `ungraded` is the state, not a rung: no expert panel has graded the gene for a
+# disease this atlas treats as CHD, and it is published on submitter agreement
+# instead. Drawn as an outline rather than as the bottom of the ramp, because
+# "nobody graded it" and "graded weakest" are different facts and the second is
+# not implied by the first.
+GRADE_GLOSS: Final[dict[str, str]] = {
+    "definitive": (
+        "repeatedly demonstrated in research and clinical settings and upheld over time, "
+        "with no convincing evidence to the contrary"
+    ),
+    "strong": (
+        "independently demonstrated by several studies, without the years of replication "
+        "definitive requires"
+    ),
+    "moderate": "several unrelated probands and some experimental support",
+    "limited": (
+        "few probands, or evidence that is suggestive but not compelling. "
+        "<strong>Limited is not a weak yes</strong> &mdash; it is a panel saying the case is "
+        "not yet made"
+    ),
+    "no_known_association": (
+        "a panel looked and found no evidence of a relationship to this disease"
+    ),
+    "ungraded": (
+        "no ClinGen expert panel has graded this gene for a disease this atlas treats as "
+        "congenital heart disease. It is published because two or more Gene Curation "
+        "Coalition submitters independently assert it, and the gene page names them"
+    ),
+}
+
+_GRADE_KEY_ORDER: Final = (
+    "definitive",
+    "strong",
+    "moderate",
+    "limited",
+    "no_known_association",
+    "ungraded",
+)
+
+
+def grade_legend() -> str:
+    """The validity-chip key, as a collapsed `<details>`.
+
+    Rendered on the browse page and on every gene page, from one constant, for
+    the reason `EVIDENCE_POWER_CAVEAT` is one constant: a key that exists on the
+    page a reader arrives at and not on the page they land on is a key that is
+    absent exactly when it is needed. Measured 2026-08-05 in the concordance
+    review, where the browse page carried the evidence legend and the gene page
+    did not.
+
+    `disputed` and `refuted` are deliberately not listed. They are in
+    `GRADE_CHIP_KIND` as a guard, but no gene headlined by either is published,
+    so the key says that instead of glossing a state a reader cannot meet.
+    """
+    rows = "".join(
+        f'<dt><span class="chip chip-{GRADE_CHIP_KIND.get(grade, "ungraded")}">'
+        f"{html.escape(grade.replace('_', ' ') if grade != 'ungraded' else 'not classified')}"
+        f"</span></dt><dd>{GRADE_GLOSS[grade]}</dd>"
+        for grade in _GRADE_KEY_ORDER
+    )
+    return (
+        '<details class="grade-key"><summary>What these classifications mean</summary>'
+        "<p>Every classification on this site is mirrored from the authority that made it. "
+        "The four supportive rungs are "
+        '<a href="https://clinicalgenome.org/curation-activities/gene-disease-validity/">'
+        "ClinGen&#x27;s</a>, glossed here from their Gene-Disease Validity SOP. "
+        "<strong>A gene an expert panel disputed or refuted is not published here at "
+        "all.</strong></p>"
+        f"<dl>{rows}</dl></details>"
+    )
 
 
 @dataclass(frozen=True)

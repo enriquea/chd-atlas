@@ -182,7 +182,39 @@ from chd_atlas.corpus import Corpus
 # and `independent_datasets: 3` is a misreading waiting to happen. This is the
 # length of any bundle's `independent_datasets.families` array, which is the same
 # for every gene by construction.
-SCHEMA_VERSION: Final = "2.7"
+#
+# 2.8 adds `admitted_by` and `asserted_by` to every gene bundle, and widens the
+# published population from 23 genes to 92. Additive, so MINOR -- and the letter
+# is decided the same way 2.2's was, which is the precedent that matters here
+# because this release repeats its shape exactly.
+#
+# **MINOR was checked against the rule, not assumed.** The one candidate for
+# MAJOR is `headline_confidence`, which is `null` on 16 of the 92 genes now
+# published and was `"definitive"` on all 23 before. That is not a shape change:
+# the field has been `string | null` since 2.0, `docs/data-api.md` has documented
+# the null since then, and a parser written against 2.7 keeps working. What
+# changed is which rows appear -- MINOR by the paragraph above, which was written
+# for exactly this case.
+#
+# **The display obligation is the real cost of this release, and it is larger
+# than 2.2's.** A 2.7 consumer could render `headline_confidence` verbatim and be
+# right every time, because every published gene was `definitive`. Measured
+# 2026-08-06 on the widened corpus that becomes 23 `definitive`, 1 `strong`,
+# 9 `moderate`, 43 `limited` and 16 `null`. Three consequences, none of which a
+# version letter can carry:
+#
+# * a consumer that treats presence in `genes/index.json` as "an expert panel
+#   called this a CHD gene" is now wrong for 16 genes, which no panel graded at
+#   all. `admitted_by.authority` is what distinguishes them: `"clingen"` or
+#   `"gencc_agreement"`.
+# * a consumer that renders the chip without the grade's meaning turns
+#   `limited` -- a panel saying the case is not yet made -- into a weak yes.
+#   `render.grade_legend` is what the site itself does about this.
+# * `asserted_by.count` is a count of institutions, never a score. Eight
+#   authorities asserting a gene frequently means it sits on more commercial
+#   panels, not that it is eight times better supported. D12 applies: a rank
+#   derived from it would be a validity call the atlas authored.
+SCHEMA_VERSION: Final = "2.8"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

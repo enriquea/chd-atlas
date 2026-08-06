@@ -33,10 +33,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Final
 
 import polars as pl
 
+from chd_atlas.build.emit import Json
 from chd_atlas.vocab import (
+    CLASSIFICATION_RANK,
     CLINGEN_CLASSIFICATIONS,
     CONTESTED,
     GENCC_CLASSIFICATIONS,
@@ -301,38 +304,227 @@ def gene_validity(
     return result
 
 
+# The weakest ClinGen rung that admits a gene on ClinGen's word alone.
+#
+# **A rank floor, never a set of admissible rungs.** `DISPUTED` (rank 2),
+# `REFUTED` (1) and `NO_KNOWN_ASSOCIATION` (0) sit below `LIMITED` (3), so they
+# are excluded by construction rather than by an enumeration a later edit can
+# forget. ClinGen treats contested as a *separate axis* rather than a weaker
+# rung, and a linear rank is exactly where that distinction is easy to lose:
+# lowering this one step admits 24 genes an expert panel actively disputes and
+# publishes them as supported.
+PUBLICATION_FLOOR: Final = Classification.LIMITED
+
+# How many GenCC submitters must independently assert a gene for it to be
+# admitted without ClinGen. Two, not one: a single submitter is one laboratory's
+# panel-inclusion decision, and `Supportive` maps to `None` so an ungraded
+# assertion counts for nobody.
+SUBMITTER_AGREEMENT: Final = 2
+
+
+def _admitting_clingen(entry: GeneValidity) -> ValidityRecord | None:
+    """The strongest ClinGen record at or above the floor, or None."""
+    qualifying = [
+        record
+        for record in entry.records
+        if record.source is ValiditySource.CLINGEN
+        and record.classification is not None
+        and CLASSIFICATION_RANK[record.classification] >= CLASSIFICATION_RANK[PUBLICATION_FLOOR]
+    ]
+    if not qualifying:
+        return None
+    # `records` is already sorted; `max` is stable, so ties resolve to the
+    # earliest in that order and two builds agree. The `or` is unreachable --
+    # every member of `qualifying` was filtered on a non-None classification --
+    # and exists because the narrowing does not survive into the lambda.
+    return max(
+        qualifying,
+        key=lambda record: CLASSIFICATION_RANK[record.classification or PUBLICATION_FLOOR],
+    )
+
+
+def agreeing_submitters(entry: GeneValidity) -> tuple[str, ...]:
+    """GenCC submitters asserting this gene at or above the floor, sorted.
+
+    **ClinGen's own GenCC submissions are excluded, and that exclusion is the
+    point.** GenCC aggregates rather than adjudicates, and measured 2026-08-06
+    its largest in-scope submitter is ClinGen itself -- 111 rows over 109 genes.
+    Counting those would let one body vote twice: once as the source this gate
+    already trusts alone, and again as corroboration of itself. That is the same
+    error `build/concordance.py::cohort_families` exists to prevent for studies
+    sharing a sample collection, one layer up.
+
+    Sorted, because it reaches published JSON and `encode_json`'s `sort_keys`
+    orders dict keys only.
+    """
+    return tuple(
+        sorted(
+            {
+                record.submitter
+                for record in entry.records
+                if record.source is ValiditySource.GENCC
+                and record.submitter
+                and record.submitter != "ClinGen"
+                and record.classification is not None
+                and CLASSIFICATION_RANK[record.classification]
+                >= CLASSIFICATION_RANK[PUBLICATION_FLOOR]
+            }
+        )
+    )
+
+
+def _clingen_contests(entry: GeneValidity) -> bool:
+    """True iff a ClinGen expert panel disputed or refuted this gene in scope.
+
+    **A ClinGen contested record vetoes admission on GenCC agreement**, and
+    without this the gate is asymmetric in the one direction that matters:
+    ClinGen is trusted to admit a gene alone, so it must also be trusted to
+    refuse one. Otherwise two submitters overrule a chartered panel, and the
+    atlas publishes a gene the panel looked at and pushed back on.
+
+    LEFTY2 is the case. Measured 2026-08-06: ClinGen's Congenital Heart Disease
+    GCEP records it `Disputed`; G2P and PanelApp Australia both record `Limited`.
+    Without this veto it is admitted on their agreement -- and before the
+    headline became panel-only it published as `limited`, burying the dispute
+    entirely.
+
+    `NO_KNOWN_ASSOCIATION` is deliberately NOT a veto. It belongs to neither side
+    of `has_conflicting_evidence`'s test (spec D34) because a stated absence of
+    association is not a contest, and treating it as one here would give a
+    single "we found nothing" submission the force of a refutation.
+    """
+    return any(
+        record.source is ValiditySource.CLINGEN
+        and record.classification is not None
+        and record.classification in CONTESTED
+        for record in entry.records
+    )
+
+
 def published_genes(validity: Mapping[str, GeneValidity]) -> set[str]:
     """The genes the atlas publishes a page for. Design decision D21.
 
-    A gene qualifies when some mirrored record carries `source == CLINGEN` and
-    `classification == DEFINITIVE`. Every record reaching here already names a
-    disease listed in `curation/chd_scope.yaml` -- `gene_validity` filters on
-    that -- so this does not re-check scope.
+    A gene qualifies on **either** of two independent warrants:
 
-    **Not** "headline confidence is definitive and validity state is expert
-    curated." Measured on the mirrors as committed (2026-08-04), the two rules
-    select the identical 23 genes, which is precisely why the difference has to
-    be written down. `state` records only that ClinGen has *a* row for the gene,
-    never what that row says, so the second rule admits a gene ClinGen graded
-    `Limited` on the strength of a GenCC submitter grading it `Definitive`. No
-    such gene is in scope today. `test_build_validity.py` constructs one.
+    - a ClinGen record at or above `PUBLICATION_FLOOR`, or
+    - `SUBMITTER_AGREEMENT` distinct GenCC submitters, ClinGen excluded.
 
-    GenCC is excluded because it aggregates rather than adjudicates and says so
-    itself. The five in-scope genes it alone calls definitive -- ELN, GDF1,
-    MMP21, PKD1L1, TBX1 -- have no ClinGen curation for any disease at all
-    except ELN, curated only for cutis laxa, so this is not a gap in the scope
-    file that a curator could close. GDF1 is the case that settles it: its
+    Every record reaching here already names a disease in
+    `curation/chd_scope.yaml` -- `gene_validity` filters on that -- so this does
+    not re-check scope. Which authority admitted a gene is published per gene by
+    `admission_provenance` below; the gate is not a claim a reader has to take
+    on trust.
+
+    **The rule widened on 2026-08-06**, from ClinGen `Definitive` alone, on the
+    owner's decision that the atlas should not be the authority on which genes
+    are CHD genes and should admit on agreement with external sources. Measured
+    against the committed mirrors: 23 genes -> 93, and burden rows reaching a
+    page 290 -> 916. Only ClinGen and GenCC participate, because they are the
+    only two sources whose terms permit republishing (CC0-1.0 both; see issues
+    #31 and #32 for the others).
+
+    **ClinGen alone suffices and GenCC alone does not**, and the asymmetry is
+    deliberate: ClinGen is the only source here with chartered expert panels and
+    published SOPs, while GenCC harmonises submissions rather than adjudicating
+    between them. GDF1 is the case that fixes the shape of the problem -- its
     in-scope submissions run from G2P's `Definitive` to Illumina's `No Known
     Disease Relationship`, and `has_conflicting_evidence` reports `False` for
-    that pair because `no_known_association` belongs to neither side of its test
-    (spec D34). A 28-gene gate would publish it as settled.
+    that pair because `no_known_association` takes neither side (spec D34). A
+    one-submitter gate would publish that as settled; two submitters is the
+    weakest bar that requires a second body to agree.
+
+    Requiring one of those two to be non-commercial was measured and rejected:
+    it drops **TBX1** -- the 22q11.2 gene, which ClinGen has no in-scope record
+    for at all -- along with CFC1, FLNA and SEMA3E. Publishing the provenance is
+    what makes the looser bar safe: a reader sees that TBX1 rests on two
+    clinical laboratories and judges it themselves.
+
+    **Not** "headline confidence clears the floor and validity state is expert
+    curated." `state` records only that ClinGen has *a* row for the gene, never
+    what that row says, so that rule admits a gene ClinGen graded below the floor
+    on the strength of a submitter grading it higher. `test_build_validity.py`
+    constructs one.
     """
     return {
         gene
         for gene, entry in validity.items()
-        if any(
-            record.source is ValiditySource.CLINGEN
-            and record.classification is Classification.DEFINITIVE
-            for record in entry.records
-        )
+        if _admitting_clingen(entry) is not None
+        or (len(agreeing_submitters(entry)) >= SUBMITTER_AGREEMENT and not _clingen_contests(entry))
+    }
+
+
+def admission_provenance(entry: GeneValidity) -> dict[str, Json]:
+    """Why this gene is published, as a payload. `admitted_by` + `asserted_by`.
+
+    **The gate is a claim about external authorities, and this is what lets a
+    consumer check it rather than trust it.** `pages._SCOPE_RULE` tells every
+    reader that no disease is in scope on the atlas's own judgement; without
+    this field the same reader has no way to see which authority actually
+    admitted the gene in front of them.
+
+    `admitted_by` is the single warrant that cleared the gate:
+
+    - `{"authority": "clingen", "classification": ..., "disease": ...,
+       "disease_label": ..., "panel": ...}` where a ClinGen record at or above
+      `PUBLICATION_FLOOR` exists -- the strongest one, since a gene may carry
+      several.
+    - `{"authority": "gencc_agreement", "submitters": [...]}` otherwise.
+
+    An object rather than an array because **exactly one warrant admits a
+    gene**, and ClinGen is checked first: a gene with both is published on
+    ClinGen's word, and saying so is the difference between "an expert panel
+    graded this" and "two laboratories put it on a panel".
+
+    `asserted_by` is every distinct institution asserting the gene in scope,
+    **deduped by institution**, with a `count`. Measured 2026-08-06 over the 23
+    genes published before the widening: counting `gcep` and `submitter` values
+    naively gives 132, deduped gives 109 -- an overstatement of exactly one per
+    gene, because ClinGen submits to GenCC under its own name. A consumer
+    computing agreement from `validity.records` gets that wrong on every gene,
+    which is the reason this is derived here rather than left to them.
+
+    **`count` is not a score, and must never be rendered as one.** Eight
+    authorities asserting a gene is not evidence it is eight times better
+    supported than one with a single warrant; it frequently means the gene sits
+    on more commercial test panels. D12 applies: the atlas publishes no validity
+    call of its own, and a rank derived from this count would be exactly that.
+
+    Every key is present on every gene, and `submitters` is `[]` rather than
+    absent where ClinGen admitted the gene -- the rule `burden_payload` and
+    `gene_concordance` already follow, because an object whose shape varies is a
+    trap for a consumer reading a field off one gene and expecting it on the
+    next.
+    """
+    clingen = _admitting_clingen(entry)
+    if clingen is not None:
+        admitted: dict[str, Json] = {
+            "authority": "clingen",
+            "classification": clingen.classification.value if clingen.classification else None,
+            "disease": clingen.disease,
+            "disease_label": clingen.disease_label,
+            "panel": clingen.gcep,
+            "submitters": [],
+        }
+    else:
+        admitted = {
+            "authority": "gencc_agreement",
+            "classification": None,
+            "disease": None,
+            "disease_label": None,
+            "panel": None,
+            "submitters": list(agreeing_submitters(entry)),
+        }
+
+    # One name per institution. A ClinGen expert panel is ClinGen; its GenCC
+    # submissions are the same body and must not count again.
+    institutions = {
+        record.submitter
+        for record in entry.records
+        if record.source is ValiditySource.GENCC and record.submitter
+    }
+    if any(record.source is ValiditySource.CLINGEN for record in entry.records):
+        institutions.add("ClinGen")
+    return {
+        "admitted_by": admitted,
+        "asserted_by": {"count": len(institutions), "institutions": sorted(institutions)},
     }

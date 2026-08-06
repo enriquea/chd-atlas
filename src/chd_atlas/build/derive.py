@@ -31,6 +31,7 @@ from chd_atlas.vocab import (
     Classification,
     EvidenceClass,
     LesionGroup,
+    ValiditySource,
     ValidityState,
     has_conflicting_evidence,
     strongest,
@@ -87,7 +88,7 @@ class GeneFacts:
     assertion_count: int
     # Whether the atlas has curated evidence of its own for this gene, as
     # opposed to republishing an expert panel's classification. True of 1 of the
-    # 23 genes published today. See `vocab.AtlasCuration`.
+    # 92 genes published today. See `vocab.AtlasCuration`.
     atlas_curation: AtlasCuration
     # Every functional record about the gene, not only those an assertion cites.
     # `referential.py` requires a *cited* record to be about the asserting gene
@@ -108,7 +109,9 @@ def gene_facts(
 
     Keyed on HGNC id. `published` is `build.validity.published_genes()`'s return
     -- design decision D21: the atlas publishes a gene when a ClinGen expert
-    panel classifies it definitive for an in-scope disease.
+    panel classifies it `Limited` or better for an in-scope disease, or when two
+    or more GenCC submitters independently assert it and no ClinGen panel
+    contests it.
 
     That population is neither the asserted genes nor the registry. This
     function used to key on `{assertion.gene for assertion in corpus.assertions}`
@@ -117,13 +120,15 @@ def gene_facts(
     every field below that carries a confidence -- `headline_confidence`,
     `validity_state`, `has_conflicting_evidence`, `has_source_discordance` and
     `confidence_by_lesion_group` -- comes from `validity`, and none of them from
-    a curated assertion. A gene an expert panel calls definitive has exactly a
-    confidence to display, and 22 of the 23 genes published today have no
+    a curated assertion. A gene an expert panel has classified has exactly a
+    confidence to display, and 91 of the 92 genes published today have no
     assertion at all.
 
     An asserted gene outside `published` gets no facts, so no bundle and no
     page. That is D37: a curator's assertion does not admit a gene to the
-    definitive set, and candidate genes belong in their own labelled section.
+    published set, and candidate genes belong in their own labelled section. The
+    2026-08-06 widening does not soften this -- it moves the authority from one
+    external source to two, never to the atlas.
 
     `validity` is `build.validity.gene_validity()`'s return. A gene absent from
     it gets `uncurated()`, which cannot happen for a member of `published` --
@@ -192,11 +197,35 @@ def gene_facts(
         # disagree about the order of the same set of groups.
         ordered_groups = sorted(groups, key=lambda group: group.value)
 
-        # `strongest` raises on an empty sequence, so it is only ever called
-        # behind `if mirrored`. Empty `mirrored` publishes `None`, matching
-        # `uncurated()` and a mirror that curated the gene under a term that
-        # maps to no rung at all (GenCC's `Supportive`, mapped to `None`).
-        headline = strongest(mirrored) if mirrored else None
+        # **The headline is the ADMITTING EXPERT PANEL's grade, or nothing.**
+        # It was `strongest()` over every mirrored classification -- ClinGen's
+        # and GenCC's together -- until 2026-08-06. That was harmless while the
+        # gate required a ClinGen `Definitive`, because a chip could not appear
+        # without a chartered panel behind it. Widening the gate to admit genes
+        # on GenCC agreement broke that: measured on the widened corpus, **24 of
+        # 93 genes** would carry a chip stronger than any ClinGen grade, and
+        # five -- ELN, GDF1, MMP21, PKD1L1, TBX1 -- would show a green
+        # `definitive` chip with no ClinGen record at all.
+        #
+        # So a gene no expert panel graded publishes `None`, exactly as an
+        # uncurated gene does and for the same stated reason: coercing it to a
+        # string would invent a confidence nobody stated. What the submitters
+        # said is not lost -- it is in `validity.records` and in
+        # `admitted_by.submitters` -- it is simply not the atlas's headline,
+        # because there is no single authority to headline. GDF1 is why: its
+        # in-scope submissions run from G2P `Definitive` to Illumina `No Known
+        # Disease Relationship`, and a max over submitters publishes that as
+        # settled.
+        #
+        # `validity_state` sits beside this and says `submitter_curated`, which
+        # is what distinguishes "no panel has graded this" from "nobody has
+        # assessed this gene at all".
+        panel_graded = [
+            record.classification
+            for record in gene_validity.records
+            if record.source is ValiditySource.CLINGEN and record.classification is not None
+        ]
+        headline = strongest(panel_graded) if panel_graded else None
         contested = has_conflicting_evidence(mirrored)
 
         facts[gene] = GeneFacts(

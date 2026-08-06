@@ -418,26 +418,37 @@ def test_a_contested_gene_is_never_chipped_as_settled(
 ) -> None:
     """The green pill tracks the classification, not merely the fact of one.
 
-    `chip-definitive` is the only chip class the stylesheet fills with the
-    success colour, so keying it on `headline_confidence is not None` would
-    paint a refuted gene green while its own label read "refuted" -- the
-    display failure `vocab.strongest` is documented against.
+        `chip-definitive` is the top of the stylesheet's grade ramp and the only
+        class filled with the full success colour, so keying it on
+        `headline_confidence is not None` would paint a refuted gene green while its
+        own label read "refuted" -- the display failure `vocab.strongest` is
+        documented against. Since 2026-08-06 the class comes from
+        `render.GRADE_CHIP_KIND`, keyed on the grade's own value, and `refuted` maps
+        to `warn`: the assertion below is that the rail's chip is the caution colour,
+        not merely that it is not green.
 
-    Parametrised over the two warning flags in opposite states because they are
-    separate axes: `has_conflicting_evidence` is any mixed evidence,
-    `has_source_discordance` is specifically ClinGen and GenCC disagreeing with
-    each other. Each case is the unique killer of dropping one of the two chips
-    -- measured 2026-08-04 by replacing each `if` with `if False:` in `_rail`:
-    dropping "sources disagree" failed only the second case, dropping
-    "conflicting evidence" only the first, and nothing else in this file
-    noticed either. The `hidden` assertion is what catches the two flags being
-    read into the wrong chip.
+        **The slice is the rail, not the page.** `render.grade_legend` renders one
+        chip of every class -- including `chip-definitive` -- inside a `<details>` on
+        every page, so a page-wide `not in` can never fail again and passed only
+        because the legend did not exist when it was written. CLAUDE.md section 4.19
+        is this exact shape: a page-wide assertion is not a section assertion.
 
-    Neither flag is set on any of the 23 genes published today, and no gene
-    published today carries a headline other than `definitive` (measured
-    2026-08-04 on a real build's `genes/index.json`), so every branch this test
-    exercises is latent -- reachable only from a fixture until the mirrors
-    change, and invisible to any test that renders the committed corpus.
+        Parametrised over the two warning flags in opposite states because they are
+        separate axes: `has_conflicting_evidence` is any mixed evidence,
+        `has_source_discordance` is specifically ClinGen and GenCC disagreeing with
+        each other. Each case is the unique killer of dropping one of the two chips
+        -- measured 2026-08-04 by replacing each `if` with `if False:` in `_rail`:
+        dropping "sources disagree" failed only the second case, dropping
+        "conflicting evidence" only the first, and nothing else in this file
+        noticed either. The `hidden` assertion is what catches the two flags being
+        read into the wrong chip.
+
+    Neither flag is set on any of the 92 genes published today (measured
+        2026-08-06 on a real build's `genes/index.json`), and no published gene
+        carries a contested headline -- the floor excludes those rungs and the
+        ClinGen veto excludes the rest -- so every branch this test exercises is
+        latent, reachable only from a fixture until the mirrors change and invisible
+        to any test that renders the committed corpus.
     """
     facts = {
         GATA4: replace(
@@ -460,13 +471,15 @@ def test_a_contested_gene_is_never_chipped_as_settled(
     )
 
     page = _page(tmp_path, "HGNC_4173.html")
+    rail = re.search(r'<aside class="rail">.*?</aside>', page, re.S)
+    assert rail is not None, "the gene page no longer renders a rail"
     # The rendered chip, not the bare class name: `.chip-definitive` is also a
     # rule in the stylesheet every page inlines, so a substring check on the
     # class alone can never fail.
-    assert 'class="chip chip-definitive"' not in page
-    assert "refuted" in page
-    assert shown in page
-    assert hidden not in page
+    assert 'class="chip chip-definitive"' not in rail.group()
+    assert 'class="chip chip-warn">refuted</span>' in rail.group()
+    assert shown in rail.group()
+    assert hidden not in rail.group()
 
 
 def test_every_gene_in_the_facts_gets_exactly_one_page(
@@ -664,6 +677,11 @@ def test_no_browse_row_states_a_bare_definitive_without_the_disease_it_is_for(
 ) -> None:
     """`KMT2D | definitive` on a site called "CHD Atlas" is a wrong claim.
 
+    The column is headed `graded for` since 2026-08-06, not `definitive for`: the
+    widened gate publishes 43 `limited`, 9 `moderate` and 1 `strong` gene beside
+    the 23 `definitive` ones, and a column head naming one rung above a cell
+    naming another is a header that contradicts its own data.
+
     ClinGen's assertion is `KMT2D -- Definitive for Kabuki syndrome 1`, made by
     the SCID-CID GCEP. Measured 2026-08-04 against the committed mirrors, the
     browse page rendered 23 rows all reading `definitive`, with no disease column
@@ -692,7 +710,7 @@ def test_no_browse_row_states_a_bare_definitive_without_the_disease_it_is_for(
     )
 
     page = _page(tmp_path, "index.html")
-    assert '<th scope="col">definitive for</th>' in page
+    assert '<th scope="col">graded for</th>' in page
     rows = re.findall(r"<tr(?: data-[^>]*)?><td>(.*?)</tr>", page)
     assert len(rows) == 2
     expected = {TBX5: "Holt-Oram syndrome", GATA4: "structural congenital heart disease"}
@@ -718,7 +736,7 @@ def test_a_gene_definitive_for_two_in_scope_diseases_names_both_in_a_fixed_order
 
     Two properties, and they are separate. That **both** labels are named --
     dropping one would publish half the reason the gene is on the site. And that
-    they come back in sorted order -- `_definitive_diseases` de-duplicates through
+    they come back in sorted order -- `_graded_diseases` de-duplicates through
     a `set`, whose iteration order for strings varies with `PYTHONHASHSEED`, so
     an unsorted return makes `genes/index.html` and its manifest checksum differ
     between two builds of one commit. Asserted against a literal in reverse
@@ -777,12 +795,13 @@ def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
     facts_two: dict[str, GeneFacts],
     validity_two: dict[str, GeneValidity],
 ) -> None:
-    """No page on the site said what the 23-gene set is. `docs/data-api.md` did.
+    """No page on the site said what the published set is. `docs/data-api.md` did.
 
     A reader of the HTML never sees that document, so the browse page and every
     gene page now carry the rule themselves: a gene is published when a ClinGen
-    expert panel classifies it Definitive **for a disease in this atlas's CHD
-    scope**, which is not the same as definitive for congenital heart disease.
+    expert panel classifies it Limited or better for a disease an external
+    authority treats as CHD, or when two GenCC submitters agree and no panel
+    disputes it. Neither is the same as definitive for congenital heart disease.
 
     Both page kinds are checked from one constant, `pages._SCOPE_RULE`, because
     the rule is one editorial claim and two copies of it are two things that
@@ -829,6 +848,13 @@ def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
         assert "an external authority treats as congenital heart disease" in page
         assert "No disease is in scope on this atlas's own judgement" in page
         assert "not the same as definitive for congenital heart disease" in page
+        # **Both warrants, or the sentence describes a gate the site does not
+        # have.** Stating only the ClinGen half would tell a reader that every
+        # gene here was graded by an expert panel; 16 of the 92 were not, and
+        # they are the ones whose provenance most needs stating.
+        assert "Limited or better" in page
+        assert "two or more Gene Curation Coalition submitters" in page
+        assert "no ClinGen panel disputes it" in page
 
 
 def test_a_gene_page_names_the_disease_beside_the_chip_that_says_definitive(
@@ -2198,3 +2224,199 @@ def test_the_browse_page_refuses_a_gene_it_has_no_concordance_for(
             burden_counts={},
             concordance={GATA4: {"tested": 0, "enriched": 0, "corrected": 0, "families": []}},
         )
+
+
+def _limited(gene: str) -> tuple[GeneFacts, GeneValidity]:
+    """A gene whose only ClinGen record grades it `Limited`.
+
+    **Not `Definitive`, and that is the whole point of the fixture.** Every other
+    gene fixture in this file is graded `Definitive`, so "the headline's grade"
+    and "`DEFINITIVE`" are the same value and a lookup keyed on the wrong one is
+    invisible -- CLAUDE.md section 4.30, third recurrence. Measured 2026-08-06:
+    three mutants survived the whole suite before this existed, including
+    `_graded_diseases` keyed back on `DEFINITIVE` and the rail label pinned to
+    the literal `definitive for`.
+
+    `confidence_by_lesion_group` is emptied because `_facts` derives it from
+    `groups`, which is empty here; leaving `_facts`' default would publish a map
+    keyed on lesion groups the gene does not declare.
+    """
+    limited = ValidityRecord(
+        source=ValiditySource.CLINGEN,
+        classification=Classification.LIMITED,
+        classification_term="Limited",
+        disease="MONDO:0007732",
+        disease_label="atrial septal defect",
+        moi="AD",
+        sop="SOP11",
+        gcep="Congenital Heart Disease Gene Curation Expert Panel",
+        report_url=None,
+    )
+    return (
+        replace(
+            _facts(gene, AtlasCuration.NOT_YET_CURATED),
+            headline_confidence=Classification.LIMITED,
+            confidence_by_lesion_group={},
+        ),
+        GeneValidity(
+            records=(limited,),
+            state=ValidityState.EXPERT_CURATED,
+            has_source_discordance=False,
+        ),
+    )
+
+
+def _submitter_admitted(gene: str) -> tuple[GeneFacts, GeneValidity]:
+    """A gene no panel graded, admitted by two GenCC submitters agreeing."""
+    submissions = tuple(
+        ValidityRecord(
+            source=ValiditySource.GENCC,
+            classification=Classification.LIMITED,
+            classification_term="Limited",
+            disease="MONDO:0007732",
+            disease_label="atrial septal defect",
+            moi="Autosomal dominant",
+            report_url=None,
+            submitter=submitter,
+        )
+        for submitter in ("Ambry Genetics", "G2P")
+    )
+    return (
+        replace(
+            _facts(gene, AtlasCuration.NOT_YET_CURATED),
+            headline_confidence=None,
+            validity_state=ValidityState.SUBMITTER_CURATED,
+            confidence_by_lesion_group={},
+        ),
+        GeneValidity(
+            records=submissions,
+            state=ValidityState.SUBMITTER_CURATED,
+            has_source_discordance=False,
+        ),
+    )
+
+
+def test_the_rail_names_the_grade_the_panel_gave_and_the_disease_it_gave_it_for(
+    tmp_path: Path,
+) -> None:
+    """One claim in two halves, and before 2026-08-06 they could disagree.
+
+    The rail's first row read `definitive for` unconditionally while
+    `_graded_diseases` returned only `DEFINITIVE` records, so a `limited` gene
+    rendered `definitive for | —`: a label naming a grade the panel did not give,
+    over an em dash where the disease belonged. 69 of the 92 genes published
+    today are in that position.
+
+    Both halves now come from `fact.headline_confidence`, so this asserts the
+    label, the disease and the chip class **as one string in one element**. A
+    page-wide check on each separately would pass with the lookup keyed back on
+    `DEFINITIVE`, because `render.grade_legend` puts the word "definitive" on
+    every page (CLAUDE.md section 4.19).
+    """
+    fact, validity = _limited(TBX5)
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        {TBX5: fact},
+        emitter,
+        symbols={TBX5: "TBX5"},
+        validity={TBX5: validity},
+        assertions={},
+        publications={},
+        burden={},
+        cohorts={},
+    )
+
+    page = _page(tmp_path, "HGNC_11604.html")
+    rail = re.search(r'<aside class="rail">.*?</aside>', page, re.S)
+    assert rail is not None
+    rail_html = rail.group()
+
+    assert 'class="chip chip-limited">limited</span>' in rail_html
+    assert "<dt>limited for</dt><dd>atrial septal defect</dd>" in rail_html
+    assert "definitive for" not in rail_html
+    assert _EM_DASH not in rail_html.split("<dl>")[1].split("</dd>")[0]
+
+
+def test_a_gene_no_panel_graded_names_the_submitters_that_admitted_it(
+    tmp_path: Path,
+) -> None:
+    """The other warrant, on the page. 16 of the 92 genes published are here.
+
+    `headline_confidence` is `null`, so there is no grade to head the row with
+    and no disease a panel named. The row becomes `admitted by` and carries the
+    submitters, which is the only place on the page a reader can see *why* the
+    gene is here at all -- and the chip must read `not classified` in the
+    outline style rather than borrowing any rung of the grade ramp, because "no
+    panel looked" is not "graded weakest".
+    """
+    fact, validity = _submitter_admitted(GATA4)
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        {GATA4: fact},
+        emitter,
+        symbols={GATA4: "GATA4"},
+        validity={GATA4: validity},
+        assertions={},
+        publications={},
+        burden={},
+        cohorts={},
+    )
+
+    page = _page(tmp_path, "HGNC_4173.html")
+    rail = re.search(r'<aside class="rail">.*?</aside>', page, re.S)
+    assert rail is not None
+    rail_html = rail.group()
+
+    assert 'class="chip chip-ungraded">not classified</span>' in rail_html
+    assert "<dt>admitted by</dt><dd>Ambry Genetics; G2P</dd>" in rail_html
+    for rung in ("definitive", "strong", "moderate", "limited"):
+        assert f"chip-{rung}" not in rail_html
+
+
+def test_both_page_kinds_gloss_every_grade_they_can_render(tmp_path: Path) -> None:
+    """A colour ramp with no key is a ranking the reader has to guess at.
+
+    Until 2026-08-06 the site needed no key: every published gene was
+    `definitive` and the only chip was green. It now renders four rungs and an
+    ungraded state, and `limited` -- a panel saying the case is not yet made --
+    is the plurality at 43 of 92.
+
+    Asserted on **both** page kinds, because a reader arriving from a search
+    engine lands on the gene page and never sees the browse page. That is
+    CLAUDE.md section 4.31 exactly: the browse page carried the evidence legend
+    and the gene page did not, and the gene page is where the omission did the
+    damage.
+
+    Each rung's gloss is checked by a distinctive phrase rather than in full, so
+    this fails when a rung stops being explained and not when a comma moves.
+    """
+    fact, validity = _limited(TBX5)
+    emitter = Emitter(root=tmp_path)
+    build_gene_index_page(
+        {TBX5: fact}, emitter, symbols={TBX5: "TBX5"}, validity={TBX5: validity}, burden_counts={}
+    )
+    build_gene_pages(
+        {TBX5: fact},
+        emitter,
+        symbols={TBX5: "TBX5"},
+        validity={TBX5: validity},
+        assertions={},
+        publications={},
+        burden={},
+        cohorts={},
+    )
+
+    phrases = (
+        "upheld over time",
+        "without the years of replication",
+        "several unrelated probands",
+        "not yet made",
+        "found no evidence of a relationship",
+        "two or more Gene Curation Coalition submitters independently assert it",
+        "disputed or refuted is not published here",
+    )
+    for name in ("index.html", "HGNC_11604.html"):
+        page = _page(tmp_path, name)
+        assert "What these classifications mean" in page, f"{name} carries no grade key"
+        for phrase in phrases:
+            assert phrase in page, f"{name} does not gloss: {phrase}"

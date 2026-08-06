@@ -29,15 +29,15 @@ one derivation is what stops the page and the payload disagreeing.
 
 - **Genes published** is `len(published)`, D21's population: one gene per member
   of the set `build_genes` keys `genes/index.json` on, each of them a gene a
-  ClinGen expert panel calls definitive for an in-scope disease. 23 in the
-  committed corpus. Counted from the *same object* `build_genes` was handed,
+  external authority already treats as a congenital heart disease gene. 92 in
+  the committed corpus. Counted from the *same object* `build_genes` was handed,
   not re-derived here, so the front page and the browse payload cannot state
   different numbers.
 - **Genes the atlas has curated** is the distinct genes named by
   `corpus.assertions` — the genes carrying evidence authored here, 1 in the
   committed corpus. It is derived once and shared with the sentence that names
   them, so the figure and the list cannot disagree. Both rows are shown because
-  22 of the 23 published genes carry no assertion at all: a single "genes"
+  91 of the 92 published genes carry no assertion at all: a single "genes"
   figure would read as coverage this site does not have.
 - `len(validity)` is neither of those — every gene either mirror curates, 154 in
   the committed corpus. It is kept, but under "Where this data comes from" and
@@ -93,23 +93,29 @@ _REPOSITORY_URL = "https://github.com/enriquea/chd-atlas"
 
 # A caption that told a reader to wait for something that had already happened.
 #
-# It read "(browsable once ClinGen grades it definitive)", and the gate is not
-# "definitive" -- it is definitive *for one of the diseases this atlas calls
-# CHD*. `validity.published_genes` requires a ClinGen `Definitive` record, and
-# `gene_validity` has already dropped every record naming an out-of-scope
-# disease before that test runs. Measured 2026-08-04 against the committed
-# mirrors: of the 154 genes counted by this row, **20** already carry a ClinGen
-# `Definitive` grade and are still not browsable, because the grade is for a
-# disease outside CHD scope -- ACTC1, ACVR1, ANKRD11, BMPR1A, BMPR2, COL1A2,
-# ELN, FLNA, FOXP1, KDR, MED13L, MYBPC3, MYH11, MYH7, NOTCH1, PDGFRA, POPDC1,
-# RECQL4, SCN5A, SMAD6. ELN was graded Definitive in 2024, for cutis laxa.
+# It read "(browsable once ClinGen grades it definitive)", and the gate has
+# never been a bare grade -- it is a grade *for one of the diseases this atlas
+# calls CHD*, and `gene_validity` has already dropped every record naming an
+# out-of-scope disease before the test runs. Measured 2026-08-06 against the
+# committed mirrors: of the 154 genes counted by this row, 62 are not browsable,
+# and **9** of those carry a ClinGen `Definitive` grade for some disease and
+# still are not, because the grade is for a disease outside CHD scope --
+# ANKRD11, BMPR1A, COL1A2, FOXP1, KDR, NOTCH1, POPDC1, RECQL4, SCN5A.
+#
+# The 2026-08-06 widening moved the rest of that list rather than this sentence:
+# ACTC1, ACVR1, BMPR2, ELN, FLNA, MED13L, MYBPC3, MYH11, MYH7, PDGFRA and SMAD6
+# were on it on 2026-08-04 and are browsable now, admitted on an in-scope
+# ClinGen record at or above `Limited` or on two GenCC submitters agreeing.
+# The caption has to name the gate it actually has, which is why it is a
+# constant read by one template rather than a sentence repeated in two.
 #
 # A constant rather than a literal in the template because the label must render
 # on one line for the row to read as one label, and the sentence no longer fits
 # in 100 characters of source.
 _MIRRORED_ROW_LABEL = (
     "Genes with mirrored validity in CHD scope "
-    "(browsable once ClinGen grades it definitive for a disease in that scope)"
+    "(browsable once ClinGen grades it Limited or better for a disease in that "
+    "scope, or two GenCC submitters agree)"
 )
 
 # The same four glyphs the browse page's strip uses, from the same keyed
@@ -193,7 +199,7 @@ def _render(
     assertion_count = len(corpus.assertions)
     # The very set `gene_facts` keys `genes/index.json` on, not a recomputation
     # of it. Deliberately not `len(validity)`, which counts every gene either
-    # mirror curates whether or not a panel calls it definitive — that count
+    # mirror curates whether or not an authority admits it — that count
     # belongs to "Where this data comes from", not to what this build publishes.
     published_gene_count = len(published)
     mirrored_gene_count = len(validity)
@@ -214,8 +220,9 @@ def _render(
     #
     # The ordering was therefore never the defect, and saying it was made the
     # weaker argument. The defect was that **no burden figure appeared at all**:
-    # 290 statistics over 23 genes from 3 independent datasets, and the census
-    # named none of them. This order exists so the three new figures sit with
+    # 290 statistics over 23 genes from 3 independent datasets (the corpus as
+    # it stood that day; 915 over 91 genes since the gate widened), and the
+    # census named none of them. This order exists so the three new figures sit with
     # the population they describe rather than below four curation counts.
     stats = "".join(
         (

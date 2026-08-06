@@ -233,8 +233,18 @@ def test_confidence_by_lesion_group_applies_the_mirrored_headline_to_every_decla
     So the per-group breakdown cannot show finer-grained confidence than the
     gene-wide mirrored answer: every lesion group a curated assertion names for
     the gene — three of them here, spread across two assertions — publishes the
-    *same* `strongest()` of the gene's mirrored classifications. Nothing about
-    any one assertion's own `classification` field enters this at all.
+    *same* headline. Nothing about any one assertion's own `classification` field
+    enters this at all.
+
+    **The fixture also pins which records the headline is taken over, and that
+    is what it measures since 2026-08-06.** ClinGen grades this gene `moderate`
+    and a GenCC submitter grades it `definitive`, so a `strongest()` over every
+    mirrored record publishes `definitive` and the panel-only rule publishes
+    `moderate`. The two answers differ here by construction — before the gate
+    widened they could not, because every published gene was ClinGen
+    `definitive` and a max over a superset returned the same value either way.
+    That is the degeneracy CLAUDE.md §4.30 records: two figures equal in the
+    corpus are one figure to every test.
     """
     corpus = _corpus(
         assertions=(
@@ -258,10 +268,11 @@ def test_confidence_by_lesion_group_applies_the_mirrored_headline_to_every_decla
     facts = gene_facts(corpus, validity, published={"HGNC:11604"})
 
     assert facts["HGNC:11604"].confidence_by_lesion_group == {
-        LesionGroup.AVSD: Classification.DEFINITIVE,
-        LesionGroup.CONOTRUNCAL: Classification.DEFINITIVE,
-        LesionGroup.SEPTAL: Classification.DEFINITIVE,
+        LesionGroup.AVSD: Classification.MODERATE,
+        LesionGroup.CONOTRUNCAL: Classification.MODERATE,
+        LesionGroup.SEPTAL: Classification.MODERATE,
     }
+    assert facts["HGNC:11604"].headline_confidence is Classification.MODERATE
 
 
 def test_evidence_is_counted_per_class() -> None:
