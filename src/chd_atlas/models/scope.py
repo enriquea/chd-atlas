@@ -15,11 +15,12 @@ and acquired disease -- so the closure wide enough to catch Holt-Oram stops
 meaning CHD.
 
 Scope is therefore a *selection* among terms external authorities already use --
-never a judgement authored here. Until 2026-08-06 every entry in this file
-carried `admitted_by: Enrique Audain`, which made the atlas the authority on what
-counts as congenital heart disease. It is not one, and the project owner said so
-in as many words: *"I am not a clinician... We should take a reputed source that
-already do this work for us."*
+never a judgement authored here. Until 2026-08-06 every entry in this file named
+the project owner as the admitting authority, which made this atlas the
+authority on what counts as congenital heart disease. It is not one, and the
+owner said so in as many words: *"I am not a clinician... We should take a
+reputed source that already do this work for us."* No individual's name belongs
+in this file.
 
 So `admitted_by` is now a closed vocabulary of **external** authorities and a
 person's name is not representable in it. `attributed_to` names the specific
@@ -53,7 +54,7 @@ class ScopeAuthority(StrEnum):
     """Who treats a disease term as congenital heart disease. Never this atlas.
 
     **A closed vocabulary precisely so a curator's name cannot be entered.** The
-    previous field was free text and held `Enrique Audain` on all 68 terms; an
+    previous field was free text and held one curator's name on all 68 terms; an
     enum makes that unrepresentable rather than discouraged, the same reason
     `PUBLICATION_FLOOR` is a rank floor rather than a set of admissible rungs.
 

@@ -10,6 +10,7 @@ from datetime import date
 from chd_atlas.issues import Severity
 from chd_atlas.models.scope import ScopeEntry
 from chd_atlas.validate.scope import (
+    CHD_EXPERT_PANEL,
     scope_candidates,
     validate_curation_is_in_scope,
     validate_scope_attribution,
@@ -221,15 +222,14 @@ def test_an_attribution_the_mirror_does_not_support_is_reported() -> None:
     a check that reports everything passes this file's negative case too, and
     only the pair distinguishes a working check from a broken one.
     """
-    authorities = {
-        "MONDO:0005453": frozenset({"Congenital Heart Disease Gene Curation Expert Panel"})
-    }
+    panels = {"MONDO:0005453": frozenset({"Congenital Heart Disease Gene Curation Expert Panel"})}
+    submitters = {"MONDO:0005453": frozenset({"Ambry Genetics"})}
     truthful = _entry(id="MONDO:0005453")
     invented = _entry(id="MONDO:0005453", attributed_to="A Panel That Never Curated This")
 
-    assert validate_scope_attribution([truthful], authorities, _LOCATION) == []
+    assert validate_scope_attribution([truthful], panels, submitters, _LOCATION) == []
 
-    issues = validate_scope_attribution([invented], authorities, _LOCATION)
+    issues = validate_scope_attribution([invented], panels, submitters, _LOCATION)
     assert [i.code for i in issues] == ["SCP005"]
     assert issues[0].severity is Severity.ERROR
     assert "A Panel That Never Curated This" in issues[0].message
@@ -247,8 +247,77 @@ def test_an_unreadable_mirror_skips_attribution_rather_than_failing_every_term()
     """
     entry = _entry(id="MONDO:0005453")
 
-    skipped = validate_scope_attribution([entry], None, _LOCATION)
+    skipped = validate_scope_attribution([entry], None, None, _LOCATION)
     assert [(i.code, i.severity) for i in skipped] == [("SCP005", Severity.WARNING)]
 
     # Absent from the mirror entirely: SCP001's business, not this check's.
-    assert validate_scope_attribution([entry], {}, _LOCATION) == []
+    assert validate_scope_attribution([entry], {}, {}, _LOCATION) == []
+
+
+def test_a_commercial_submitters_term_cannot_be_relabelled_as_clingens_chd_panel() -> None:
+    """The forgery the first version of SCP005 accepted, in the same commit that
+    claimed to prevent it.
+
+    `admitted_by` selects WHICH mirror the name must appear in. The original
+    check merged ClinGen expert-panel names and GenCC submitter names into one
+    set and asked only "did some authority use this term" -- so a curator could
+    take a term whose sole warrant is a commercial laboratory's GenCC
+    submission, write `admitted_by: clingen_chd_panel`, leave the laboratory in
+    `attributed_to`, and pass. `_SCOPE_RULE` then tells every reader on 24 pages
+    that a ClinGen expert panel scoped the disease. Found by adversarial review
+    of #30.
+
+    The third case is the narrower half of the same rule: `CLINGEN_CHD_PANEL`
+    asserts the *chartered CHD panel* specifically, so another ClinGen panel
+    claiming that member is also refused -- otherwise the strongest tier in the
+    vocabulary would mean nothing more than "some ClinGen panel".
+    """
+    panels = {
+        "MONDO:0005453": frozenset({CHD_EXPERT_PANEL}),
+        "MONDO:0007732": frozenset({"Hearing Loss Gene Curation Expert Panel"}),
+    }
+    submitters = {"MONDO:0000119": frozenset({"Ambry Genetics"})}
+
+    def check(entry: ScopeEntry) -> list[str]:
+        return [i.code for i in validate_scope_attribution([entry], panels, submitters, _LOCATION)]
+
+    # Honest, all three classes.
+    assert (
+        check(
+            _entry(
+                id="MONDO:0000119", admitted_by="gencc_submitter", attributed_to="Ambry Genetics"
+            )
+        )
+        == []
+    )
+    assert (
+        check(
+            _entry(
+                id="MONDO:0005453", admitted_by="clingen_chd_panel", attributed_to=CHD_EXPERT_PANEL
+            )
+        )
+        == []
+    )
+    assert (
+        check(
+            _entry(
+                id="MONDO:0007732",
+                admitted_by="clingen_expert_panel",
+                attributed_to="Hearing Loss Gene Curation Expert Panel",
+            )
+        )
+        == []
+    )
+
+    # The forgery: a laboratory's term wearing the chartered panel's tier.
+    assert check(
+        _entry(id="MONDO:0000119", admitted_by="clingen_chd_panel", attributed_to="Ambry Genetics")
+    ) == ["SCP005"]
+    # And a real ClinGen panel claiming to be the CHD panel.
+    assert check(
+        _entry(
+            id="MONDO:0007732",
+            admitted_by="clingen_chd_panel",
+            attributed_to="Hearing Loss Gene Curation Expert Panel",
+        )
+    ) == ["SCP005"]

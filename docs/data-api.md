@@ -171,10 +171,14 @@ carries what ranks or filters a row and the path to fetch the rest — and none 
 the evidence itself.
 
 **Which genes are listed.** One row per gene a ClinGen expert panel classifies
-`Definitive` for a disease in this atlas's CHD scope (`curation/chd_scope.yaml`)
-— 23 genes today. That is a mirrored decision, not a curated one: 22 of the 23
-carry no assertion authored here, and `atlas_curation` is the field that says
-which. GenCC is not a route in: it aggregates submissions rather than
+`Definitive` for a disease that an external authority treats as congenital heart
+disease — a ClinGen expert panel, or a submitter to the Gene Curation Coalition
+— 23 genes today. **No disease is in scope on this atlas's own judgement.**
+`curation/chd_scope.yaml` records, for every term, which authority uses it, and
+a validator (`SCP005`) checks that attribution against the mirrors rather than
+taking it on trust. That makes the whole chain a mirrored decision rather than a
+curated one: 22 of the 23 genes carry no assertion authored here, and
+`atlas_curation` is the field that says which. GenCC is not a route in: it aggregates submissions rather than
 adjudicating them, and the five in-scope genes it alone calls definitive
 include one whose submissions run from `Definitive` to `No Known Disease
 Relationship`.

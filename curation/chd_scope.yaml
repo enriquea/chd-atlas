@@ -7,22 +7,35 @@
 # Until 2026-08-06 every entry here named the project owner as the admitting
 # authority, which made this atlas -- and one non-clinician -- the authority on
 # what counts as CHD. It is not one, and no individual should appear in this
-# field. `admitted_by` is now a closed vocabulary of external
-# authorities (`models/scope.py::ScopeAuthority`), so a person's name cannot be
-# entered, and `attributed_to` names the panel or submitter that uses the term.
-# SCP005 checks that claim against the mirrors, so the attribution is measured
-# rather than asserted.
+# field. `admitted_by` is now a closed vocabulary of external authorities
+# (`models/scope.py::ScopeAuthority`), so a person's name cannot be entered, and
+# `attributed_to` names the panel or submitter that uses the term. SCP005 checks
+# both against the mirrors -- the name, and that the authority CLASS matches the
+# mirror the name was found in -- so a commercial laboratory's term cannot be
+# relabelled as a ClinGen panel's.
 #
 # `reason` survives and still says why the term is congenital heart disease. It
 # is a transcription of the cited authority's position, never an argument made
 # here.
 #
-# Commercial clinical laboratories are deliberately NOT used as scoping
-# authorities: they curate for test-panel inclusion, which is a more inclusive
-# question than "is this congenital heart disease". Measured 2026-08-06, nine
-# terms had only commercial attribution available and were dropped; that cost
-# **zero** genes at either the Definitive or the Limited floor, because every
-# affected gene is reachable through another term.
+# Measured 2026-08-06 across these 68 terms: 13 are used by ClinGen's Congenital
+# Heart Disease GCEP, 10 by another ClinGen expert panel, 45 by a GenCC
+# submitter. None is unattributable.
+#
+# NINE TERMS ARE SCOPED ONLY BY A COMMERCIAL CLINICAL LABORATORY, and are kept
+# rather than dropped. Clinical labs curate for test-panel inclusion, a more
+# inclusive question than "is this congenital heart disease", so their terms are
+# labelled rather than trusted silently -- a reader can see exactly which nine
+# and decide. They were briefly dropped on 2026-08-06 and reinstated the same
+# day, because adversarial review measured the cost that decision was documented
+# as not having: dropping them takes 11 registered genes out of scope entirely
+# (BMPR1A, TBX1, CFAP45, CFC1, ASB17, ANKRD11, MCTP2, CFAP53, DENND5B, DLC1,
+# FGF10), and deletes 5 mirrored validity records from 3 PUBLISHED bundles --
+# NKX2-5 loses an Ambry `Definitive` and a Labcorp `Strong` call for conotruncal
+# heart malformations, GATA6 and NR2F2 lose three more. The publication gate
+# does not move (23 genes at Definitive, 76 at Limited), which is why the loss
+# was invisible in the figure first checked. Do not drop them again without
+# re-measuring that cost.
 #
 # Neither mechanical rule works, which is why a selection exists at all:
 # filtering by ClinGen expert panel drops TBX5, NOTCH1 and CHD7 (their curating
@@ -30,6 +43,20 @@
 # Loss), and no MONDO is_a closure means CHD -- see src/chd_atlas/models/scope.py.
 # Labels are transcribed from the mirrors and checked by SCP002.
 diseases:
+  - id: MONDO:0000119
+    label: congenital heart defects, multiple types
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: gencc_submitter
+    attributed_to: Ambry Genetics
+    admitted_on: 2026-08-03
+  - id: MONDO:0004933
+    label: hypoplastic left heart syndrome
+    reason: >-
+      Hypoplastic left heart syndrome: a left-sided obstructive malformation.
+    admitted_by: gencc_submitter
+    attributed_to: Ambry Genetics
+    admitted_on: 2026-08-03
   - id: MONDO:0005453
     label: congenital heart disease
     reason: >-
@@ -158,6 +185,13 @@ diseases:
     admitted_by: gencc_submitter
     attributed_to: Orphanet
     admitted_on: 2026-08-03
+  - id: MONDO:0011546
+    label: heterotaxy, visceral, 2, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: gencc_submitter
+    attributed_to: Ambry Genetics
+    admitted_on: 2026-08-03
   - id: MONDO:0011650
     label: atrioventricular septal defect, susceptibility to, 2
     reason: >-
@@ -214,6 +248,20 @@ diseases:
     admitted_by: gencc_submitter
     attributed_to: G2P
     admitted_on: 2026-08-03
+  - id: MONDO:0013746
+    label: ventricular septal defect 1
+    reason: >-
+      Ventricular septal defect: a septal malformation.
+    admitted_by: gencc_submitter
+    attributed_to: Illumina
+    admitted_on: 2026-08-03
+  - id: MONDO:0013748
+    label: ventricular septal defect 2
+    reason: >-
+      Ventricular septal defect: a septal malformation.
+    admitted_by: gencc_submitter
+    attributed_to: Labcorp Genetics (formerly Invitae)
+    admitted_on: 2026-08-03
   - id: MONDO:0013750
     label: atrial septal defect 8
     reason: >-
@@ -235,12 +283,26 @@ diseases:
     admitted_by: gencc_submitter
     attributed_to: G2P
     admitted_on: 2026-08-03
+  - id: MONDO:0013887
+    label: heterotaxy, visceral, 6, autosomal
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: gencc_submitter
+    attributed_to: Labcorp Genetics (formerly Invitae)
+    admitted_on: 2026-08-03
   - id: MONDO:0014000
     label: congenital heart defects, multiple types, 2
     reason: >-
       Multiple congenital structural cardiac malformations.
     admitted_by: clingen_chd_panel
     attributed_to: Congenital Heart Disease Gene Curation Expert Panel
+    admitted_on: 2026-08-03
+  - id: MONDO:0014344
+    label: congenital heart defects, multiple types, 4
+    reason: >-
+      Multiple congenital structural cardiac malformations.
+    admitted_by: gencc_submitter
+    attributed_to: Ambry Genetics
     admitted_on: 2026-08-03
   - id: MONDO:0014762
     label: heterotaxy, visceral, 7, autosomal
@@ -269,6 +331,13 @@ diseases:
       Malformation of multiple cardiac valves.
     admitted_by: gencc_submitter
     attributed_to: Orphanet
+    admitted_on: 2026-08-03
+  - id: MONDO:0016581
+    label: conotruncal heart malformations
+    reason: >-
+      Conotruncal malformations as a lesion class.
+    admitted_by: gencc_submitter
+    attributed_to: Ambry Genetics
     admitted_on: 2026-08-03
   - id: MONDO:0018072
     label: persistent truncus arteriosus
@@ -304,6 +373,13 @@ diseases:
       Visceral heterotaxy: complex CHD is a defining feature.
     admitted_by: gencc_submitter
     attributed_to: PanelApp Australia
+    admitted_on: 2026-08-03
+  - id: MONDO:0030475
+    label: heterotaxy, visceral, 11, autosomal, with male infertility
+    reason: >-
+      Visceral heterotaxy: complex CHD is a defining feature.
+    admitted_by: gencc_submitter
+    attributed_to: Ambry Genetics
     admitted_on: 2026-08-03
   - id: MONDO:0032913
     label: congenital heart defects, multiple types, 7

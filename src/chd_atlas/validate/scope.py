@@ -1,9 +1,14 @@
 # src/chd_atlas/validate/scope.py
 """Checks the curated CHD scope list against the mirrored validity data.
 
-`curation/chd_scope.yaml` is the atlas's own editorial claim about what counts
-as congenital heart disease (see `models/scope.py` for why neither mechanical
-rule -- expert panel, MONDO `is_a` closure -- works). MONDO is deliberately
+`curation/chd_scope.yaml` is the atlas's *selection* among disease terms that
+external authorities already treat as congenital heart disease -- never a claim
+authored here. Every entry named the project owner as the admitting authority
+until 2026-08-06, and this sentence called the file an editorial claim of the
+atlas's own; both are gone, and SCP005 below is what keeps them gone. A
+selection is still needed because neither mechanical rule works (see
+`models/scope.py`: filtering by expert panel drops TBX5, NOTCH1 and CHD7, and no
+MONDO `is_a` closure means CHD). MONDO is deliberately
 *not* pinned as an ontology the way HPO is: the full release would dwarf the
 11 MB HPO pin for a resource this module only ever needs to spot-check a
 handful of terms in. So a scope term cannot be resolved the way a phenotype
@@ -29,7 +34,7 @@ from collections.abc import Iterable, Mapping
 from typing import Final
 
 from chd_atlas.issues import Severity, ValidationIssue
-from chd_atlas.models.scope import ScopeEntry
+from chd_atlas.models.scope import ScopeAuthority, ScopeEntry
 
 # Deliberately wide. Measured 2026-08-03 against the committed ClinGen mirror:
 # of 13 flagship CHD genes' Definitive/Strong disease labels, 12 of 13 --
@@ -46,6 +51,13 @@ _CARDIAC_KEYWORDS: Final = re.compile(
     r"conotruncal|vascular ring",
     re.IGNORECASE,
 )
+
+
+# ClinGen's chartered panel for this disease area, spelled exactly as the mirror
+# spells it. A literal here rather than in `ScopeAuthority`, because the enum is
+# a vocabulary of authority *classes* and this is one authority's name -- and
+# because SCP005 must compare it against the mirror's own string.
+CHD_EXPERT_PANEL: Final = "Congenital Heart Disease Gene Curation Expert Panel"
 
 
 def validate_scope_terms(
@@ -113,7 +125,8 @@ def validate_scope_terms(
 
 def validate_scope_attribution(
     scope: Iterable[ScopeEntry],
-    authorities: Mapping[str, frozenset[str]] | None,
+    clingen_panels: Mapping[str, frozenset[str]] | None,
+    gencc_submitters: Mapping[str, frozenset[str]] | None,
     location: str,
 ) -> list[ValidationIssue]:
     """Check each term's claimed authority actually uses that term in a mirror.
@@ -128,27 +141,39 @@ def validate_scope_attribution(
     never curated, and nothing would notice. Verifying it against the mirror is
     what turns provenance into a fact.
 
-    `authorities` maps a MONDO term to the set of bodies that curated a record
-    naming it -- ClinGen expert panel names and GenCC submitter names in one
-    set, built by the caller from both mirror tables. Built by the caller for
-    the reason `validate_scope_terms` takes `mirrored` rather than reading it:
-    these stay pure checks over already-loaded data.
+    **The two authority classes are checked apart, and merging them silently
+    voids this check.** The first version took one merged set of names and asked
+    only "did some authority use this term". Adversarial review of #30 measured
+    what that accepts: a curator may take a term whose sole warrant is a
+    commercial laboratory's GenCC submission, write `admitted_by:
+    clingen_chd_panel`, copy the laboratory's name into `attributed_to`, and
+    pass -- publishing on 24 pages that ClinGen's chartered panel scoped a
+    disease it never curated. That is the exact forgery this docstring claimed
+    to prevent, in the same commit that claimed it. So `admitted_by` selects
+    which mapping the name must appear in, and the name is checked there only.
 
-    `None` means neither mirror could be read, and is reported once as SCP000's
-    sibling rather than as one failure per term -- the cascade REF000/SRC000/
-    ONT000 exist to prevent. A term already reported missing by SCP001 is
-    skipped here, so one bad id costs one issue rather than two.
+    `clingen_panels` maps a MONDO term to the expert panels that curated a
+    record naming it; `gencc_submitters` maps it to the submitters that did.
+    Both are built by the caller from the mirror tables, for the reason
+    `validate_scope_terms` takes `mirrored` rather than reading it: these stay
+    pure checks over already-loaded data.
+
+    `None` means neither mirror could be read, and is reported once rather than
+    as one failure per term -- the cascade REF000/SRC000/ONT000 exist to
+    prevent. A term named by neither mapping is skipped, because SCP001 already
+    reports it: one bad id must cost one issue, not two.
 
     ERROR rather than WARNING: a false attribution is a provenance claim the
-    atlas cannot support, and it is published in `_SCOPE_RULE` on every page.
+    atlas cannot support, and `pages._SCOPE_RULE` publishes it on every page.
 
-    Measured 2026-08-06 across the 59 committed terms: 13 are used by ClinGen's
-    Congenital Heart Disease GCEP, 8 by another ClinGen expert panel, and 38 by
-    a GenCC submitter -- 0 unattributable. Nine further terms had only a
-    commercial clinical laboratory available and were dropped from scope
-    instead, at a cost of zero genes at either publication floor.
+    Measured 2026-08-06 across the 68 committed terms: **13** are used by
+    ClinGen's Congenital Heart Disease GCEP, **10** by another ClinGen expert
+    panel, and **45** by a GenCC submitter. None is unattributable. Nine of the
+    45 are scoped only by a commercial clinical laboratory; they are kept and
+    labelled rather than dropped, for the measured reason `chd_scope.yaml`'s
+    header records.
     """
-    if authorities is None:
+    if clingen_panels is None or gencc_submitters is None:
         return [
             ValidationIssue(
                 "SCP005",
@@ -160,21 +185,47 @@ def validate_scope_attribution(
 
     issues: list[ValidationIssue] = []
     for entry in scope:
-        curated_by = authorities.get(entry.id)
-        # Already reported as SCP001; one bad id must not cost two issues.
-        if curated_by is None:
+        # The class named in `admitted_by` decides which mirror the name must
+        # appear in. This is the line the review's forgery got past.
+        expected = (
+            gencc_submitters
+            if entry.admitted_by is ScopeAuthority.GENCC_SUBMITTER
+            else clingen_panels
+        )
+        curated_by = expected.get(entry.id, frozenset())
+        # SCP001 already reports a term neither mirror names at all.
+        if not curated_by and entry.id not in clingen_panels and entry.id not in gencc_submitters:
             continue
-        if entry.attributed_to not in curated_by:
-            issues.append(
-                ValidationIssue(
-                    "SCP005",
-                    Severity.ERROR,
-                    location,
-                    f"scope term {entry.id} is attributed to '{entry.attributed_to}', "
-                    f"which curated no record naming it; the mirror shows "
-                    f"{sorted(curated_by) or 'no authority'}",
+        if entry.attributed_to in curated_by:
+            # A ClinGen record's panel is not enough for `clingen_chd_panel`:
+            # that member asserts the *chartered CHD panel* specifically, and
+            # any other panel is `clingen_expert_panel`.
+            if (
+                entry.admitted_by is ScopeAuthority.CLINGEN_CHD_PANEL
+                and entry.attributed_to != CHD_EXPERT_PANEL
+            ):
+                issues.append(
+                    ValidationIssue(
+                        "SCP005",
+                        Severity.ERROR,
+                        location,
+                        f"scope term {entry.id} claims '{ScopeAuthority.CLINGEN_CHD_PANEL.value}' "
+                        f"but names '{entry.attributed_to}'; that member is for "
+                        f"'{CHD_EXPERT_PANEL}' alone, and any other panel is "
+                        f"'{ScopeAuthority.CLINGEN_EXPERT_PANEL.value}'",
+                    )
                 )
+            continue
+        issues.append(
+            ValidationIssue(
+                "SCP005",
+                Severity.ERROR,
+                location,
+                f"scope term {entry.id} claims {entry.admitted_by.value} and names "
+                f"'{entry.attributed_to}', which curated no record naming that term; "
+                f"the mirror shows {sorted(curated_by) or 'no authority of that class'}",
             )
+        )
     return issues
 
 

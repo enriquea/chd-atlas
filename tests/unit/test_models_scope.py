@@ -1,10 +1,18 @@
 # tests/unit/test_models_scope.py
-"""The scope list is the atlas's editorial claim, so it is shaped like one.
+"""The scope list is a selection among other people's claims, so it is shaped like one.
 
-Every entry records who admitted the term and when. That is not bookkeeping:
-inclusion is the one thing about a gene the atlas asserts on its own authority
--- every validity classification is mirrored -- so "why is this gene here?" must
-have an answer with a name on it.
+Every entry records which EXTERNAL authority treats the term as congenital heart
+disease. That is not bookkeeping: "why is this gene here?" must have an answer,
+and until 2026-08-06 the answer was a curator's name -- this file's own docstring
+said inclusion "is the one thing about a gene the atlas asserts on its own
+authority ... so it must have an answer with a name on it". It must have an
+answer with an *authority* on it, and never an individual's: the atlas mirrors
+every validity classification precisely because it cannot out-curate a chartered
+expert panel, and deciding what counts as CHD is the same kind of judgement.
+
+Adversarial review of #30 found this paragraph still asserting the old position
+directly above a test named `..._and_names_no_individual`, in a file the change
+had edited from line 12 down.
 """
 
 from __future__ import annotations
@@ -78,7 +86,7 @@ def test_the_committed_scope_list_loads_and_names_no_individual() -> None:
     raw = path.read_text(encoding="utf-8")
     parsed = ChdScopeFile.model_validate(YAML(typ="safe").load(raw))
 
-    assert len(parsed.diseases) == 59
+    assert len(parsed.diseases) == 68
     # Every authority is external, by construction of the enum.
     assert {entry.admitted_by for entry in parsed.diseases} <= set(ScopeAuthority)
     # And the file names no individual anywhere, comments included.
