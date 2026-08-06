@@ -108,7 +108,10 @@ from chd_atlas.vocab import AtlasCuration, Classification, ValiditySource
 # rule is one editorial claim, and two copies of it are two things that drift.
 _SCOPE_RULE: Final = (
     '<p class="scope-rule">A gene is published here when a ClinGen expert panel classifies '
-    "it <strong>Definitive</strong> for a disease in this atlas's CHD scope "
+    "it <strong>Definitive</strong> for a disease that an external authority treats as "
+    "congenital heart disease &mdash; a ClinGen expert panel, or a submitter to the Gene "
+    "Curation Coalition. <strong>No disease is in scope on this atlas's own judgement</strong>, "
+    "and every term names the authority it came from "
     "(<code>curation/chd_scope.yaml</code>). That is not the same as definitive for "
     "congenital heart disease: for many of these genes the disease graded is a syndrome "
     "of which a cardiac lesion is one feature, and the disease the panel actually named "

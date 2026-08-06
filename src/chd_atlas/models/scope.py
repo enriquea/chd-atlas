@@ -14,12 +14,28 @@ MONDO:0005267 "heart disorder", which also subsumes cardiomyopathy, arrhythmia
 and acquired disease -- so the closure wide enough to catch Holt-Oram stops
 meaning CHD.
 
-Scope is therefore an editorial claim, recorded as one.
+Scope is therefore a *selection* among terms external authorities already use --
+never a judgement authored here. Until 2026-08-06 every entry in this file named
+the project owner as the admitting authority, which made this atlas the
+authority on what counts as congenital heart disease. It is not one, and the
+owner said so in as many words: *"I am not a clinician... We should take a
+reputed source that already do this work for us."* No individual's name belongs
+in this file.
+
+So `admitted_by` is now a closed vocabulary of **external** authorities and a
+person's name is not representable in it. `attributed_to` names the specific
+panel or submitter, and `validate/scope.py` checks that authority actually uses
+the term in a mirror -- so the attribution is measured rather than asserted.
+Measured 2026-08-06 across the 68 committed terms: 13 are used by ClinGen's
+Congenital Heart Disease GCEP, 10 by another ClinGen expert panel, 45 by GenCC
+submitters, and **0 by no authority at all**. Every term already had an external
+warrant; only the field recording it was wrong.
 """
 
 from __future__ import annotations
 
 from datetime import date
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -34,14 +50,42 @@ from chd_atlas.identifiers import DiseaseId
 _NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
+class ScopeAuthority(StrEnum):
+    """Who treats a disease term as congenital heart disease. Never this atlas.
+
+    **A closed vocabulary precisely so a curator's name cannot be entered.** The
+    previous field was free text and held one curator's name on all 68 terms; an
+    enum makes that unrepresentable rather than discouraged, the same reason
+    `PUBLICATION_FLOOR` is a rank floor rather than a set of admissible rungs.
+
+    Ordered strongest first. `CLINGEN_CHD_PANEL` is ClinGen's chartered
+    Congenital Heart Disease Gene Curation Expert Panel using the term itself --
+    the closest thing to an authority purpose-built for this question.
+    `CLINGEN_EXPERT_PANEL` is another chartered ClinGen panel, which matters
+    because the syndromic CHD genes are curated there: TBX5 by Syndromic
+    Disorders, CHD7 by Hearing Loss, KDM6A and KMT2D by SCID-CID.
+    `GENCC_SUBMITTER` is a body submitting through GenCC -- an aggregator, so
+    `attributed_to` must name the submitter and never GenCC itself.
+    """
+
+    CLINGEN_CHD_PANEL = "clingen_chd_panel"
+    CLINGEN_EXPERT_PANEL = "clingen_expert_panel"
+    GENCC_SUBMITTER = "gencc_submitter"
+
+
 class ScopeEntry(BaseModel):
-    """One disease term admitted into the atlas's scope, and why.
+    """One disease term in the atlas's scope, and the authority that scopes it.
 
     `label` is transcribed by the curator from the mirrored source, not
     derived from `id`. A later task cross-checks it against the ClinGen and
     GenCC mirrors (SCP002): without that check, a copy-pasted wrong MONDO id
     that happens to exist would silently admit an unrelated disease under a
     label that looks right.
+
+    `admitted_by` and `attributed_to` replace a free-text field that named the
+    project owner. `reason` survives and still says why the term is congenital
+    heart disease -- but it is now a transcription of an external authority's
+    position, not an argument this atlas makes.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -49,7 +93,13 @@ class ScopeEntry(BaseModel):
     id: DiseaseId
     label: _NonBlankStr
     reason: _NonBlankStr
-    admitted_by: _NonBlankStr
+    admitted_by: ScopeAuthority
+    # The specific panel or submitter, verbatim as the mirror spells it, so
+    # SCP005 can check the claim rather than take it. "ClinGen" alone is not an
+    # answer for a `GENCC_SUBMITTER`: GenCC aggregates, and its largest in-scope
+    # submitter is ClinGen itself (measured 2026-08-06: 111 rows, 109 genes), so
+    # a row naming the aggregator hides which body actually made the call.
+    attributed_to: _NonBlankStr
     admitted_on: date
 
 

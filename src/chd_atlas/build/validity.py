@@ -249,8 +249,10 @@ def gene_validity(
     """One `GeneValidity` per gene either mirror curates within CHD scope.
 
     `in_scope` is the set of MONDO disease terms from `curation/chd_scope.yaml`
-    (`Corpus.chd_scope`) -- the atlas's own editorial claim about what counts as
-    congenital heart disease (`models/scope.py`). A row naming any other disease
+    (`Corpus.chd_scope`) -- the atlas's *selection* among disease terms external
+    authorities already treat as congenital heart disease, never a claim authored
+    here (`models/scope.py`; every term names its authority and SCP005 checks
+    that name against the mirrors). A row naming any other disease
     is dropped here, before a gene is even keyed, rather than filtered
     downstream: GATA6 is Definitive for GATA6-related congenital heart disease
     (`MONDO:0100540`) and Limited for dilated cardiomyopathy (`MONDO:0005021`,

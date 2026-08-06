@@ -209,7 +209,7 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
         pytest.param(_corpus_load_fails, {"REF000"}, {"CORPUS001"}, id="corpus-failed"),
         pytest.param(
             _source_registry_load_fails,
-            {"SRC000", "ONT000", "SCP000"},
+            {"SRC000", "ONT000", "SCP000", "SCP005"},
             {"SRC001"},
             id="source-registry-failed",
         ),
@@ -221,7 +221,7 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
         ),
         pytest.param(
             _validity_mirrors_missing,
-            {"SCP000"},
+            {"SCP000", "SCP005"},
             {"TBL012"},
             id="validity-mirrors-missing",
         ),
@@ -492,3 +492,39 @@ def test_an_unreadable_gene_registry_does_not_multiply_by_the_burden_mirror(
     codes = [issue.code for issue in report.issues if issue.severity is Severity.ERROR]
 
     assert codes == ["REF001"]
+
+
+def test_a_false_scope_attribution_is_caught_on_the_branch_that_actually_runs(
+    tmp_path: Path,
+) -> None:
+    """SCP005 through `validate_repository`, on the mirror-READABLE branch.
+
+    **The branch that runs on every real build was killed by 0 of 789 tests.**
+    `validate_repository` calls `validate_scope_attribution` twice -- once when
+    the mirrors are unreadable, once when they are -- and only the first was
+    defended. Deleting the second call left the whole suite green while
+    `chd-atlas validate` reported 0 errors on a corpus with an invented
+    attribution, and the atlas would publish 24 pages asserting an external
+    warrant nothing had checked. Found by adversarial review of #30; it is the
+    §4.28 shape, a guard tested on the layer it was not needed.
+
+    The forgery used here is the one the check exists for: a term whose only
+    warrant is a commercial laboratory's GenCC submission, relabelled as
+    ClinGen's chartered CHD panel. The unit test proves the function refuses it;
+    this proves the function is reached.
+    """
+    root = _real_repo(tmp_path)
+    scope = root / "curation" / "chd_scope.yaml"
+    text = scope.read_text(encoding="utf-8")
+    forged = text.replace(
+        "    admitted_by: gencc_submitter\n    attributed_to: Ambry Genetics\n",
+        "    admitted_by: clingen_chd_panel\n    attributed_to: Ambry Genetics\n",
+        1,
+    )
+    assert forged != text, "no commercial-lab attribution left to forge; update this fixture"
+    scope.write_text(forged, encoding="utf-8")
+
+    report = validate_repository(root)
+
+    assert "SCP005" in {issue.code for issue in report.issues}
+    assert report.ok is False
