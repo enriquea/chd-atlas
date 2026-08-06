@@ -111,6 +111,73 @@ def validate_scope_terms(
     return issues
 
 
+def validate_scope_attribution(
+    scope: Iterable[ScopeEntry],
+    authorities: Mapping[str, frozenset[str]] | None,
+    location: str,
+) -> list[ValidationIssue]:
+    """Check each term's claimed authority actually uses that term in a mirror.
+
+    **This is what makes the attribution measured rather than asserted, and it
+    is the whole point of the 2026-08-06 change.** Every entry in
+    `curation/chd_scope.yaml` used to name the project owner as the admitting
+    authority, which made a non-clinician the authority on what counts as
+    congenital heart disease. `ScopeAuthority` now makes a person's name
+    unrepresentable, but an enum only constrains the *shape* of the claim -- a
+    curator could still write `clingen_chd_panel` beside a term that panel has
+    never curated, and nothing would notice. Verifying it against the mirror is
+    what turns provenance into a fact.
+
+    `authorities` maps a MONDO term to the set of bodies that curated a record
+    naming it -- ClinGen expert panel names and GenCC submitter names in one
+    set, built by the caller from both mirror tables. Built by the caller for
+    the reason `validate_scope_terms` takes `mirrored` rather than reading it:
+    these stay pure checks over already-loaded data.
+
+    `None` means neither mirror could be read, and is reported once as SCP000's
+    sibling rather than as one failure per term -- the cascade REF000/SRC000/
+    ONT000 exist to prevent. A term already reported missing by SCP001 is
+    skipped here, so one bad id costs one issue rather than two.
+
+    ERROR rather than WARNING: a false attribution is a provenance claim the
+    atlas cannot support, and it is published in `_SCOPE_RULE` on every page.
+
+    Measured 2026-08-06 across the 59 committed terms: 13 are used by ClinGen's
+    Congenital Heart Disease GCEP, 8 by another ClinGen expert panel, and 38 by
+    a GenCC submitter -- 0 unattributable. Nine further terms had only a
+    commercial clinical laboratory available and were dropped from scope
+    instead, at a cost of zero genes at either publication floor.
+    """
+    if authorities is None:
+        return [
+            ValidationIssue(
+                "SCP005",
+                Severity.WARNING,
+                location,
+                "skipped scope attribution checks: no validity mirror could be read",
+            )
+        ]
+
+    issues: list[ValidationIssue] = []
+    for entry in scope:
+        curated_by = authorities.get(entry.id)
+        # Already reported as SCP001; one bad id must not cost two issues.
+        if curated_by is None:
+            continue
+        if entry.attributed_to not in curated_by:
+            issues.append(
+                ValidationIssue(
+                    "SCP005",
+                    Severity.ERROR,
+                    location,
+                    f"scope term {entry.id} is attributed to '{entry.attributed_to}', "
+                    f"which curated no record naming it; the mirror shows "
+                    f"{sorted(curated_by) or 'no authority'}",
+                )
+            )
+    return issues
+
+
 def _describe(term: str, mirrored: Mapping[str, str]) -> str:
     label = mirrored.get(term)
     return f"{term} ({label})" if label else term

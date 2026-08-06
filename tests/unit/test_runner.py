@@ -209,7 +209,7 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
         pytest.param(_corpus_load_fails, {"REF000"}, {"CORPUS001"}, id="corpus-failed"),
         pytest.param(
             _source_registry_load_fails,
-            {"SRC000", "ONT000", "SCP000"},
+            {"SRC000", "ONT000", "SCP000", "SCP005"},
             {"SRC001"},
             id="source-registry-failed",
         ),
@@ -221,7 +221,7 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
         ),
         pytest.param(
             _validity_mirrors_missing,
-            {"SCP000"},
+            {"SCP000", "SCP005"},
             {"TBL012"},
             id="validity-mirrors-missing",
         ),
