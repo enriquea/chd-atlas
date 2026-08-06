@@ -182,7 +182,7 @@ from chd_atlas.corpus import Corpus
 # and `independent_datasets: 3` is a misreading waiting to happen. This is the
 # length of any bundle's `independent_datasets.families` array, which is the same
 # for every gene by construction.
-SCHEMA_VERSION: Final = "2.7"
+SCHEMA_VERSION: Final = "2.8"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

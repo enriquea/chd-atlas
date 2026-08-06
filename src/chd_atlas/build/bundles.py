@@ -39,7 +39,12 @@ from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
 from chd_atlas.build.paths import gene_bundle_path
-from chd_atlas.build.validity import GeneValidity, ValidityRecord, uncurated
+from chd_atlas.build.validity import (
+    GeneValidity,
+    ValidityRecord,
+    admission_provenance,
+    uncurated,
+)
 from chd_atlas.corpus import Corpus
 from chd_atlas.identifiers import HgncId
 from chd_atlas.models.assertion import LesionAssertion
@@ -364,6 +369,15 @@ def build_genes(
                 # `headline` already carries -- see `_validity`'s docstring for
                 # why both are published rather than one replacing the other.
                 "validity": _validity(gene_validity),
+                # Why this gene is published at all, as a payload rather than a
+                # rule a reader has to trust. `_SCOPE_RULE` tells every visitor
+                # that no disease is in scope on this atlas's own judgement;
+                # this is what lets them check which authority admitted the gene
+                # in front of them. Kept beside `validity` rather than inside it
+                # because `validity.records` is the verbatim mirror and this is
+                # a derivation over it -- and its `asserted_by.count` dedupes
+                # ClinGen's own GenCC submissions, which the mirror does not.
+                **admission_provenance(gene_validity),
                 "publications": list(fact.publications),
                 "assertions": assertions.get(gene, []),
                 "functional": functional.get(gene, []),

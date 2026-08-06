@@ -31,6 +31,7 @@ from chd_atlas.vocab import (
     Classification,
     EvidenceClass,
     LesionGroup,
+    ValiditySource,
     ValidityState,
     has_conflicting_evidence,
     strongest,
@@ -192,11 +193,35 @@ def gene_facts(
         # disagree about the order of the same set of groups.
         ordered_groups = sorted(groups, key=lambda group: group.value)
 
-        # `strongest` raises on an empty sequence, so it is only ever called
-        # behind `if mirrored`. Empty `mirrored` publishes `None`, matching
-        # `uncurated()` and a mirror that curated the gene under a term that
-        # maps to no rung at all (GenCC's `Supportive`, mapped to `None`).
-        headline = strongest(mirrored) if mirrored else None
+        # **The headline is the ADMITTING EXPERT PANEL's grade, or nothing.**
+        # It was `strongest()` over every mirrored classification -- ClinGen's
+        # and GenCC's together -- until 2026-08-06. That was harmless while the
+        # gate required a ClinGen `Definitive`, because a chip could not appear
+        # without a chartered panel behind it. Widening the gate to admit genes
+        # on GenCC agreement broke that: measured on the widened corpus, **24 of
+        # 93 genes** would carry a chip stronger than any ClinGen grade, and
+        # five -- ELN, GDF1, MMP21, PKD1L1, TBX1 -- would show a green
+        # `definitive` chip with no ClinGen record at all.
+        #
+        # So a gene no expert panel graded publishes `None`, exactly as an
+        # uncurated gene does and for the same stated reason: coercing it to a
+        # string would invent a confidence nobody stated. What the submitters
+        # said is not lost -- it is in `validity.records` and in
+        # `admitted_by.submitters` -- it is simply not the atlas's headline,
+        # because there is no single authority to headline. GDF1 is why: its
+        # in-scope submissions run from G2P `Definitive` to Illumina `No Known
+        # Disease Relationship`, and a max over submitters publishes that as
+        # settled.
+        #
+        # `validity_state` sits beside this and says `submitter_curated`, which
+        # is what distinguishes "no panel has graded this" from "nobody has
+        # assessed this gene at all".
+        panel_graded = [
+            record.classification
+            for record in gene_validity.records
+            if record.source is ValiditySource.CLINGEN and record.classification is not None
+        ]
+        headline = strongest(panel_graded) if panel_graded else None
         contested = has_conflicting_evidence(mirrored)
 
         facts[gene] = GeneFacts(
