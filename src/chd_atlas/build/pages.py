@@ -24,7 +24,7 @@ includes `str`, so `write_json(path, page)` type-checks and then runs the whole
 document through `json.dumps`, publishing it quoted and escaped as a JSON string
 literal. mypy cannot catch that; the mistake is which encoder to call.
 
-**The uncurated notice is load-bearing.** 22 of the 23 genes published under D21
+**The uncurated notice is load-bearing.** 91 of the 92 genes published under D21
 carry no `LesionAssertion` (measured 2026-08-04 on `genes/index.json`). Their
 pages state that the atlas has not curated them rather than omitting the
 evidence section, because an absent section is indistinguishable from "the atlas
@@ -34,12 +34,13 @@ reason -- it sits one column from a rail that counts curated content this gene
 may have -- and `_not_curated` is where that wording and the reason for it are
 recorded.
 
-**Neither page kind states a bare `definitive`.** `_SCOPE_RULE` says what admits
-a gene to this site at all, and `_definitive_diseases` names the disease each
-ClinGen panel actually graded -- in the browse table's `definitive for` column
-and in the gene page's rail, one line under the green chip. Both read the same
-`validity` mapping the bundles were written from, so the two pages cannot name
-different diseases for one gene.
+**Neither page kind states a bare grade.** `_SCOPE_RULE` says what admits a gene
+to this site at all, `render.grade_legend` says what each rung means in the
+grading authority's own words, and `_graded_diseases` names the disease each
+ClinGen panel actually graded -- in the browse table's `graded for` column and in
+the gene page's rail, one line under the chip. All three read the same `validity`
+mapping the bundles were written from, so the two pages cannot name different
+diseases for one gene.
 
 Every value interpolated into a page goes through `render.py`, which escapes
 text, links and attributes -- except the three bare interpolations in `_rail`,
@@ -71,6 +72,7 @@ from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_p
 from chd_atlas.build.render import (
     EVIDENCE_POWER_CAVEAT,
     FILTER_SCRIPT,
+    GRADE_CHIP_KIND,
     Cell,
     Link,
     Markup,
@@ -80,42 +82,53 @@ from chd_atlas.build.render import (
     definition_list,
     document,
     evidence_legend,
+    grade_legend,
 )
-from chd_atlas.build.validity import GeneValidity, uncurated
+from chd_atlas.build.validity import GeneValidity, agreeing_submitters, uncurated
 from chd_atlas.identifiers import HgncId
 from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.models.cohort import Cohort
 from chd_atlas.models.literature import Publication
 from chd_atlas.vocab import AtlasCuration, Classification, ValiditySource
 
-# What the 23-gene set *is*, in one sentence, on both page kinds that show it.
+# What the published set *is*, in one sentence, on both page kinds that show it.
 #
 # No page on this site said it. `docs/data-api.md` states the rule and a reader
 # of the HTML never sees it, so a browse page of 23 rows all reading
 # `definitive`, under a title reading "CHD Atlas" and a tagline about congenital
 # heart disease, said "these 23 genes are definitive for CHD". Measured
-# 2026-08-04 against the committed mirrors, that is false for most of them: 10
-# of the 23 are qualified by a panel that is not the Congenital Heart Disease
+# 2026-08-04 against the committed mirrors, that was false for most of them: 10
+# of the 23 were qualified by a panel that is not the Congenital Heart Disease
 # GCEP -- SCID-CID for KMT2D and KDM6A, Hearing Loss for CHD7, Kidney Cystic and
 # Ciliopathy Disorders for NOTCH2 and EVC, Intellectual Disability and Autism
 # for ZEB2, Skeletal Disorders for EVC2, Syndromic Disorders for TBX5 and
-# TFAP2B, Prenatal for FLT4 -- and 10 are definitive for a disease whose label
+# TFAP2B, Prenatal for FLT4 -- and 10 were definitive for a disease whose label
 # names no cardiac feature at all (Kabuki syndrome 1 and 2, Mowat-Wilson,
 # CHARGE, Alagille, Ellis-van Creveld twice, Holt-Oram, TARP, and NR2F2-related
 # multiple congenital anomalies).
 #
+# The 2026-08-06 widening makes the sentence carry more, not less. Measured on
+# the widened corpus: 92 genes, of which 76 are admitted by a ClinGen record at
+# or above `Limited` and 16 by two or more GenCC submitters with no ClinGen
+# record at all. A reader meeting `limited` needs to know both that a chartered
+# panel wrote it and that this atlas did not.
+#
 # One constant for both pages, in the idiom `_NOT_CURATED` already uses: the
 # rule is one editorial claim, and two copies of it are two things that drift.
 _SCOPE_RULE: Final = (
-    '<p class="scope-rule">A gene is published here when a ClinGen expert panel classifies '
-    "it <strong>Definitive</strong> for a disease that an external authority treats as "
-    "congenital heart disease &mdash; a ClinGen expert panel, or a submitter to the Gene "
-    "Curation Coalition. <strong>No disease is in scope on this atlas's own judgement</strong>, "
-    "and every term names the authority it came from "
-    "(<code>curation/chd_scope.yaml</code>). That is not the same as definitive for "
-    "congenital heart disease: for many of these genes the disease graded is a syndrome "
-    "of which a cardiac lesion is one feature, and the disease the panel actually named "
-    "is shown beside the gene.</p>"
+    '<p class="scope-rule">A gene is published here when an external authority already '
+    "treats it as a congenital heart disease gene: either a <strong>ClinGen expert "
+    "panel</strong> classifies it <strong>Limited or better</strong> for a disease that "
+    "an external authority treats as congenital heart disease, or <strong>two or more "
+    "Gene Curation Coalition submitters</strong> independently assert it and no ClinGen "
+    "panel disputes it. "
+    "<strong>No disease is in scope on this atlas's own judgement</strong>, and neither "
+    "is any gene: every scope term names the authority it came from "
+    "(<code>curation/chd_scope.yaml</code>), and every gene page names the authority that "
+    "admitted the gene. A classification is not the same as definitive for congenital "
+    "heart disease: for many of these genes the disease graded is a syndrome of which a "
+    "cardiac lesion is one feature, and the disease the panel actually named is shown "
+    "beside the gene.</p>"
 )
 
 _NOT_CURATED: Final = (
@@ -393,15 +406,14 @@ _SYNONYMOUS_NOTICE: Final = (
 
 _CITATION_HEADERS: Final = ("id", "title", "year")
 
-# `definitive for` sits immediately after `confidence`, because it is what
-# qualifies it: the two columns are one claim split in two, and a reader whose
-# eye stops at `definitive` must meet the disease next rather than three columns
-# later.
+# `graded for` sits immediately after `confidence`, because it is what qualifies
+# it: the two columns are one claim split in two, and a reader whose eye stops at
+# the grade must meet the disease next rather than three columns later.
 _BROWSE_HEADERS: Final = (
     "gene",
     "symbol",
     "confidence",
-    "definitive for",
+    "graded for",
     # Immediately after the claim, because it is what qualifies it: a reader
     # whose eye stops at `definitive` should meet the evidence next rather than
     # three columns later.
@@ -432,42 +444,50 @@ def _pubmed(pmid: str) -> str:
     return f"https://pubmed.ncbi.nlm.nih.gov/{pmid.removeprefix('PMID:')}/"
 
 
-def _definitive_diseases(gene_validity: GeneValidity) -> tuple[str, ...]:
-    """The in-scope diseases a ClinGen panel grades this gene `Definitive` for.
+def _graded_diseases(gene_validity: GeneValidity, grade: Classification | None) -> tuple[str, ...]:
+    """The in-scope diseases a ClinGen panel graded this gene at `grade`.
 
-    Exactly the records `validity.published_genes` admits the gene on -- source
-    `CLINGEN`, classification `DEFINITIVE` -- so what this returns is the reason
-    the gene has a page, not a summary of everything either mirror says about it.
-    A GenCC submitter calling the gene definitive is deliberately not here: it
-    admits no gene to this set (D21), so naming it would qualify the confidence
-    with a disease that is not the one the gate turned on.
+    **Keyed on the gene's own headline, not on `DEFINITIVE`.** It was the latter
+    until 2026-08-06, when the gate widened past ClinGen `Definitive` and 69 of
+    the 92 published genes stopped having one: a function that only ever looks
+    for definitive records returns nothing for them, and the caller renders an em
+    dash beside a `limited` chip -- the disease the panel actually graded silently
+    absent from the one row that exists to name it. That is this project's
+    characteristic failure in page copy rather than in a join.
+
+    `grade` is `GeneFacts.headline_confidence`, which `derive.gene_facts` derives
+    from ClinGen records alone, so what comes back is always the disease behind
+    the chip the reader is looking at. `None` -- a gene admitted on GenCC
+    agreement, which no panel graded -- returns empty, and the caller names the
+    submitters instead.
+
+    A GenCC submitter's own grade is deliberately never here. It admits a gene
+    only by agreement with a second submitter (D21) and is never the headline, so
+    naming its disease would qualify a chip with a record that did not produce
+    it.
 
     Returns labels rather than MONDO ids: this is the string a reader reads
-    beside the word `definitive`, and the id is already on the gene page in
+    beside the grade, and the id is already on the gene page in
     `_validity_section`, which renders both.
 
     **Sorted, and de-duplicated through a `set` first.** A gene may hold more
-    than one qualifying record -- two panels grading the same gene for two
+    than one record at its headline grade -- two panels grading it for two
     in-scope diseases, or one disease reached through two rows -- and a `set` of
     strings iterates in an order that varies with `PYTHONHASHSEED`, which would
     make the browse page's bytes and therefore its checksum differ between two
-    builds of one commit. Measured 2026-08-04 against the committed mirrors: all
-    23 published genes have exactly one qualifying record and one distinct
-    label, so the multi-label case is latent and its ordering is guarded by
-    fixture alone (`test_a_gene_definitive_for_two_in_scope_diseases_names_both`).
-
-    An empty return is unreachable for a member of the published population,
-    which is derived from the same predicate -- a guard on a bypassed gate, in
-    the idiom of `_report_link` above: the caller renders an em dash rather than
-    an empty cell that reads as "no disease".
+    builds of one commit. Measured 2026-08-06 against the committed mirrors: all
+    76 panel-graded genes have exactly one distinct label at their headline
+    grade, so the multi-label case is latent and its ordering is guarded by
+    fixture alone (`test_a_gene_graded_for_two_in_scope_diseases_names_both`).
     """
+    if grade is None:
+        return ()
     return tuple(
         sorted(
             {
                 record.disease_label
                 for record in gene_validity.records
-                if record.source is ValiditySource.CLINGEN
-                and record.classification is Classification.DEFINITIVE
+                if record.source is ValiditySource.CLINGEN and record.classification is grade
             }
         )
     )
@@ -550,29 +570,45 @@ def _report_link(url: str | None) -> Cell:
 
 
 def _rail(
-    gene: str, symbol: str, fact: GeneFacts, diseases: Sequence[str], burden_rows: int
+    gene: str,
+    symbol: str,
+    fact: GeneFacts,
+    diseases: Sequence[str],
+    submitters: Sequence[str],
+    burden_rows: int,
 ) -> str:
     """The summary column, populated for every gene whether curated here or not.
 
-    `chip-definitive` is the only chip class the stylesheet fills with the
-    success colour, so it is keyed on the classification actually being
-    `DEFINITIVE` rather than on there being one at all: `strongest()` resolves a
-    gene carrying both a definitive and a refuted record to definitive, and a
-    green pill beside the word "refuted" is exactly the "contested gene shown as
-    settled" failure the ladder is documented against.
+    **The chip class is looked up in `GRADE_CHIP_KIND`, keyed on the grade's own
+    value.** Until 2026-08-06 it was `"definitive" if headline is DEFINITIVE else
+    ""`, which was right while the gate admitted nothing else and became wrong
+    the moment it widened: 53 of the 92 genes published carry `strong`,
+    `moderate` or `limited`, and a bare `.chip` renders all three in the same
+    grey as `not classified`. A reader cannot tell a panel's weakest supportive
+    rung from no panel having looked, which is the distinction the widened gate
+    turns on. `render.grade_legend` is the other half -- the colours are ordinal
+    and mean nothing without ClinGen's own definitions beside them.
 
-    `diseases` is `_definitive_diseases`' return, and the `definitive for` row is
-    the first in the list for the same reason the browse column sits beside
-    `confidence`: the green chip one line above it says `definitive` and nothing
-    else, and on this site's title and tagline that reads as "definitive for
-    congenital heart disease". For KMT2D it means Kabuki syndrome 1. The row is
-    what stops the chip standing alone on the first screen.
+    **The first row's label carries the grade, so the label and the disease
+    cannot come apart.** It read `definitive for` unconditionally until the same
+    date, and `_graded_diseases` was returning the *definitive* records, so on a
+    `limited` gene the row was headed `definitive for` beside a `limited` chip.
+    Now the label is the headline's own value -- `limited for: atrial septal
+    defect` -- and for a gene no panel graded it becomes `admitted by`, naming
+    the submitters whose agreement admitted it. Both come from `fact`, so the
+    chip and the row below it are one claim.
+
+    It stays first in the list for the reason the browse column sits beside
+    `confidence`: the chip one line above says a bare grade, and on this site's
+    title and tagline that reads as "definitive for congenital heart disease".
+    For KMT2D it means Kabuki syndrome 1. The row is what stops the chip standing
+    alone on the first screen.
     """
     headline = fact.headline_confidence
     chips = [
         chip(
             headline.value if headline is not None else "not classified",
-            kind="definitive" if headline is Classification.DEFINITIVE else "",
+            kind=GRADE_CHIP_KIND[headline.value] if headline is not None else "ungraded",
         )
     ]
     if fact.has_conflicting_evidence:
@@ -580,8 +616,13 @@ def _rail(
     if fact.has_source_discordance:
         chips.append(chip("sources disagree", kind="warn"))
 
+    warrant = (
+        (f"{headline.value} for", "; ".join(diseases) or _EM_DASH)
+        if headline is not None
+        else ("admitted by", "; ".join(submitters) or _EM_DASH)
+    )
     facts = [
-        ("definitive for", "; ".join(diseases) or _EM_DASH),
+        warrant,
         ("validity", fact.validity_state.value),
         ("atlas curation", fact.atlas_curation.value),
         ("lesion groups", ", ".join(group.value for group in fact.lesion_groups) or _EM_DASH),
@@ -589,7 +630,7 @@ def _rail(
         ("functional records", str(fact.functional_count)),
         # "curated publications", not "publications". `fact.publications` is the
         # PMIDs this atlas's own assertion evidence cites, and it reads 0 on 22
-        # of the 23 published genes -- which sat directly beside a burden section
+        # of the published genes -- which sat directly beside a burden section
         # citing a linked, PubMed-referenced study. The count was right and the
         # label was wrong. Raised by review 2026-08-05.
         ("curated publications", str(len(fact.publications))),
@@ -905,7 +946,7 @@ def _burden_section(
         )
         design, warning = _method_line(study_rows, publications.get(study))
         # `design` and `_provenance` fold together: both are identical for a
-        # given study on all 23 gene pages. `warning`, the disclosure, the
+        # given study on all 91 gene pages carrying one. `warning`, the disclosure, the
         # composite note and the footnotes do not -- each changes what a reader
         # concludes from the table right below it.
         counted = (
@@ -955,7 +996,8 @@ def _burden_section(
     # reader concludes about this gene.
     #
     # Folded here: the units glossary, what an absent cell means, and the
-    # synonymous negative control. All three are identical on all 23 pages, and
+    # synonymous negative control. All three are identical on all 91 pages that
+    # carry a burden table, and
     # none is lost -- the unit word is still in every cell and the matrix
     # renders `not tested` as its own state.
     #
@@ -1013,10 +1055,13 @@ def _disclosure(study: str, publications: Mapping[str, Publication]) -> str:
     **The conditional is now load-bearing rather than latent.** This docstring
     said "every burden table on the site today is from PMID:42230622" until
     2026-08-05, when `PMID:40127276` (`own_lab: false`) began rendering on 15 of
-    the 23 published gene pages. Eight of those pages now carry three tables with
-    the declaration on two, which is the arrangement that makes the line
-    informative: an unconditional disclosure says nothing, and a stale claim that
-    it is unconditional invites someone to make it one.
+    the 23 gene pages published then. Re-measured 2026-08-06 against the widened
+    population: 91 of the 92 pages carry a burden table, drawn from three studies
+    -- PMID:42230622 on 87, PMID:34324492 on 61, PMID:40127276 on 25 -- and 13
+    carry all three, with the own-lab declaration on one of the three. That is
+    the arrangement that makes the line informative: an unconditional disclosure
+    says nothing, and a stale claim that it is unconditional invites someone to
+    make it one.
     """
     publication = publications.get(study)
     if publication is None or not publication.own_lab:
@@ -1456,13 +1501,15 @@ def _cohort_notes(rows: Sequence[BurdenRow], cohorts: Mapping[str, Cohort]) -> s
     **These reached no published byte.** `curation/cohorts.yaml` records, for
     UK Biobank, that its participants are adults recruited at 40-69 while a
     substantial proportion of the CHD cases were enrolled in childhood -- a
-    survivorship bias that inflates every odds ratio on all 23 pages -- and that
+    survivorship bias that inflates every odds ratio on every page carrying a
+    UK Biobank comparison -- and that
     the combined cohort is ~92% European. `models/cohort.py` says in as many
     words that `description` is where such caveats belong. `cohort_labels`
     returned `{id: name}` and dropped them, so the curator wrote the caveat, the
     model documented it, and no reader could reach it.
 
-    In a `<details>` element: the caveats are long, they repeat on 23 pages, and
+    In a `<details>` element: the caveats are long, they repeat on every page
+    carrying a burden table, and
     a reader who has read them once should not have to scroll past them again.
     `<details>` is native HTML, needs no script, and its contents are in the
     document for a crawler, a `curl` and a reader with JavaScript disabled.
@@ -1541,11 +1588,13 @@ def build_gene_pages(
                 gene,
                 symbol,
                 fact,
-                _definitive_diseases(gene_validity),
+                _graded_diseases(gene_validity, fact.headline_confidence),
+                agreeing_submitters(gene_validity),
                 len(burden.get(gene, ())),
             )
             + "<div>"
             + _SCOPE_RULE
+            + grade_legend()
             + _validity_section(gene_validity)
             + (
                 _evidence_section(records, publications)
@@ -1607,13 +1656,20 @@ def build_gene_index_page(
 
     **Whose call it is was only half of it.** All 23 of those rows read
     `definitive` with no disease anywhere on the page, and `_SCOPE_RULE` plus the
-    `definitive for` column are the other half: a row reading `KMT2D |
-    definitive` on a site titled "CHD Atlas" claims KMT2D is definitive for
-    congenital heart disease, and ClinGen's actual assertion is `KMT2D --
-    Definitive for Kabuki syndrome 1`, made by the SCID-CID GCEP. `validity` is
-    taken for that column alone; `facts` carries no disease, and deriving one
-    from a second read of the mirrors would let this page and the gene page it
-    links to name different diseases for the same gene.
+    `graded for` column are the other half: a row reading `KMT2D | definitive` on
+    a site titled "CHD Atlas" claims KMT2D is definitive for congenital heart
+    disease, and ClinGen's actual assertion is `KMT2D -- Definitive for Kabuki
+    syndrome 1`, made by the SCID-CID GCEP. `validity` is taken for that column
+    alone; `facts` carries no disease, and deriving one from a second read of the
+    mirrors would let this page and the gene page it links to name different
+    diseases for the same gene.
+
+    Since the gate widened the column answers a second question too. A blank
+    `confidence` cell now means something specific -- no ClinGen panel graded the
+    gene, which is why `_graded_diseases` returns nothing for it -- and an em
+    dash beside a blank is the only pair on this table that is not a gap in the
+    data. The paragraph under the heading says so, and `grade_legend` glosses it
+    on both pages.
 
     Two couplings to `render.FILTER_SCRIPT` that nothing in the type system
     holds, both pinned by
@@ -1641,7 +1697,7 @@ def build_gene_index_page(
         symbol = symbols.get(gene, gene)
         confidence = fact.headline_confidence.value if fact.headline_confidence else ""
         groups = " ".join(group.value for group in fact.lesion_groups)
-        diseases = _definitive_diseases(validity.get(gene, uncurated()))
+        diseases = _graded_diseases(validity.get(gene, uncurated()), fact.headline_confidence)
         rows.append(
             Row(
                 cells=(
@@ -1749,9 +1805,12 @@ def build_gene_index_page(
         + "<p>Every confidence below is an upstream panel's or submitter's, republished "
         "with its provenance intact &mdash; the atlas authors no validity classification "
         "of its own. The <strong>atlas curation</strong> column is what says whether the "
-        "atlas has curated a gene itself, and the <strong>definitive for</strong> column "
-        "names the disease each panel actually graded.</p>"
-        f'<p>Showing <span id="shown">{len(rows)}</span> of {len(rows)} genes.</p>'
+        "atlas has curated a gene itself, and the <strong>graded for</strong> column "
+        "names the disease each panel actually graded. A blank confidence means no "
+        "ClinGen expert panel has graded the gene for any of the diseases in scope here; "
+        "its page names the submitters whose agreement admitted it.</p>"
+        + grade_legend()
+        + f'<p>Showing <span id="shown">{len(rows)}</span> of {len(rows)} genes.</p>'
         '<form id="filters" class="filters">'
         '<input name="q" type="search" aria-label="Search by gene symbol or HGNC id" '
         'placeholder="symbol or HGNC id">'

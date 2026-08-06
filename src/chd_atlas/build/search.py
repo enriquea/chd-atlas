@@ -184,9 +184,9 @@ def build_search(
     green gate, which it was not while this loop drew genes from the assertions:
     REF001 makes an *asserted* gene missing from the registry an error, and no
     rule pairs `mirrors/clingen_gene_validity.tsv` with `mirrors/genes.tsv`, so a
-    gene a panel calls definitive and HGNC has not been mirrored for reaches here
-    labelled with its id. Measured 2026-08-04 against the committed mirrors: 0 of
-    the 23 published genes are missing from the registry. `build_genes` and
+    a gene an authority has classified and HGNC has not been mirrored for reaches
+    here labelled with its id. Measured 2026-08-06 against the committed mirrors:
+    0 of the 92 published genes are missing from the registry. `build_genes` and
     `build_landing` apply the identical `symbols.get(gene, gene)` fallback, so
     such a gene reads "HGNC:4173" consistently across the browse row, the page
     heading and the search hit rather than being unlabelled in one of them.

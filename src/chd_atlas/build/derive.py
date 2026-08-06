@@ -88,7 +88,7 @@ class GeneFacts:
     assertion_count: int
     # Whether the atlas has curated evidence of its own for this gene, as
     # opposed to republishing an expert panel's classification. True of 1 of the
-    # 23 genes published today. See `vocab.AtlasCuration`.
+    # 92 genes published today. See `vocab.AtlasCuration`.
     atlas_curation: AtlasCuration
     # Every functional record about the gene, not only those an assertion cites.
     # `referential.py` requires a *cited* record to be about the asserting gene
@@ -109,7 +109,9 @@ def gene_facts(
 
     Keyed on HGNC id. `published` is `build.validity.published_genes()`'s return
     -- design decision D21: the atlas publishes a gene when a ClinGen expert
-    panel classifies it definitive for an in-scope disease.
+    panel classifies it `Limited` or better for an in-scope disease, or when two
+    or more GenCC submitters independently assert it and no ClinGen panel
+    contests it.
 
     That population is neither the asserted genes nor the registry. This
     function used to key on `{assertion.gene for assertion in corpus.assertions}`
@@ -118,13 +120,15 @@ def gene_facts(
     every field below that carries a confidence -- `headline_confidence`,
     `validity_state`, `has_conflicting_evidence`, `has_source_discordance` and
     `confidence_by_lesion_group` -- comes from `validity`, and none of them from
-    a curated assertion. A gene an expert panel calls definitive has exactly a
-    confidence to display, and 22 of the 23 genes published today have no
+    a curated assertion. A gene an expert panel has classified has exactly a
+    confidence to display, and 91 of the 92 genes published today have no
     assertion at all.
 
     An asserted gene outside `published` gets no facts, so no bundle and no
     page. That is D37: a curator's assertion does not admit a gene to the
-    definitive set, and candidate genes belong in their own labelled section.
+    published set, and candidate genes belong in their own labelled section. The
+    2026-08-06 widening does not soften this -- it moves the authority from one
+    external source to two, never to the atlas.
 
     `validity` is `build.validity.gene_validity()`'s return. A gene absent from
     it gets `uncurated()`, which cannot happen for a member of `published` --

@@ -119,14 +119,27 @@ def test_every_html_page_the_build_writes_carries_the_research_use_notice(site: 
 
     Enumerated with `rglob("*.html")` rather than against a list of expected
     paths, so a page kind added later is covered without anyone remembering to
-    add it here -- which is the failure mode this replaces. The count is asserted
-    too: an `rglob` that matched nothing would satisfy an all-pages loop
-    vacuously, and 25 is what the committed corpus publishes (1 landing + 1
-    browse + 23 gene pages).
+    add it here -- which is the failure mode this replaces.
+
+    **The count is asserted against the published population, not against a
+    literal.** An `rglob` matching nothing would satisfy an all-pages loop
+    vacuously, so a count is needed; a literal 25 was what the committed corpus
+    published until the gate widened on 2026-08-06, and pinning the total meant
+    re-editing this line for a change it has nothing to say about. Derived from
+    the bundle count instead: one page per published gene, plus the landing page
+    and the browse page. That fails on a gene page that was not written and on a
+    stray page that was, which is what this guards, and it does not fail merely
+    because the population moved.
     """
     pages = sorted(site.rglob("*.html"))
+    bundles = sorted((site / "genes").glob("HGNC_*.json"))
+    expected = len(bundles) + 2
 
-    assert len(pages) == 25, f"expected 25 HTML pages, found {len(pages)}"
+    assert len(bundles) > 1, "the build published no gene bundles; the fixture is broken"
+    assert len(pages) == expected, (
+        f"expected {expected} HTML pages (1 landing + 1 browse + {len(bundles)} gene "
+        f"pages), found {len(pages)}"
+    )
     for page in pages:
         assert RESEARCH_USE_NOTICE in page.read_text(encoding="utf-8"), (
             f"{page.relative_to(site)} carries no research-use notice"

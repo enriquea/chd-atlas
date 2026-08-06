@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 import polars as pl
@@ -11,6 +12,8 @@ import pytest
 from chd_atlas.build.validity import (
     GeneValidity,
     ValidityRecord,
+    _admitting_clingen,
+    admission_provenance,
     gene_validity,
     published_genes,
     uncurated,
@@ -349,101 +352,205 @@ def test_uncurated_is_the_shape_for_no_authority_and_a_fresh_instance_each_call(
     assert first is not second
 
 
-def test_only_a_clingen_definitive_record_publishes_a_gene() -> None:
-    """D21, and the reason it is not spelled as "headline definitive".
+def _clingen(classification: Classification) -> ValidityRecord:
+    return ValidityRecord(
+        source=ValiditySource.CLINGEN,
+        classification=classification,
+        classification_term=classification.value.title(),
+        disease="MONDO:0007732",
+        disease_label="Holt-Oram syndrome",
+        moi="AD",
+        report_url=None,
+        gcep="Congenital Heart Disease",
+    )
 
-    On the mirrors as committed the two rules select the identical 23 genes,
-    which is exactly why the distinction has to be pinned here rather than left
-    to coincidence. `strong` is not definitive; a GenCC `definitive` is not an
-    expert panel's; and a gene ClinGen graded `limited` must not be admitted by
-    a submitter who graded it `definitive`.
+
+def _gencc(classification: Classification, submitter: str) -> ValidityRecord:
+    return ValidityRecord(
+        source=ValiditySource.GENCC,
+        classification=classification,
+        classification_term=classification.value.title(),
+        disease="MONDO:0007732",
+        disease_label="Holt-Oram syndrome",
+        moi="Autosomal dominant",
+        report_url=None,
+        submitter=submitter,
+    )
+
+
+def _entry(*records: ValidityRecord) -> GeneValidity:
+    return GeneValidity(
+        records=records,
+        state=(
+            ValidityState.EXPERT_CURATED
+            if any(record.source is ValiditySource.CLINGEN for record in records)
+            else ValidityState.SUBMITTER_CURATED
+        ),
+        has_source_discordance=False,
+    )
+
+
+def test_the_two_warrants_that_publish_a_gene_and_the_four_that_do_not() -> None:
+    """D21 as it stands after the 2026-08-06 widening, one corpus per clause.
+
+    Each gene below is the *only* one that fails if its clause is removed, which
+    is why they share a corpus rather than being seven tests: the rule is one
+    predicate and a per-clause test cannot see a clause interacting with its
+    neighbour.
+
+    - **1** ClinGen `Definitive` -- the old rule, still admitted.
+    - **2** ClinGen `Limited` -- the widening. `PUBLICATION_FLOOR` is `LIMITED`,
+      so this is the weakest ClinGen record that admits, and lowering the floor
+      one rung would admit `DISPUTED` with it.
+    - **3** ClinGen `Disputed` alone. A rank *floor* excludes it by construction;
+      an enumeration of admissible rungs is what a later edit forgets.
+    - **4** one GenCC submitter at `Definitive`. `SUBMITTER_AGREEMENT` is 2, and
+      a single submitter is one laboratory's panel-inclusion decision however
+      strongly it is graded -- so a grade cannot substitute for a second body.
+    - **5** two GenCC submitters at `Limited`. The second warrant, at its
+      weakest: two bodies agreeing admits where one at `Definitive` does not.
+    - **6** ClinGen `Disputed` plus two agreeing submitters. **The veto.**
+      Without it two laboratories overrule a chartered panel. LEFTY2 is the live
+      case (HGNC:3122, measured 2026-08-06: CHD GCEP `Disputed`, G2P and PanelApp
+      Australia `Limited`), and it is why `published_genes` is not simply the
+      union of two independent predicates.
+    - **7** ClinGen submitting to GenCC beside one other submitter. **ClinGen
+      must not vote twice** -- it is the source the first warrant already trusts
+      alone, and measured 2026-08-06 it is GenCC's largest in-scope submitter at
+      111 rows over 109 genes. Counting it here would turn every one of those
+      into a one-submitter admission wearing two hats.
     """
     published = published_genes(
         {
-            "HGNC:1": GeneValidity(
-                records=(
-                    ValidityRecord(
-                        source=ValiditySource.CLINGEN,
-                        classification=Classification.DEFINITIVE,
-                        classification_term="Definitive",
-                        disease="MONDO:0007732",
-                        disease_label="Holt-Oram syndrome",
-                        moi="AD",
-                        report_url=None,
-                    ),
-                ),
-                state=ValidityState.EXPERT_CURATED,
-                has_source_discordance=False,
+            "HGNC:1": _entry(_clingen(Classification.DEFINITIVE)),
+            "HGNC:2": _entry(_clingen(Classification.LIMITED)),
+            "HGNC:3": _entry(_clingen(Classification.DISPUTED)),
+            "HGNC:4": _entry(_gencc(Classification.DEFINITIVE, "Ambry Genetics")),
+            "HGNC:5": _entry(
+                _gencc(Classification.LIMITED, "G2P"),
+                _gencc(Classification.LIMITED, "PanelApp Australia"),
             ),
-            "HGNC:2": GeneValidity(
-                records=(
-                    ValidityRecord(
-                        source=ValiditySource.CLINGEN,
-                        classification=Classification.STRONG,
-                        classification_term="Strong",
-                        disease="MONDO:0007732",
-                        disease_label="Holt-Oram syndrome",
-                        moi="AD",
-                        report_url=None,
-                    ),
-                ),
-                state=ValidityState.EXPERT_CURATED,
-                has_source_discordance=False,
+            "HGNC:6": _entry(
+                _clingen(Classification.DISPUTED),
+                _gencc(Classification.LIMITED, "G2P"),
+                _gencc(Classification.LIMITED, "PanelApp Australia"),
             ),
-            "HGNC:3": GeneValidity(
-                records=(
-                    ValidityRecord(
-                        source=ValiditySource.GENCC,
-                        classification=Classification.DEFINITIVE,
-                        classification_term="Definitive",
-                        disease="MONDO:0007732",
-                        disease_label="Holt-Oram syndrome",
-                        moi="Autosomal dominant",
-                        report_url=None,
-                        submitter="Ambry Genetics",
-                    ),
-                ),
-                state=ValidityState.SUBMITTER_CURATED,
-                has_source_discordance=False,
+            "HGNC:7": _entry(
+                _gencc(Classification.DEFINITIVE, "ClinGen"),
+                _gencc(Classification.DEFINITIVE, "Ambry Genetics"),
             ),
-            "HGNC:4": GeneValidity(
-                records=(
-                    ValidityRecord(
-                        source=ValiditySource.CLINGEN,
-                        classification=Classification.LIMITED,
-                        classification_term="Limited",
-                        disease="MONDO:0007732",
-                        disease_label="Holt-Oram syndrome",
-                        moi="AD",
-                        report_url=None,
-                    ),
-                    ValidityRecord(
-                        source=ValiditySource.GENCC,
-                        classification=Classification.DEFINITIVE,
-                        classification_term="Definitive",
-                        disease="MONDO:0007732",
-                        disease_label="Holt-Oram syndrome",
-                        moi="Autosomal dominant",
-                        report_url=None,
-                        submitter="G2P",
-                    ),
-                ),
-                state=ValidityState.EXPERT_CURATED,
-                has_source_discordance=False,
-            ),
+        }
+    )
+    assert published == {"HGNC:1", "HGNC:2", "HGNC:5"}
+
+
+def test_no_known_association_is_not_a_veto() -> None:
+    """Spec D34, applied to the gate rather than to `has_conflicting_evidence`.
+
+    A stated absence of association is not a contest -- it takes neither side of
+    the discordance test, and treating it as one here would give a single "we
+    looked and found nothing" the force of a refutation by an expert panel.
+
+    Unreachable on the committed mirrors, which is exactly why it is pinned:
+    measured 2026-08-06, every one of the 16 genes admitted on GenCC agreement
+    has no in-scope ClinGen record at all, so the corpus cannot distinguish this
+    from `_clingen_contests` returning True for rank 0. `NO_KNOWN_ASSOCIATION`
+    sits at rank 0, below `DISPUTED`, so a veto written as a rank test rather
+    than as membership of `CONTESTED` would swallow it silently.
+    """
+    published = published_genes(
+        {
+            "HGNC:1": _entry(
+                _clingen(Classification.NO_KNOWN_ASSOCIATION),
+                _gencc(Classification.LIMITED, "G2P"),
+                _gencc(Classification.LIMITED, "PanelApp Australia"),
+            )
         }
     )
     assert published == {"HGNC:1"}
 
 
-def test_the_committed_mirrors_publish_twenty_three_genes(
+def test_admission_provenance_names_the_one_warrant_that_admitted_the_gene(
+    repository_validity: dict[str, GeneValidity],
+) -> None:
+    """`admitted_by` is an object, not an array, because exactly one warrant admits.
+
+    A gene with both is published on ClinGen's word and says so: the difference
+    between "a chartered expert panel graded this" and "two laboratories put it
+    on a panel" is the whole reason the field exists.
+
+    Three properties in one test because they share the fixture and the same
+    mutant kills them together: every key is present on every gene (an object
+    whose shape varies is a trap for a consumer reading a field off one gene and
+    expecting it on the next), `submitters` is `[]` rather than absent under a
+    ClinGen warrant, and `asserted_by.count` deduplicates ClinGen against its own
+    GenCC submissions.
+
+    TBX1 is asserted against by name, not by index. It is the 22q11.2 gene, it
+    has no in-scope ClinGen record at all, and it is what a non-commercial
+    requirement would have dropped -- so a mutant that admitted it under
+    `"clingen"` would publish the most recognisable gene on the site under an
+    authority that never graded it.
+    """
+    tbx1 = admission_provenance(repository_validity["HGNC:11592"])
+    assert tbx1["admitted_by"] == {
+        "authority": "gencc_agreement",
+        "classification": None,
+        "disease": None,
+        "disease_label": None,
+        "panel": None,
+        "submitters": ["Ambry Genetics", "Labcorp Genetics (formerly Invitae)"],
+    }
+
+    tbx5 = admission_provenance(repository_validity["HGNC:11604"])
+    admitted = tbx5["admitted_by"]
+    assert isinstance(admitted, dict)
+    assert admitted["authority"] == "clingen"
+    assert admitted["classification"] == "definitive"
+    assert admitted["submitters"] == []
+    assert set(admitted) == set(tbx1["admitted_by"] or {})
+
+    asserted = tbx5["asserted_by"]
+    assert isinstance(asserted, dict)
+    institutions = asserted["institutions"]
+    assert isinstance(institutions, list)
+    assert asserted["count"] == len(institutions)
+    assert institutions.count("ClinGen") == 1, "ClinGen counted once, not once per source"
+
+
+def test_the_committed_mirrors_publish_ninety_two_genes_across_four_rungs(
     repository_validity: dict[str, GeneValidity],
 ) -> None:
     """A regression pin on the live corpus, not a restatement of the rule above.
 
-    23 is what `docs/data-api.md`, `index.html`'s counts and the manifest's file
-    list are all written against. A scope-file edit or a mirror refresh that
-    moves this number should fail here and be looked at, not discovered in a
-    deployed site.
+    **Pinned as a composition, not as a total.** 92 alone is one number that a
+    scope edit and a mirror refresh can move in opposite directions and leave
+    unchanged, and it says nothing about which warrant admitted what. The split
+    is what `docs/data-api.md`, `index.html`'s counts and every chip on the site
+    are written against: measured 2026-08-06, 76 genes carry a ClinGen record at
+    or above the floor and 16 are admitted on GenCC agreement alone.
+
+    The population was 23 until 2026-08-06 and every gene in it was ClinGen
+    `Definitive`; those 23 are still here, which is what makes this a widening
+    rather than a replacement.
     """
-    assert len(published_genes(repository_validity)) == 23
+    published = published_genes(repository_validity)
+    assert len(published) == 92
+
+    by_warrant = Counter(
+        admission_provenance(repository_validity[gene])["admitted_by"]["authority"]  # type: ignore[index]
+        for gene in published
+    )
+    assert by_warrant == {"clingen": 76, "gencc_agreement": 16}
+
+    by_grade = Counter(
+        record.classification
+        for gene in published
+        if (record := _admitting_clingen(repository_validity[gene])) is not None
+    )
+    assert by_grade == {
+        Classification.DEFINITIVE: 23,
+        Classification.LIMITED: 43,
+        Classification.MODERATE: 9,
+        Classification.STRONG: 1,
+    }

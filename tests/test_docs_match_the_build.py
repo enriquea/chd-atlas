@@ -334,6 +334,27 @@ def test_the_burden_census_in_the_doc_is_the_census_the_build_publishes(site: Pa
     assert f"loss-of-function is {lof} and synonymous {synonymous}" in section
     assert f"{composite} of the {len(published)} rows" in section
 
+    # The per-study split, and the gene the widened gate admitted with no burden
+    # evidence at all. Both are new in schema 2.8 and both are the kind of claim
+    # section 4.24 says goes stale silently: the first is four numbers that stay
+    # internally consistent while describing a corpus that no longer exists, and
+    # the second is a sentence that was simply not true before the gate widened.
+    per_study = ", ".join(
+        str(sum(1 for r in published if r["study"] == study)) for study in studies
+    )
+    assert f"{per_study} rows" in section, f"the per-study split is not {per_study}"
+
+    covered = {
+        path.stem
+        for path in sorted((site / "genes").glob("HGNC_*.json"))
+        if json.loads(path.read_text()).get("burden")
+    }
+    total = len(sorted((site / "genes").glob("HGNC_*.json")))
+    assert f"across {len(covered)} of the {total} published genes" in section
+    assert (len(covered) < total) == ("carries no burden rows at all" in section), (
+        "the doc and the build disagree about whether a published gene lacks burden rows"
+    )
+
     # And the claim that the composite is a union rather than a partition, which
     # is what stops a consumer double-counting when it aggregates.
     assert "double-counts" in section
