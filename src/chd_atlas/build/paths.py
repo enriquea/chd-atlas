@@ -115,6 +115,11 @@ DATASETS: Final = "datasets.json"
 # labels and synonyms verbatim — so the attribution has to travel with the data,
 # not sit only in a README a JSON consumer never opens.
 SOURCES: Final = "sources.json"
+# The sample collections every burden row names by bare id. Published because a
+# consumer reading `case_cohorts: ["taa_cases"]` out of a bundle otherwise gets
+# the numbers with none of the caveats that qualify them -- and `taa_cases` is
+# 777 probands who do not have congenital heart disease.
+COHORTS: Final = "cohorts.json"
 
 # The site's front door, not identifier-based like `gene_bundle_path` — there is
 # exactly one, so nothing here builds it from a value. Named as a constant

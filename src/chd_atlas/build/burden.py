@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from chd_atlas.build.emit import Json
+from chd_atlas.build.emit import Emitter, Json
+from chd_atlas.build.paths import COHORTS
 from chd_atlas.models.cohort import Cohort
 from chd_atlas.tables import BURDEN, read_table
 
@@ -389,3 +390,56 @@ def cohort_registry(cohorts: Iterable[Cohort]) -> dict[str, Cohort]:
     `build_site`.
     """
     return {str(cohort.id): cohort for cohort in cohorts}
+
+
+def build_cohorts(cohorts: Iterable[Cohort], emitter: Emitter) -> None:
+    """Publish `cohorts.json`: the table a bare cohort id resolves against.
+
+    **Every burden row names its collections by bare id and nothing mapped those
+    ids to anything.** Measured 2026-08-06 over the published corpus: 13 distinct
+    ids appear across 915 rows -- `taa_cases`, `gnomad_controls`, `ukbb` and ten
+    more -- and `curation/cohorts.yaml` reached zero published bytes, so every
+    programmatic consumer got the numbers without the caveats that qualify them.
+    `Cohort.url` reached no byte at all. The descriptions rendered only inside a
+    `<details>` on the gene page, which is a fact about the HTML and not about
+    the API.
+
+    The caveats are the point, not decoration. `taa_cases` is 777 sporadic
+    thoracic aortic aneurysm probands who **do not have congenital heart
+    disease**; `ukbb`'s controls are adults recruited at 40-69 against cases
+    largely enrolled in childhood; `ddd` ascertains on developmental disorder, so
+    its contribution is enriched for syndromic CHD. A consumer computing anything
+    from a row without those sentences is computing something else.
+
+    **The whole registry is published, not only the ids the published rows
+    cite.** The two sets are identical today -- 13 and 13 -- and identical
+    figures are one figure to every test (CLAUDE.md section 4.30), so this says
+    which one it is: this is a *resolution table*, and a table that omitted an id
+    some row cites would 404 exactly where a reader needed it. The direction is
+    also the safe one -- `validate_burden_references` (BUR009) already refuses a
+    row citing a cohort this file does not carry, so publishing the registry
+    entire means every id in every row resolves by construction, while
+    publishing the cited subset would make that guarantee depend on the gate.
+
+    Sorted by id: `encode_json`'s `sort_keys` orders dict keys and never list
+    elements, so an unsorted array here checksums differently between two builds
+    of one commit. `url` is emitted as `null` rather than omitted where a
+    collection has no public page (4 of the 13), because an object whose shape
+    varies is a trap for a consumer reading a field off one record and expecting
+    it on the next -- the rule `admission_provenance` and `burden_payload`
+    already follow.
+    """
+    emitter.write_json(
+        COHORTS,
+        {
+            "cohorts": [
+                {
+                    "id": str(cohort.id),
+                    "name": cohort.name,
+                    "description": cohort.description,
+                    "url": cohort.url,
+                }
+                for cohort in sorted(cohorts, key=lambda item: str(item.id))
+            ]
+        },
+    )

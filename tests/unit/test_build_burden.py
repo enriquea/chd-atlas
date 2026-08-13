@@ -3,16 +3,19 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from chd_atlas.build.burden import (
     BurdenRow,
+    build_cohorts,
     burden_census,
     burden_payload,
     cohort_registry,
     load_burden,
     shared_cohorts,
 )
+from chd_atlas.build.emit import Emitter
 from chd_atlas.models.cohort import Cohort
 from chd_atlas.tables import BURDEN
 
@@ -310,3 +313,59 @@ def test_the_registry_carries_the_description_not_only_the_name() -> None:
 
     assert registry == {"ukbb": cohort}
     assert registry["ukbb"].description.startswith("Adults recruited")
+
+
+def test_cohorts_json_publishes_the_registry_a_burden_row_resolves_against(
+    tmp_path: Path,
+) -> None:
+    """`build_cohorts`: the whole registry, sorted, with the caveats intact.
+
+    **The caveats are the payload.** Every burden row names its collections by
+    bare id, and until schema 2.9 nothing mapped those ids to anything: measured
+    2026-08-06, `curation/cohorts.yaml` reached zero published bytes and
+    `Cohort.url` reached none at all, so a consumer had 915 statistics and none
+    of the sentences that say what they count -- including that `taa_cases` is
+    777 probands who do not have congenital heart disease.
+
+    Four properties, one fixture, because they share it and each fails a
+    different mutant:
+
+    - **Every curated cohort is published**, not only the ones some row cites.
+      The fixture includes `unused`, which no row here names. Publishing the
+      cited subset would make resolution depend on the publication gate, and a
+      row citing an id this file omits would 404 exactly where a reader needed
+      the caveat.
+    - **Sorted by id.** `encode_json`'s `sort_keys` orders dict keys and never
+      list elements, so an unsorted array checksums differently between two
+      builds of one commit. Asserted against a literal in reverse-alphabetical
+      fixture order, not by building twice: `PYTHONHASHSEED` is fixed for the
+      life of one interpreter (CLAUDE.md section 4.13).
+    - **`description` reaches the payload.** `cohort_registry` returned a
+      `{id: name}` projection for one commit and every caveat a curator had
+      written reached nothing; this is the same loss one layer further out.
+    - **`url` is `null`, never absent**, where a collection has no public page.
+      An object whose shape varies is a trap for a consumer reading a field off
+      one record and expecting it on the next.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_cohorts(
+        (
+            Cohort(id="zebra", name="Zebra", description="Cited by nothing here.", url=None),
+            Cohort(id="ukbb", name="UK Biobank", description="Adults 40-69.", url="https://u"),
+            Cohort(id="unused", name="Unused", description="No row names this.", url=None),
+        ),
+        emitter,
+    )
+
+    published = json.loads((tmp_path / "cohorts.json").read_text(encoding="utf-8"))["cohorts"]
+
+    assert [cohort["id"] for cohort in published] == ["ukbb", "unused", "zebra"]
+    assert published[0] == {
+        "id": "ukbb",
+        "name": "UK Biobank",
+        "description": "Adults 40-69.",
+        "url": "https://u",
+    }
+    # `url` present and null rather than omitted -- `"url" in ...` fails on an
+    # omitted key where `.get("url") is None` would pass on both.
+    assert "url" in published[1] and published[1]["url"] is None

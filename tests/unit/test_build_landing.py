@@ -706,6 +706,7 @@ def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
         "assertions": "Curated gene-disease assertions",
         "burden_rows": "Burden statistics",
         "cohort_families": "Independent datasets",
+        "cohorts": "Sample collections",
         "datasets": "Omics datasets",
         "featured": "Featured manuscripts",
         "functional": "Functional evidence records",

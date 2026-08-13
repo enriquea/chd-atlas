@@ -291,3 +291,49 @@ def test_every_link_on_every_page_resolves_to_a_file_the_build_wrote(site: Path)
         if target not in written and f"{target}/index.html" not in written
     ]
     assert not broken, f"pages link to files the build never wrote: {broken}"
+
+
+def test_every_cohort_a_published_burden_row_cites_resolves_with_its_caveat(site: Path) -> None:
+    """A bare cohort id in a bundle must resolve to a description in `cohorts.json`.
+
+    **This is the join the burden columns exist for.** A row names its sample
+    collections by bare id -- `["taa_cases"]`, `["gnomad_controls"]` -- and the
+    ids carry no meaning on their own. Until schema 2.9 nothing published mapped
+    them, so a consumer had the statistics and none of the caveats: measured
+    2026-08-06 over a real build, 13 distinct ids appeared across 915 published
+    rows and `curation/cohorts.yaml` reached zero published bytes.
+
+    Asserted over a *real* build rather than a fixture, because what could break
+    it is not the emitter -- covered by
+    `test_cohorts_json_publishes_the_registry_a_burden_row_resolves_against` --
+    but the publication gate moving under it. A widened gate can admit a gene
+    whose rows cite a collection nobody curated, and that is a dangling id in a
+    published payload rather than a build failure. `BUR009` refuses it at the
+    gate; this checks the guarantee survives to the bytes.
+
+    `taa_cases` is named explicitly. It is 777 thoracic aortic aneurysm probands
+    who **do not have congenital heart disease**, and it is the id whose
+    description most changes what a row means -- a reader who resolves it and a
+    reader who does not are reading different data.
+    """
+    registry = {
+        cohort["id"]: cohort
+        for cohort in json.loads((site / "cohorts.json").read_text(encoding="utf-8"))["cohorts"]
+    }
+    assert registry, "the build published no cohort registry"
+
+    cited: set[str] = set()
+    for bundle in sorted((site / "genes").glob("HGNC_*.json")):
+        for row in json.loads(bundle.read_text(encoding="utf-8"))["burden"]:
+            cited.update(row["case_cohorts"])
+            cited.update(row["control_cohorts"])
+
+    assert cited, "no published burden row names a cohort, so this proves nothing"
+    dangling = sorted(cited - set(registry))
+    assert not dangling, f"published rows cite cohorts that resolve to nothing: {dangling}"
+
+    # Every resolved record carries the sentence a reader needs, not just a name.
+    for identifier in sorted(cited):
+        assert registry[identifier]["description"].strip(), f"{identifier} publishes no caveat"
+
+    assert "not congenital heart disease" in registry["taa_cases"]["description"].lower()
