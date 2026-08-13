@@ -65,7 +65,7 @@ REPO = Path(__file__).parent.parent.parent
 _MIRRORED_ROW_LABEL = (
     "Genes with mirrored validity in CHD scope "
     "(browsable once ClinGen grades it Limited or better for a disease in that "
-    "scope, or two GenCC submitters agree)"
+    "scope, or two GenCC submitters agree and no ClinGen panel disputes it)"
 )
 
 

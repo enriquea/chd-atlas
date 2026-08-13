@@ -14,6 +14,8 @@ from chd_atlas.build.validity import (
     ValidityRecord,
     _admitting_clingen,
     admission_provenance,
+    admitting_grade,
+    agreeing_submitters,
     gene_validity,
     published_genes,
     uncurated,
@@ -365,11 +367,20 @@ def _clingen(classification: Classification) -> ValidityRecord:
     )
 
 
-def _gencc(classification: Classification, submitter: str) -> ValidityRecord:
+def _gencc(classification: Classification | None, submitter: str) -> ValidityRecord:
+    """One GenCC submission. `None` is `Supportive`, which maps to no rung.
+
+    `None` is accepted because it is an ordinary GenCC value, not an edge case:
+    `vocab.GENCC_CLASSIFICATIONS` maps `Supportive` to it, six genes in the
+    committed mirrors carry nothing else, and a helper that could not express it
+    is why no test distinguished "asserted without a grade" from "not asserted".
+    """
     return ValidityRecord(
         source=ValiditySource.GENCC,
         classification=classification,
-        classification_term=classification.value.title(),
+        classification_term="Supportive"
+        if classification is None
+        else classification.value.title(),
         disease="MONDO:0007732",
         disease_label="Holt-Oram syndrome",
         moi="Autosomal dominant",
@@ -468,6 +479,104 @@ def test_no_known_association_is_not_a_veto() -> None:
         }
     )
     assert published == {"HGNC:1"}
+
+
+def test_a_submitter_below_the_floor_is_not_a_second_body_agreeing() -> None:
+    """`agreeing_submitters` counts submitters *at or above* `PUBLICATION_FLOOR`.
+
+    **Measured 2026-08-06: deleting the floor check from `agreeing_submitters`
+    survived all 796 tests.** Every fixture that exercised the second warrant
+    used two submitters at exactly `Limited`, so "a submitter" and "a submitter
+    at or above the floor" were the same set, and a gate admitting on two
+    submissions of `No Known Disease Relationship` was indistinguishable from
+    the real one. That is CLAUDE.md section 4.30: two figures equal in the
+    corpus are one figure to every test.
+
+    The dissenting rungs are the point. Without the floor, a gene two
+    laboratories looked at and reported *no known relationship* for is published
+    as though they had agreed it is a CHD gene -- the exact inversion, and it
+    would publish silently because the gene appears with a full validity table.
+
+    `Supportive` maps to `None` (`vocab.GENCC_CLASSIFICATIONS`) and is checked
+    here too: it asserts an association without grading it, so it cannot clear a
+    floor expressed as a rank, and a submitter offering one is not a second body
+    agreeing for the purpose of admission.
+    """
+    below = _entry(
+        _gencc(Classification.NO_KNOWN_ASSOCIATION, "Illumina"),
+        _gencc(Classification.LIMITED, "G2P"),
+    )
+    assert agreeing_submitters(below) == ("G2P",)
+
+    refuted = _entry(
+        _gencc(Classification.REFUTED, "Illumina"),
+        _gencc(Classification.DISPUTED, "Ambry Genetics"),
+        _gencc(Classification.LIMITED, "G2P"),
+    )
+    assert agreeing_submitters(refuted) == ("G2P",)
+
+    # ... and the gate that reads it refuses the gene, which is the claim that
+    # matters to a reader.
+    assert published_genes({"HGNC:1": below, "HGNC:2": refuted}) == set()
+
+
+def test_the_strongest_clingen_record_admits_when_a_gene_carries_several() -> None:
+    """`_admitting_clingen` takes the strongest qualifying record, not any one.
+
+    **Measured 2026-08-06: turning that `max` into `min` survived all 796
+    tests.** No fixture and no gene in the committed mirrors carries two
+    in-scope ClinGen records at different rungs -- measured, all 76 panel-graded
+    genes have exactly one distinct label at their headline grade -- so the
+    choice among several was unreachable and therefore unguarded.
+
+    It is not hypothetical: `curation/chd_scope.yaml` is an editorial file a
+    curator widens, and one added MONDO term can give a gene a second qualifying
+    record without any code changing. Under `min` such a gene publishes the
+    *weakest* thing a panel said about it, and `admitted_by.disease_label` names
+    the disease of that weakest record -- so a gene ClinGen calls definitive for
+    one CHD syndrome and limited for another would headline `limited`.
+    """
+    entry = _entry(_clingen(Classification.LIMITED), _clingen(Classification.DEFINITIVE))
+    provenance = admission_provenance(entry)
+    admitted = provenance["admitted_by"]
+    assert isinstance(admitted, dict)
+    assert admitted["classification"] == "definitive"
+    assert admitting_grade(entry) is Classification.DEFINITIVE
+
+
+def test_asserted_by_counts_institutions_not_records_and_never_a_dissent() -> None:
+    """One name per institution, and only institutions that assert the gene.
+
+    Two mutants this kills, both measured 2026-08-06 as surviving all 796 tests.
+
+    **The dedup.** ClinGen submits to GenCC under its own name, so a gene with a
+    panel record and a ClinGen GenCC submission is one institution twice.
+    Counting `gcep` values instead overstates by exactly one per gene. The
+    assertion that guarded this was `institutions.count("ClinGen") == 1` against
+    a list built from a `set`, which cannot return anything but 0 or 1 -- a
+    vacuous check that no mutation could fail.
+
+    **The dissent.** `asserted_by` is a count of *assertions*, and
+    `no_known_association`, `disputed` and `refuted` are not assertions.
+    Illumina recorded `No Known Disease Relationship` for GDF1 and was counted
+    among the institutions asserting it until 2026-08-06 -- on the very gene the
+    two-submitter rule exists because of.
+
+    `Supportive` (`None`) **is** counted: an ungraded assertion is still an
+    assertion, and excluding it would silently drop Orphanet.
+    """
+    entry = _entry(
+        _clingen(Classification.DEFINITIVE),
+        _gencc(Classification.DEFINITIVE, "ClinGen"),
+        _gencc(Classification.LIMITED, "Ambry Genetics"),
+        _gencc(None, "Orphanet"),
+        _gencc(Classification.NO_KNOWN_ASSOCIATION, "Illumina"),
+        _gencc(Classification.REFUTED, "Natera"),
+    )
+    asserted = admission_provenance(entry)["asserted_by"]
+    assert isinstance(asserted, dict)
+    assert asserted["institutions"] == ["Ambry Genetics", "ClinGen", "Orphanet"]
+    assert asserted["count"] == 3
 
 
 def test_admission_provenance_names_the_one_warrant_that_admitted_the_gene(

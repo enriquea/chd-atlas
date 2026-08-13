@@ -89,7 +89,7 @@ from chd_atlas.identifiers import HgncId
 from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.models.cohort import Cohort
 from chd_atlas.models.literature import Publication
-from chd_atlas.vocab import AtlasCuration, Classification, ValiditySource
+from chd_atlas.vocab import AtlasCuration, Classification, ValiditySource, ValidityState
 
 # What the published set *is*, in one sentence, on both page kinds that show it.
 #
@@ -131,10 +131,31 @@ _SCOPE_RULE: Final = (
     "beside the gene.</p>"
 )
 
+# **Two notices, because the sentence was true of 23 genes and is now true of
+# 76.** Until 2026-08-06 every published gene carried a ClinGen grade, so "the
+# classification above is an expert panel's" was unconditionally true. The
+# widened gate admits 16 genes no panel has graded at all -- measured on the
+# committed corpus, all 16 shipped that sentence, telling a reader a commercial
+# laboratory's submission was a chartered panel's classification, one screen
+# below a legend saying no panel had graded it. A sentence's truth conditions
+# travel with the population it describes.
+#
+# `validity_state` is the discriminator rather than `headline_confidence is
+# None`, because the two are equal on the committed corpus (16 and 16) and equal
+# figures are one figure to every test.
 _NOT_CURATED: Final = (
     "<p>The atlas has <strong>not yet curated</strong> a lesion assertion for this gene. "
     "The classification above is an expert panel's, mirrored with its provenance "
     "intact; no classification on this page is the atlas's own assessment.</p>"
+)
+
+_NOT_CURATED_UNGRADED: Final = (
+    "<p>The atlas has <strong>not yet curated</strong> a lesion assertion for this gene, "
+    "and <strong>no ClinGen expert panel has graded it</strong> for a disease an external "
+    "authority treats as congenital heart disease. It is published because the Gene "
+    "Curation Coalition submitters named above independently assert it; their "
+    "classifications are mirrored with their provenance intact, and no classification on "
+    "this page is the atlas's own assessment.</p>"
 )
 
 _EM_DASH: Final = "—"
@@ -478,7 +499,12 @@ def _graded_diseases(gene_validity: GeneValidity, grade: Classification | None) 
     builds of one commit. Measured 2026-08-06 against the committed mirrors: all
     76 panel-graded genes have exactly one distinct label at their headline
     grade, so the multi-label case is latent and its ordering is guarded by
-    fixture alone (`test_a_gene_graded_for_two_in_scope_diseases_names_both`).
+    fixture alone
+    (`test_a_gene_definitive_for_two_in_scope_diseases_names_both_in_a_fixed_order`).
+    That name was wrong here until 2026-08-06 -- it cited a
+    `..._graded_for_two_...` test that has never existed, which is the one thing
+    a cross-reference must not do: it sends the next reader looking for a guard
+    they will not find, and deleting the real one then costs nothing.
     """
     if grade is None:
         return ()
@@ -534,10 +560,15 @@ def _not_curated(fact: GeneFacts) -> str:
     (1 failed, 621 passed), and returning `""` unconditionally fails both tests
     (2 failed, 620 passed). Neither branch rests on the other's guard.
     """
+    notice = (
+        _NOT_CURATED
+        if fact.validity_state is ValidityState.EXPERT_CURATED
+        else _NOT_CURATED_UNGRADED
+    )
     if fact.functional_count == 0:
-        return _NOT_CURATED
+        return notice
     noun = "record" if fact.functional_count == 1 else "records"
-    return _NOT_CURATED + (
+    return notice + (
         f"<p>The {fact.functional_count} functional {noun} counted beside this notice "
         f"<em>are</em> the atlas's own curation, and are published in this gene's JSON.</p>"
     )
@@ -1058,10 +1089,12 @@ def _disclosure(study: str, publications: Mapping[str, Publication]) -> str:
     the 23 gene pages published then. Re-measured 2026-08-06 against the widened
     population: 91 of the 92 pages carry a burden table, drawn from three studies
     -- PMID:42230622 on 87, PMID:34324492 on 61, PMID:40127276 on 25 -- and 13
-    carry all three, with the own-lab declaration on one of the three. That is
+    carry all three, with the own-lab declaration on **two** of the three
+    (PMID:42230622 and PMID:34324492; PMID:40127276 is not this atlas's). That is
     the arrangement that makes the line informative: an unconditional disclosure
     says nothing, and a stale claim that it is unconditional invites someone to
-    make it one.
+    make it one. This sentence read "one of the three" until 2026-08-06, which
+    contradicted this docstring's own opening paragraph two screens up.
     """
     publication = publications.get(study)
     if publication is None or not publication.own_lab:

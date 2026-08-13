@@ -81,7 +81,7 @@ from chd_atlas.build.burden import BurdenCensus
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import LANDING
 from chd_atlas.build.render import EVIDENCE_POWER_CAVEAT, document, evidence_legend
-from chd_atlas.build.validity import GeneValidity
+from chd_atlas.build.validity import GeneValidity, admitting_grade
 from chd_atlas.corpus import Corpus
 
 # Read-only, and not a claim this build can verify — unlike every count on the
@@ -115,7 +115,7 @@ _REPOSITORY_URL = "https://github.com/enriquea/chd-atlas"
 _MIRRORED_ROW_LABEL = (
     "Genes with mirrored validity in CHD scope "
     "(browsable once ClinGen grades it Limited or better for a disease in that "
-    "scope, or two GenCC submitters agree)"
+    "scope, or two GenCC submitters agree and no ClinGen panel disputes it)"
 )
 
 # The same four glyphs the browse page's strip uses, from the same keyed
@@ -202,6 +202,16 @@ def _render(
     # mirror curates whether or not an authority admits it — that count
     # belongs to "Where this data comes from", not to what this build publishes.
     published_gene_count = len(published)
+    # Split the published population by which of D21's two warrants admitted it,
+    # so the hero note can state the gate it actually has. It said "every gene
+    # here is published on an upstream expert panel's classification" until
+    # 2026-08-06, which the widening made false for the 16 genes no panel has
+    # graded -- read from `admitting_grade`, the same function the headline and
+    # `admitted_by.classification` come from, so the front page cannot claim a
+    # split the bundles contradict.
+    panel_graded_count = sum(
+        1 for gene in published if gene in validity and admitting_grade(validity[gene]) is not None
+    )
     mirrored_gene_count = len(validity)
     # A third population, and the narrowest: the genes this atlas has curated
     # itself. Derived once and handed to `_asserted_genes`, so the count and the
@@ -253,9 +263,12 @@ def _render(
       <div class="figure"><span class="figure-value">{_number(census.rows)}</span>
         <span class="figure-label">burden statistics</span></div>
     </div>
-    <p class="hero-note">Every gene here is published on an upstream expert panel's
-      classification, never one this atlas authored. Rare-variant burden statistics are
-      reported per independent cohort family, and none is pooled across them.</p>
+    <p class="hero-note">Every gene here is published on an upstream authority's
+      assessment, never one this atlas authored: {_number(panel_graded_count)} on a ClinGen
+      expert panel's classification, {_number(published_gene_count - panel_graded_count)} on
+      two or more Gene Curation Coalition submitters agreeing where no panel disputes it.
+      Rare-variant burden statistics are reported per independent cohort family, and none is
+      pooled across them.</p>
     <p><a class="cta" href="genes/index.html">Browse the genes</a></p>
   </div>
 

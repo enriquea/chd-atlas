@@ -511,6 +511,24 @@ def grade_legend() -> str:
     `disputed` and `refuted` are deliberately not listed. They are in
     `GRADE_CHIP_KIND` as a guard, but no gene headlined by either is published,
     so the key says that instead of glossing a state a reader cannot meet.
+
+    **What that sentence may claim is bounded by scope, and it once claimed more
+    than that.** It read "a gene an expert panel disputed or refuted is not
+    published here at all" until 2026-08-06. In scope that is exactly true --
+    measured over the 92 published genes, 0 carry an in-scope ClinGen record in
+    `CONTESTED`. Unqualified it is false: 5 published genes carry a ClinGen
+    `Disputed` record for a disease outside this atlas's remit (ANKRD1 and MYH6
+    for hypertrophic cardiomyopathy, MNS1 for primary ciliary dyskinesia, GJA1
+    for nonsyndromic hearing loss, SMAD1 for pulmonary arterial hypertension),
+    and `gene_validity` filters those rows out, so the dispute appears nowhere on
+    the page. ANKRD1's page contained the word "disputed" exactly once -- in the
+    sentence denying it. Hence the second half, which tells the reader the table
+    is scope-filtered rather than complete.
+
+    The qualifier deliberately avoids the phrase "this atlas's CHD scope", which
+    `test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas`
+    asserts is absent from every page: it told 24 pages that this atlas decides
+    what counts as congenital heart disease, and it does not.
     """
     rows = "".join(
         f'<dt><span class="chip chip-{GRADE_CHIP_KIND.get(grade, "ungraded")}">'
@@ -521,11 +539,17 @@ def grade_legend() -> str:
     return (
         '<details class="grade-key"><summary>What these classifications mean</summary>'
         "<p>Every classification on this site is mirrored from the authority that made it. "
-        "The four supportive rungs are "
+        "The rung names are "
         '<a href="https://clinicalgenome.org/curation-activities/gene-disease-validity/">'
-        "ClinGen&#x27;s</a>, glossed here from their Gene-Disease Validity SOP. "
-        "<strong>A gene an expert panel disputed or refuted is not published here at "
-        "all.</strong></p>"
+        "ClinGen&#x27;s</a>, glossed here from their Gene-Disease Validity SOP; Gene "
+        "Curation Coalition submitters grade on the same ladder, and also use "
+        "<em>Supportive</em>, which asserts an association without grading its evidence "
+        "and which this atlas maps to no rung. "
+        "<strong>No gene here was disputed or refuted by an expert panel for a disease "
+        "an external authority treats as congenital heart disease.</strong> A panel may "
+        "have disputed the same gene for some other disease: the records below are only "
+        "those for diseases in this atlas&#x27;s remit, so this page is not a complete "
+        "account of what ClinGen has said about the gene.</p>"
         f"<dl>{rows}</dl></details>"
     )
 

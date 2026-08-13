@@ -205,8 +205,13 @@ from chd_atlas.corpus import Corpus
 #
 # * a consumer that treats presence in `genes/index.json` as "an expert panel
 #   called this a CHD gene" is now wrong for 16 genes, which no panel graded at
-#   all. `admitted_by.authority` is what distinguishes them: `"clingen"` or
-#   `"gencc_agreement"`.
+#   all. `validity_state` is what distinguishes them **in that file**:
+#   `"expert_curated"` on 76, `"submitter_curated"` on 16, and measured
+#   2026-08-06 the `"submitter_curated"` set is exactly the `null`-headline set
+#   and exactly the `gencc_agreement` set. The richer `admitted_by.authority`
+#   naming the warrant is in the gene bundle, not in the index -- this comment
+#   pointed a browse-row consumer at it until 2026-08-06, and no row has ever
+#   carried it.
 # * a consumer that renders the chip without the grade's meaning turns
 #   `limited` -- a panel saying the case is not yet made -- into a weak yes.
 #   `render.grade_legend` is what the site itself does about this.

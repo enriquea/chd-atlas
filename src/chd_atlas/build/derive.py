@@ -197,15 +197,35 @@ def gene_facts(
         # disagree about the order of the same set of groups.
         ordered_groups = sorted(groups, key=lambda group: group.value)
 
-        # **The headline is the ADMITTING EXPERT PANEL's grade, or nothing.**
+        # **The headline is the strongest grade a ClinGen expert panel gave this
+        # gene in scope, or nothing** -- not, despite how it reads, the grade of
+        # the record that *admitted* the gene. The two agree on all 92 genes
+        # published today (measured 2026-08-06: 0 differ) and are not the same
+        # rule, so this comment says which one this is.
+        #
+        # They diverge on an input the gate already admits. `NO_KNOWN_ASSOCIATION`
+        # is deliberately not a veto (`validity._clingen_contests`), so a gene
+        # ClinGen recorded it for, with two GenCC submitters agreeing, is
+        # published: `admitted_by` names GenCC and carries a `null`
+        # classification, while the headline is `no_known_association`.
+        #
+        # **That divergence is correct and was briefly "fixed" away.** Keying the
+        # headline on the admitting record instead publishes `null` for such a
+        # gene, and `null` renders the `ungraded` chip, whose gloss reads "no
+        # ClinGen expert panel has graded this gene" -- false for a gene a panel
+        # graded, and it buries the panel's negative finding. `no_known_association`
+        # renders "a panel looked and found no evidence of a relationship", which
+        # is what a reader needs. A wrong claim is worse than a missing one, and
+        # the admitting warrant is published in `admitted_by` regardless.
+        #
         # It was `strongest()` over every mirrored classification -- ClinGen's
         # and GenCC's together -- until 2026-08-06. That was harmless while the
         # gate required a ClinGen `Definitive`, because a chip could not appear
         # without a chartered panel behind it. Widening the gate to admit genes
-        # on GenCC agreement broke that: measured on the widened corpus, **24 of
-        # 93 genes** would carry a chip stronger than any ClinGen grade, and
-        # five -- ELN, GDF1, MMP21, PKD1L1, TBX1 -- would show a green
-        # `definitive` chip with no ClinGen record at all.
+        # on GenCC agreement broke that: measured on the widened corpus before
+        # the veto, **24 of 93 genes** would carry a chip stronger than any
+        # ClinGen grade, and five -- ELN, GDF1, MMP21, PKD1L1, TBX1 -- would show
+        # a green `definitive` chip with no ClinGen record at all.
         #
         # So a gene no expert panel graded publishes `None`, exactly as an
         # uncurated gene does and for the same stated reason: coercing it to a

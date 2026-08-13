@@ -74,6 +74,17 @@ def _text_of(page: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", page))).strip()
 
 
+def _first_block_quote(text: str) -> str:
+    """The first `>` block in `text`, joined, stopping at the blank line after it."""
+    lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith(">"):
+            lines.append(line.lstrip("> ").strip())
+        elif lines:
+            break
+    return " ".join(lines)
+
+
 def _example(heading: str) -> dict[str, Any]:
     """The first fenced JSON block under one heading, parsed."""
     text = DOC.read_text()
@@ -262,15 +273,46 @@ def test_the_documented_uncurated_notice_is_the_sentence_the_page_actually_shows
     assert "not_yet_curated" in page, "GATA4 must still be an uncurated gene for this to test"
 
     text = DOC.read_text()
-    marker = "or, for the 22 genes published today with no curation here, a paragraph saying"
-    quote = text[text.index(marker) :]
-    quoted = " ".join(
-        line.lstrip("> ").strip() for line in quote.splitlines() if line.startswith(">")
+    # **The count is read from the build, never written into the marker.** It
+    # was hard-coded as "the 22 genes" here and in the doc, so the assertion
+    # pinned a stale number *in place*: the widening moved it to 91 and this
+    # test went on passing, because it was comparing the doc to itself.
+    uncurated = sum(
+        1
+        for bundle in (site / "genes").glob("*.json")
+        if bundle.name != "index.json"
+        and json.loads(bundle.read_text())["atlas_curation"] == "not_yet_curated"
     )
+    marker = (
+        f"or, for the {uncurated} genes published today with no curation here, a paragraph saying"
+    )
+    assert marker in text, f"the doc must state the {uncurated} uncurated genes this build has"
+    # Only the *first* quoted block after the marker. The doc quotes two notices
+    # since 2026-08-06 -- one for a panel-graded gene, one for a
+    # submitter-admitted one -- and joining every `>` line to the end of the file
+    # welds them into a sentence no page has ever rendered.
+    quoted = _first_block_quote(text[text.index(marker) :])
     assert quoted, "the doc must still quote the notice"
     # `**bold**` in the quote is `<strong>` on the page; strip both to compare
     # the sentence rather than its emphasis.
     assert quoted.replace("**", "") in _text_of(page)
+
+    # **The second notice, on a gene no panel graded.** The doc quotes both, and
+    # the ungraded one is the half that was wrong: every one of the 16
+    # submitter-admitted pages carried "the classification above is an expert
+    # panel's" until 2026-08-06, describing a commercial laboratory's submission
+    # as a chartered panel's classification. A gene is chosen by reading
+    # `validity_state` off the build rather than by naming an HGNC id, so this
+    # keeps testing the right gene as the population moves.
+    ungraded = next(
+        bundle
+        for bundle in sorted((site / "genes").glob("*.json"))
+        if bundle.name != "index.json"
+        and json.loads(bundle.read_text())["validity_state"] == "submitter_curated"
+    )
+    ungraded_page = _text_of(ungraded.with_suffix(".html").read_text())
+    assert "no ClinGen expert panel has graded it" in ungraded_page
+    assert "the classification above is an expert panel's" not in ungraded_page.lower()
 
 
 def test_the_burden_census_in_the_doc_is_the_census_the_build_publishes(site: Path) -> None:

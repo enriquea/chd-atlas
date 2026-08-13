@@ -75,11 +75,13 @@ class ValidityRecord:
     failure: `tables.py::GENCC_SUBMISSIONS` declares and validates both columns,
     so a reader who finds them in `mirrors/gencc_submissions.tsv` and not in a
     bundle has no way to tell a decision from a dropped join. Measured
-    2026-08-04 against a real build: of the 142 validity records the 23
-    published bundles carry, 119 are GenCC, and all 119 have a non-null
-    `submitted_on` and a non-null `sgc_id` in the mirror. The consequence is
+    2026-08-06 against a real build: of the **344** validity records the **92**
+    published bundles carry, **266** are GenCC, and all 266 have a non-null
+    `submitted_on` and a non-null `sgc_id` in the mirror. (This paragraph read
+    142 / 23 / 119 until 2026-08-06 -- the pre-widening census, still internally
+    consistent and no longer true of any build.) The consequence is
     that a GenCC record publishes no date at all -- `classification_date` is
-    ClinGen's and is `None` on every one of the 119 -- and no stable identifier,
+    ClinGen's and is `None` on every one of the 266 -- and no stable identifier,
     leaving `(source, disease, moi, submitter)` as the only key distinguishing
     it, the same tuple `_sort_key` orders on. Publishing them would be purely
     additive and so a `schema_version` minor bump; it is queued, not refused.
@@ -322,6 +324,28 @@ PUBLICATION_FLOOR: Final = Classification.LIMITED
 SUBMITTER_AGREEMENT: Final = 2
 
 
+def _asserts(record: ValidityRecord) -> bool:
+    """True iff this record is its author *asserting* a gene-disease relationship.
+
+    **A dissent is not an assertion, and `asserted_by` is a count of assertions.**
+    `NO_KNOWN_ASSOCIATION` is an authority saying it looked and found no
+    relationship; `DISPUTED` and `REFUTED` are it pushing back on one. Counting
+    any of the three inflates `asserted_by.count` with the institutions that
+    disagree, which is the opposite of what the field's name claims. Measured
+    2026-08-06 before this filter existed: GDF1 published `"count": 6` including
+    Illumina's `No Known Disease Relationship` -- and GDF1 is the gene every
+    docstring here cites as *why* two submitters are required.
+
+    `None` **does** assert. GenCC's `Supportive` maps to `None`
+    (`vocab.GENCC_CLASSIFICATIONS`) and means the submitter asserted an
+    association without grading its evidence -- an assertion, merely ungraded.
+    Excluding it would drop Orphanet from six genes that have nothing else.
+    """
+    return record.classification not in CONTESTED and (
+        record.classification is not Classification.NO_KNOWN_ASSOCIATION
+    )
+
+
 def _admitting_clingen(entry: GeneValidity) -> ValidityRecord | None:
     """The strongest ClinGen record at or above the floor, or None."""
     qualifying = [
@@ -341,6 +365,28 @@ def _admitting_clingen(entry: GeneValidity) -> ValidityRecord | None:
         qualifying,
         key=lambda record: CLASSIFICATION_RANK[record.classification or PUBLICATION_FLOOR],
     )
+
+
+def admitting_grade(entry: GeneValidity) -> Classification | None:
+    """The grade of the ClinGen record that admitted this gene, or `None`.
+
+    **`derive.gene_facts` headlines this, so that the headline and
+    `admitted_by.classification` cannot come to disagree.** They are one figure
+    and must be computed once: read off `_admitting_clingen`, the headline is
+    the admitting panel's grade by construction rather than by coincidence.
+
+    It was `strongest()` over *every* in-scope ClinGen record until 2026-08-06.
+    That agrees with this on all 92 published genes -- measured, 0 differ -- and
+    diverges on an input the gate already admits: `NO_KNOWN_ASSOCIATION` is
+    deliberately not a veto (`_clingen_contests`), so a gene ClinGen recorded it
+    for, with two GenCC submitters agreeing, is published. `strongest()` would
+    headline that gene `no_known_association` -- a panel's "we looked and found
+    nothing" rendered as this atlas's headline, beside an `admitted_by` naming
+    GenCC and carrying a `null` classification. No such gene is in the committed
+    mirrors; issue #13 is about publishing the 9 that would be.
+    """
+    record = _admitting_clingen(entry)
+    return record.classification if record is not None else None
 
 
 def agreeing_submitters(entry: GeneValidity) -> tuple[str, ...]:
@@ -418,8 +464,12 @@ def published_genes(validity: Mapping[str, GeneValidity]) -> set[str]:
     **The rule widened on 2026-08-06**, from ClinGen `Definitive` alone, on the
     owner's decision that the atlas should not be the authority on which genes
     are CHD genes and should admit on agreement with external sources. Measured
-    against the committed mirrors: 23 genes -> 93, and burden rows reaching a
-    page 290 -> 916. Only ClinGen and GenCC participate, because they are the
+    against the committed mirrors: 23 genes -> **92**, and burden rows reaching a
+    page 290 -> **915**. Those are this function's own return, after the veto
+    below; the two warrants alone select 93 genes and 916 rows, and this
+    docstring recorded that larger pair until 2026-08-06, describing the gate
+    without the refusal the same function applies. Only ClinGen and GenCC
+    participate, because they are the
     only two sources whose terms permit republishing (CC0-1.0 both; see issues
     #31 and #32 for the others).
 
@@ -476,12 +526,15 @@ def admission_provenance(entry: GeneValidity) -> dict[str, Json]:
     graded this" and "two laboratories put it on a panel".
 
     `asserted_by` is every distinct institution asserting the gene in scope,
-    **deduped by institution**, with a `count`. Measured 2026-08-06 over the 23
-    genes published before the widening: counting `gcep` and `submitter` values
-    naively gives 132, deduped gives 109 -- an overstatement of exactly one per
-    gene, because ClinGen submits to GenCC under its own name. A consumer
-    computing agreement from `validity.records` gets that wrong on every gene,
-    which is the reason this is derived here rather than left to them.
+    **deduped by institution and filtered to actual assertions** (`_asserts`),
+    with a `count`. Measured 2026-08-06 over the 23 genes published before the
+    widening: counting `gcep` and `submitter` values naively gives **134**,
+    deduped gives **111** -- an overstatement of exactly one per gene, because
+    ClinGen submits to GenCC under its own name. (This docstring said 132 and
+    109 until 2026-08-06; the difference of one per gene was right, both
+    absolutes were not.) A consumer computing agreement from `validity.records`
+    gets that wrong on every gene, which is the reason this is derived here
+    rather than left to them.
 
     **`count` is not a score, and must never be rendered as one.** Eight
     authorities asserting a gene is not evidence it is eight times better
@@ -515,14 +568,18 @@ def admission_provenance(entry: GeneValidity) -> dict[str, Json]:
             "submitters": list(agreeing_submitters(entry)),
         }
 
-    # One name per institution. A ClinGen expert panel is ClinGen; its GenCC
+    # One name per institution, and only institutions that actually assert the
+    # gene -- `_asserts` drops the dissenting rungs, which would otherwise be
+    # counted as agreement. A ClinGen expert panel is ClinGen; its GenCC
     # submissions are the same body and must not count again.
     institutions = {
         record.submitter
         for record in entry.records
-        if record.source is ValiditySource.GENCC and record.submitter
+        if record.source is ValiditySource.GENCC and record.submitter and _asserts(record)
     }
-    if any(record.source is ValiditySource.CLINGEN for record in entry.records):
+    if any(
+        record.source is ValiditySource.CLINGEN and _asserts(record) for record in entry.records
+    ):
         institutions.add("ClinGen")
     return {
         "admitted_by": admitted,

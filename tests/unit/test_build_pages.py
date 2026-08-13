@@ -745,9 +745,16 @@ def test_a_gene_definitive_for_two_in_scope_diseases_names_both_in_a_fixed_order
     a dropped sort at any fixture size (CLAUDE.md §4.13).
 
     Only a GenCC record calling the gene definitive is also present, and it is
-    asserted absent: GenCC admits no gene to this population (D21), so naming its
-    disease here would qualify the confidence with a disease that is not the one
-    the gate turned on.
+    asserted absent: `_graded_diseases` names the diseases the *admitting panel*
+    graded, and this gene was admitted on a ClinGen record, so naming a
+    submitter's disease here would qualify the confidence with a disease that is
+    not the one the gate turned on.
+
+    That rationale read "GenCC admits no gene to this population (D21)" until
+    2026-08-06, which the widening made false -- GenCC agreement now admits 16 of
+    the 92. The assertion it justifies is unchanged and still correct; only the
+    reason was stale. A GenCC-admitted gene has no headline grade at all, so
+    `_graded_diseases` returns `()` for it and never reaches this branch.
     """
     two = GeneValidity(
         records=(
@@ -852,9 +859,24 @@ def test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas(
         # have.** Stating only the ClinGen half would tell a reader that every
         # gene here was graded by an expert panel; 16 of the 92 were not, and
         # they are the ones whose provenance most needs stating.
-        assert "Limited or better" in page
-        assert "two or more Gene Curation Coalition submitters" in page
-        assert "no ClinGen panel disputes it" in page
+        #
+        # **Sliced to the scope-rule element, and that is what makes these
+        # assertions able to fail.** Page-wide they could not: the grade key's
+        # `ungraded` gloss carries the phrase "two or more Gene Curation
+        # Coalition submitters independently assert it" further down every page,
+        # so rewriting `_SCOPE_RULE` to state a **one**-submitter gate -- the
+        # site describing a gate that admits on a single laboratory's word --
+        # **survived all 796 tests** when measured 2026-08-06. The assertion
+        # above it, `_SCOPE_RULE in page`, cannot catch a rewording either: it
+        # compares the module's constant to itself and passes on any wording at
+        # all. CLAUDE.md section 4.19.
+        rule = re.search(r'<p class="scope-rule">.*?</p>', page, re.S)
+        assert rule, f"{name} carries no scope-rule element"
+        sentence = rule.group(0)
+        assert "Limited or better" in sentence
+        assert "two or more Gene Curation Coalition submitters" in sentence
+        assert "one or more Gene Curation Coalition submitters" not in sentence
+        assert "no ClinGen panel disputes it" in sentence
 
 
 def test_a_gene_page_names_the_disease_beside_the_chip_that_says_definitive(
@@ -2389,6 +2411,20 @@ def test_both_page_kinds_gloss_every_grade_they_can_render(tmp_path: Path) -> No
 
     Each rung's gloss is checked by a distinctive phrase rather than in full, so
     this fails when a rung stops being explained and not when a comma moves.
+
+    **The label, the chip class and the gloss are asserted as one triple, and
+    that is the whole point of this test.** It checked only that seven phrases
+    appeared *somewhere on the page* until 2026-08-06, which says nothing about
+    which rung each is attached to. Measured that day: painting `moderate` with
+    `strong`'s chip -- inverting the colour ramp mid-ladder for the 10 genes on
+    those two rungs -- **survived all 796 tests**, as did swapping two glosses.
+    A ramp whose colours are checked only for presence is a ramp with no guard
+    at all, and the chips are the part a reader reads first.
+
+    Scoped to the `<dl>` inside the grade key rather than to the page, because
+    every one of these words also occurs in the rail, the browse table or the
+    scope rule; a page-wide substring check passes against a legend rendering
+    nothing (CLAUDE.md section 4.19).
     """
     fact, validity = _limited(TBX5)
     emitter = Emitter(root=tmp_path)
@@ -2406,17 +2442,35 @@ def test_both_page_kinds_gloss_every_grade_they_can_render(tmp_path: Path) -> No
         cohorts={},
     )
 
-    phrases = (
-        "upheld over time",
-        "without the years of replication",
-        "several unrelated probands",
-        "not yet made",
-        "found no evidence of a relationship",
-        "two or more Gene Curation Coalition submitters independently assert it",
-        "disputed or refuted is not published here",
+    # (label a reader sees, chip class that colours it, phrase unique to its gloss)
+    rungs = (
+        ("definitive", "chip-definitive", "upheld over time"),
+        ("strong", "chip-strong", "without the years of replication"),
+        ("moderate", "chip-moderate", "several unrelated probands"),
+        ("limited", "chip-limited", "not yet made"),
+        ("no known association", "chip-warn", "found no evidence of a relationship"),
+        (
+            "not classified",
+            "chip-ungraded",
+            "two or more Gene Curation Coalition submitters independently assert it",
+        ),
     )
     for name in ("index.html", "HGNC_11604.html"):
         page = _page(tmp_path, name)
         assert "What these classifications mean" in page, f"{name} carries no grade key"
-        for phrase in phrases:
-            assert phrase in page, f"{name} does not gloss: {phrase}"
+        block = re.search(r'<details class="grade-key">.*?</details>', page, re.S)
+        assert block, f"{name} carries no grade key"
+        key = block.group(0)
+        legend = re.search(r"<dl>(.*?)</dl>", key, re.S)
+        assert legend, f"{name} carries no grade key rows"
+        pairs = re.findall(r"<dt>(.*?)</dt><dd>(.*?)</dd>", legend.group(1), re.S)
+        assert len(pairs) == len(rungs), f"{name} glosses {len(pairs)} rungs, expected {len(rungs)}"
+        for (label, chip, gloss), (dt, dd) in zip(rungs, pairs, strict=True):
+            assert chip in dt, f"{name}: {label} is not chipped {chip} -- got {dt}"
+            assert f">{label}<" in dt, f"{name}: expected the label {label}, got {dt}"
+            assert gloss in dd, f"{name}: {label} is not glossed by {gloss!r}"
+
+        # The scope-qualified claim, on both page kinds. Unqualified it was false
+        # for 5 published genes carrying an out-of-scope ClinGen `Disputed`.
+        assert "disputed or refuted by an expert panel for a disease" in key
+        assert "not published here at all" not in page
