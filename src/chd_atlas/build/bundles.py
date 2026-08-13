@@ -39,7 +39,12 @@ from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
 from chd_atlas.build.paths import gene_bundle_path
-from chd_atlas.build.validity import GeneValidity, ValidityRecord, uncurated
+from chd_atlas.build.validity import (
+    GeneValidity,
+    ValidityRecord,
+    admission_provenance,
+    uncurated,
+)
 from chd_atlas.corpus import Corpus
 from chd_atlas.identifiers import HgncId
 from chd_atlas.models.assertion import LesionAssertion
@@ -205,8 +210,8 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
         "validity_state": fact.validity_state.value,
         # Written inside `_headline` for the same reason `has_conflicting_evidence`
         # is: the browse row and the page it opens must not be able to disagree
-        # about whether the atlas has curated a gene, and 22 of 23 published
-        # genes have not.
+        # about whether the atlas has curated a gene, and 91 of the 92
+        # published genes have not.
         "atlas_curation": fact.atlas_curation.value,
         "has_conflicting_evidence": fact.has_conflicting_evidence,
         "has_source_discordance": fact.has_source_discordance,
@@ -239,11 +244,12 @@ def build_genes(
     this function does not mutate it.
 
     `published` is D21's population: `build.validity.published_genes()`'s
-    return, the genes a ClinGen expert panel classifies definitive for an
-    in-scope disease. It is passed to `gene_facts`, which keys on it, so this
-    function writes exactly one bundle per member and the index lists exactly
-    the same set. 22 of the 23 published today carry no curated assertion at
-    all; `atlas_curation` is what says so, in the index row and the bundle
+    return, the genes a ClinGen expert panel classifies `Limited` or better for
+    an in-scope disease, plus the genes two or more GenCC submitters agree on
+    that no ClinGen panel contests. It is passed to `gene_facts`, which keys on
+    it, so this function writes exactly one bundle per member and the index lists
+    exactly the same set. 91 of the 92 published today carry no curated assertion
+    at all; `atlas_curation` is what says so, in the index row and the bundle
     alike.
 
     `symbols` comes from `mirrors/genes.tsv`, keyed on HGNC id. A gene absent
@@ -261,7 +267,7 @@ def build_genes(
     `omics` and `variants` are what `build_omics` and `build_variants` returned,
     taken as `Mapping` because nothing here mutates them. Genes they carry that
     are outside `published` are ignored, which is the same rule `gene_facts`
-    applies: no expert panel has called them definitive for CHD, so the atlas
+    applies: no external authority has admitted them under D21, so the atlas
     publishes no page for them. Their rows are still published in the shards
     those two modules wrote — the gene index simply does not link to them.
 
@@ -364,6 +370,15 @@ def build_genes(
                 # `headline` already carries -- see `_validity`'s docstring for
                 # why both are published rather than one replacing the other.
                 "validity": _validity(gene_validity),
+                # Why this gene is published at all, as a payload rather than a
+                # rule a reader has to trust. `_SCOPE_RULE` tells every visitor
+                # that no disease is in scope on this atlas's own judgement;
+                # this is what lets them check which authority admitted the gene
+                # in front of them. Kept beside `validity` rather than inside it
+                # because `validity.records` is the verbatim mirror and this is
+                # a derivation over it -- and its `asserted_by.count` dedupes
+                # ClinGen's own GenCC submissions, which the mirror does not.
+                **admission_provenance(gene_validity),
                 "publications": list(fact.publications),
                 "assertions": assertions.get(gene, []),
                 "functional": functional.get(gene, []),

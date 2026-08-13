@@ -284,7 +284,14 @@ def test_a_published_gene_the_atlas_has_not_curated_gets_a_row_and_a_bundle(
 
 
 def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -> None:
-    """A gene detail page is one fetch, so every section it renders is here."""
+    """A gene detail page is one fetch, so every section it renders is here.
+
+    `admitted_by` and `asserted_by` joined the set in schema 2.8. They are the
+    only fields here that answer "why is this gene on the site at all", which
+    stopped being a question with one answer when the gate widened past ClinGen
+    `Definitive` -- 16 of the 92 genes published are admitted by GenCC submitter
+    agreement and carry no ClinGen record at all.
+    """
     emitter = Emitter(root=tmp_path)
 
     build_genes(
@@ -302,6 +309,8 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
     assert set(_read(tmp_path, "genes/HGNC_11604.json")) == {
         "gene",
         "symbol",
+        "admitted_by",
+        "asserted_by",
         "headline_confidence",
         "validity_state",
         "atlas_curation",
