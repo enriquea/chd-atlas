@@ -17,9 +17,10 @@ from chd_atlas.build.landing import build_landing
 from chd_atlas.build.paths import LANDING
 from chd_atlas.build.render import RESEARCH_USE_NOTICE, STYLESHEET
 from chd_atlas.build.runner import build_site
-from chd_atlas.build.validity import GeneValidity, uncurated
+from chd_atlas.build.validity import GeneValidity, ValidityRecord, uncurated
 from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import Evidence, LesionAssertion, SupplementaryLocator
+from chd_atlas.vocab import Classification, ValiditySource, ValidityState
 
 # What a corpus with no burden evidence at all publishes. Every test in this
 # file that is about something else -- escaping, pluralisation, the shell --
@@ -341,6 +342,97 @@ def test_the_page_is_published_through_write_text_and_reaches_the_checksums(
 
     assert list(emitter.checksums) == ["index.html"]
     assert (tmp_path / "index.html").is_file()
+
+
+def _panel_graded(classification: Classification) -> GeneValidity:
+    """A gene one ClinGen panel graded in scope, at `classification`."""
+    return GeneValidity(
+        records=(
+            ValidityRecord(
+                source=ValiditySource.CLINGEN,
+                classification=classification,
+                classification_term=classification.value.title(),
+                disease="MONDO:0007732",
+                disease_label="Holt-Oram syndrome",
+                moi="AD",
+                report_url=None,
+                gcep="Congenital Heart Disease",
+            ),
+        ),
+        state=ValidityState.EXPERT_CURATED,
+        has_source_discordance=False,
+    )
+
+
+def _submitter_only() -> GeneValidity:
+    """A gene two GenCC submitters assert and no ClinGen panel has graded."""
+    return GeneValidity(
+        records=tuple(
+            ValidityRecord(
+                source=ValiditySource.GENCC,
+                classification=Classification.LIMITED,
+                classification_term="Limited",
+                disease="MONDO:0007732",
+                disease_label="Holt-Oram syndrome",
+                moi="Autosomal dominant",
+                report_url=None,
+                submitter=submitter,
+            )
+            for submitter in ("G2P", "PanelApp Australia")
+        ),
+        state=ValidityState.SUBMITTER_CURATED,
+        has_source_discordance=False,
+    )
+
+
+def test_the_hero_note_splits_the_published_genes_by_which_warrant_admitted_them(
+    tmp_path: Path,
+) -> None:
+    """The front page's one sentence about provenance, and it was false for 16 genes.
+
+    It read "Every gene here is published on an upstream expert panel's
+    classification" until 2026-08-06. That was true of all 23 genes published
+    under the old rule and false the moment the gate widened: 16 of the 92 are
+    admitted on GenCC submitter agreement and no ClinGen panel has graded them
+    at all. The front door is where a reader forms the belief the rest of the
+    site has to correct.
+
+    **Measured 2026-08-06: reverting that sentence survived all 799 tests.** No
+    test read the hero note, so the fix for it was unguarded -- a fix whose test
+    passes with the fix removed is not a fix (CLAUDE.md section 8.3).
+
+    The three figures are deliberately all different -- 3 panel-graded, 1
+    submitter-admitted, 4 published -- because a fixture where two of them
+    coincide cannot tell the sentence apart from one wired to the wrong
+    population, and every gene fixture sharing one value is how three page
+    mutants survived this suite once already (section 4.36). The panel-graded
+    genes are graded at three different rungs for the same reason: the count is
+    of genes a panel graded, not of genes it graded `Definitive`.
+    """
+    validity = {
+        "HGNC:1": _panel_graded(Classification.DEFINITIVE),
+        "HGNC:2": _panel_graded(Classification.MODERATE),
+        "HGNC:3": _panel_graded(Classification.LIMITED),
+        "HGNC:4": _submitter_only(),
+    }
+
+    text = _build(
+        Corpus(root=Path("."), assertions=()),
+        {},
+        validity,
+        tmp_path,
+        published={"HGNC:1", "HGNC:2", "HGNC:3", "HGNC:4"},
+    )
+
+    note = re.search(r'<p class="hero-note">.*?</p>', text, re.S)
+    assert note, "the front page carries no hero note"
+    sentence = " ".join(note.group(0).split())
+
+    assert "3 on a ClinGen expert panel's classification" in sentence
+    assert "1 on two or more Gene Curation Coalition submitters" in sentence
+    # The claim the widening made false must not come back (section 4.35: the
+    # negative assertion is the half nobody is watching for).
+    assert "Every gene here is published on an upstream expert panel" not in text
 
 
 def test_the_published_and_mirrored_counts_are_derived_not_hardcoded(tmp_path: Path) -> None:
