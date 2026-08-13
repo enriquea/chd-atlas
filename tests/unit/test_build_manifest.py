@@ -115,6 +115,12 @@ def test_the_manifest_counts_every_record_kind_separately(tmp_path: Path) -> Non
         functional=("u",) * 5,
         phenotypes=("p",) * 6,
         publications=("b",) * 7,
+        # 11, not 10: `cohorts` (the registry `cohorts.json` publishes) and
+        # `cohort_families` (how many independent collections the burden rows
+        # group into) are different quantities with confusable names, and giving
+        # them one value would let each be published under the other's name
+        # undetected -- CLAUDE.md section 4.30.
+        cohorts=("c",) * 11,
     )
     emitter = Emitter(root=tmp_path)
 
@@ -127,6 +133,7 @@ def test_the_manifest_counts_every_record_kind_separately(tmp_path: Path) -> Non
 
     assert _published(tmp_path)["counts"] == {
         "assertions": 2,
+        "cohorts": 11,
         "datasets": 3,
         "featured": 4,
         "functional": 5,
@@ -186,7 +193,7 @@ def test_the_manifest_publishes_five_keys_and_nothing_that_varies(
 
     manifest = _published(tmp_path)
     assert set(manifest) == {"schema_version", "source_commit", "status", "counts", "files"}
-    assert manifest["schema_version"] == "2.8" == SCHEMA_VERSION
+    assert manifest["schema_version"] == "2.9" == SCHEMA_VERSION
     assert manifest["status"] == "in-development" == STATUS
     assert manifest["source_commit"] == commit
     assert manifest["files"] == {}

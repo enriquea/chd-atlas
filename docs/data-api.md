@@ -46,14 +46,14 @@ What the build produced, and a checksum for every file in it.
 {
   "counts": {
     "assertions": 1, "burden_rows": 915, "cohort_families": 3,
-    "datasets": 0, "featured": 1, "functional": 0,
+    "cohorts": 13, "datasets": 0, "featured": 1, "functional": 0,
     "genes": 92, "phenotypes": 3, "publications": 4
   },
   "files": {
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.8",
+  "schema_version": "2.9",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -146,6 +146,11 @@ wrong by the next one.
   gene" is now wrong for 16 genes. This is a population change inside an
   unchanged shape, which is why it is MINOR by the rule above; the obligation it
   creates is real regardless of the version letter.
+  `2.9` added [`cohorts.json`](#cohortsjson) and a `cohorts` count. Additive: no
+  existing key changes meaning and no payload loses one. It closes a gap open
+  since `2.3` — every burden row has named its sample collections by bare id
+  since `burden` was published, and nothing resolved those ids to anything, so a
+  consumer had the numbers and none of the caveats that qualify them.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -766,16 +771,18 @@ Five obligations, each of which is a wrong claim if you get it wrong:
    `control_cohorts` name the collections each row drew on precisely so overlap
    is visible.
 
-   **These ids do not resolve inside this API today.** `case_cohorts` and
-   `control_cohorts` publish bare strings like `"taa_cases"`, and no published
-   JSON file maps them to a name, a URL or the caveats that qualify them — those
-   live in `curation/cohorts.yaml` in the repository, and reach a reader only
-   through the gene *page*, under "About these cohorts". That is a real gap for a
-   programmatic consumer: `taa_cases` is 777 thoracic aortic aneurysm probands
-   who do not have congenital heart disease, and nothing in the JSON says so.
-   Publishing a `cohorts.json` is queued. Until it lands, treat an id you cannot
-   resolve as a caveat you have not read, and use the HTML page or the repository
-   file rather than assuming the collection is a plain CHD case set.
+   **These ids resolve against [`cohorts.json`](#cohortsjson), and you should
+   resolve them.** `case_cohorts` and `control_cohorts` publish bare strings like
+   `"taa_cases"`; that file maps each to a name, a URL where one exists, and the
+   caveats that qualify every number drawn from it. `taa_cases` is 777 thoracic
+   aortic aneurysm probands who **do not have congenital heart disease** — a row
+   citing it is not a plain CHD case set, and only the description says so.
+
+   Until schema `2.9` these ids resolved to nothing at all: the descriptions
+   lived in the repository and reached a reader only through the gene *page*,
+   under "About these cohorts". A consumer reading the JSON got the numbers
+   without any of the qualifications, which is exactly the failure the cohort
+   columns exist to prevent.
 
 `n_cases` and `n_controls` are the row's own denominators, and they are what the
 statistic beside them was computed from. They may differ from the figures a
@@ -1074,6 +1081,54 @@ One record per omics dataset: accession, archive, technology, tissue, stage,
 organism, sample count, licence and its contrasts. This is what an omics row's
 `dataset` column resolves against, the way `publications.json` resolves a PMID.
 Empty in the committed corpus today.
+
+## `cohorts.json`
+
+The sample collections every burden row names, and the caveats that qualify
+them. Added in schema `2.9`.
+
+```json
+{
+  "cohorts": [
+    {
+      "id": "taa_cases",
+      "name": "Sporadic thoracic aortic aneurysm case series (PMID:34324492)",
+      "description": "777 individuals with sporadic thoracic aortic aneurysm, included in the CNV case set of PMID:34324492 alongside the CHD cases. TAA IS NOT CONGENITAL HEART DISEASE and is explicitly out of this atlas's scope …",
+      "url": null
+    }
+  ]
+}
+```
+
+**This file is the reason `case_cohorts` and `control_cohorts` are worth
+reading.** A burden row names its collections by bare id; without this table
+those ids resolve to nothing, and a consumer computing anything from the row is
+working with numbers stripped of the sentences that say what they count.
+
+- `id` is exactly the string a burden row's `case_cohorts` / `control_cohorts`
+  array carries. Every id in every published row appears here — the build
+  publishes the whole curated registry rather than the subset the published rows
+  happen to cite, and a validator (`BUR009`) refuses a row naming a collection
+  this file does not carry, so resolution cannot fail.
+- `name` is the collection's full name, always a non-empty string.
+- `description` carries the caveats, and it is the field this file exists for.
+  Examples from the current registry: `ukbb`'s controls are adults recruited at
+  40–69 while the cases were largely enrolled in childhood; `ddd` ascertains on
+  developmental disorder rather than heart disease, so its contribution is
+  enriched for **syndromic** CHD; `gnomad_controls` is not screened for
+  congenital heart disease. None of these is expressible as a column.
+- `url` is the collection's public page, or **`null`** where it has none (4 of
+  the 13 today). Always present, never omitted.
+
+The array is sorted by `id`. There is no `role` field: a collection is cases in
+one study and could be controls in another, so which it was is a property of the
+burden row that cites it — the column it appears in — not of the collection.
+
+`counts.cohorts` in `manifest.json` is the length of this array. It is **not**
+`counts.cohort_families`, which counts how many independent collections the
+burden evidence groups into (3 today) and is what
+[`independent_datasets`](#independent_datasets-a-count-of-datasets-never-a-verdict)
+is derived from.
 
 ## `sources.json`
 

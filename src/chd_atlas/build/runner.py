@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from chd_atlas.build.bundles import build_genes
-from chd_atlas.build.burden import burden_census, cohort_registry, load_burden
+from chd_atlas.build.burden import build_cohorts, burden_census, cohort_registry, load_burden
 from chd_atlas.build.concordance import (
     cohort_families,
     evidence_axes,
@@ -280,6 +280,11 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         concordance=concordance,
     )
     build_literature(corpus, emitter)
+    # The resolution table for the bare cohort ids every burden row carries.
+    # Emitted from `corpus.cohorts` -- the whole curated registry, not the subset
+    # the published rows happen to cite -- so that every id in every row resolves
+    # regardless of where the publication gate sits. See `build_cohorts`.
+    build_cohorts(corpus.cohorts, emitter)
     # Read again rather than threaded down from the gate: `validate_repository`
     # discards its registry, and re-reading one small YAML costs less than
     # widening the gate's return type to carry a value only the build wants.
