@@ -17,9 +17,10 @@ from chd_atlas.build.landing import build_landing
 from chd_atlas.build.paths import LANDING
 from chd_atlas.build.render import RESEARCH_USE_NOTICE, STYLESHEET
 from chd_atlas.build.runner import build_site
-from chd_atlas.build.validity import GeneValidity, uncurated
+from chd_atlas.build.validity import GeneValidity, ValidityRecord, uncurated
 from chd_atlas.corpus import Corpus
 from chd_atlas.models.assertion import Evidence, LesionAssertion, SupplementaryLocator
+from chd_atlas.vocab import Classification, ValiditySource, ValidityState
 
 # What a corpus with no burden evidence at all publishes. Every test in this
 # file that is about something else -- escaping, pluralisation, the shell --
@@ -45,18 +46,27 @@ REPO = Path(__file__).parent.parent.parent
 #
 # It then said "(browsable once ClinGen grades it definitive)", which was false
 # in the other direction: measured 2026-08-04 against the committed mirrors, 20
-# of these 154 genes already carry a ClinGen `Definitive` grade and are still
+# of these 154 genes already carried a ClinGen `Definitive` grade and were still
 # not browsable, because the grade names a disease outside CHD scope -- ELN was
 # graded Definitive in 2024, for cutis laxa. The caption told a reader to wait
-# for something that had already happened. The gate is definitive **for a
-# disease in that scope**, which is what `published_genes` actually tests.
+# for something that had already happened.
+#
+# **And then the gate itself moved, on 2026-08-06, which made the corrected
+# caption false again.** `definitive` is no longer the bar -- a ClinGen record at
+# or above `Limited` admits, and so do two agreeing GenCC submitters -- so a
+# caption naming only `definitive` now understates what is browsable rather than
+# overstating it. Re-measured against the committed mirrors: 62 of the 154 are
+# not browsable, and 9 of those carry a ClinGen `Definitive` grade for a disease
+# outside CHD scope. This is the third wording; each one was true when written
+# and none of them was checked by anything until this literal existed.
 #
 # A literal here rather than an import of `landing._MIRRORED_ROW_LABEL`: a test
 # that reads the label out of the module and compares it to itself passes on any
 # wording at all, including the one this replaces.
 _MIRRORED_ROW_LABEL = (
     "Genes with mirrored validity in CHD scope "
-    "(browsable once ClinGen grades it definitive for a disease in that scope)"
+    "(browsable once ClinGen grades it Limited or better for a disease in that "
+    "scope, or two GenCC submitters agree and no ClinGen panel disputes it)"
 )
 
 
@@ -254,24 +264,39 @@ def test_the_manifest_gene_count_is_the_population_not_the_genes_carrying_burden
     """`counts.genes` sizes a consumer's fetch loop, so it must count bundles.
 
     One gene's burden rows are removed from the mirror and nothing else changes.
-    The site still publishes 23 bundles — the publication gate is ClinGen's
-    grade, not the presence of burden evidence — so `genes` must stay 23 while
-    the genes carrying evidence falls to 22. A consumer sizing a fetch loop on
-    the smaller number silently skips a gene that has a bundle, an assertion and
-    a page.
+    The site still publishes every bundle — the publication gate is an external
+    authority's classification, not the presence of burden evidence — so `genes`
+    must stay at the bundle count while the genes carrying evidence falls. A
+    consumer sizing a fetch loop on the smaller number silently skips a gene that
+    has a bundle, an assertion and a page.
 
     Asserted as an inequality as well as an equality: `genes == len(bundles)`
-    alone would pass on the corpus this atlas ships today, where the two numbers
-    coincide, which is exactly how the mutant survived before this fixture
-    existed.
+    alone would pass on the corpus this atlas shipped on 2026-08-05, where the
+    two numbers coincided, which is exactly how the mutant survived before this
+    fixture existed.
+
+    **The fixture's health check is TBX20's own bundle, not an arithmetic
+    identity.** It was `carrying == len(bundles) - 1` until 2026-08-06, which
+    silently assumed every other published gene carries burden rows. The widened
+    gate admits genes no burden study covered — measured on the committed
+    mirrors, one published gene has no rows before this fixture removes any — so
+    that identity started failing for a reason that had nothing to do with what
+    it was guarding. Naming the gene the fixture edits is the check that stays
+    true however many others are untested, and it fails loudly if TBX20 ever
+    stops being published.
     """
     manifest = json.loads((build_with_an_untested_gene / "manifest.json").read_text())
     counts = manifest["counts"]
     bundles = sorted((build_with_an_untested_gene / "genes").glob("HGNC_*.json"))
     carrying = sum(1 for path in bundles if json.loads(path.read_text(encoding="utf-8"))["burden"])
 
+    emptied = build_with_an_untested_gene / "genes" / f"{TBX20.replace(':', '_')}.json"
+    assert emptied.is_file(), "the fixture's gene is no longer published; pick another"
+    assert not json.loads(emptied.read_text(encoding="utf-8"))["burden"], (
+        "the fixture no longer removes that gene's rows"
+    )
+
     assert counts["genes"] == len(bundles)
-    assert carrying == len(bundles) - 1, "the fixture no longer removes exactly one gene's rows"
     assert counts["genes"] != carrying
 
 
@@ -317,6 +342,97 @@ def test_the_page_is_published_through_write_text_and_reaches_the_checksums(
 
     assert list(emitter.checksums) == ["index.html"]
     assert (tmp_path / "index.html").is_file()
+
+
+def _panel_graded(classification: Classification) -> GeneValidity:
+    """A gene one ClinGen panel graded in scope, at `classification`."""
+    return GeneValidity(
+        records=(
+            ValidityRecord(
+                source=ValiditySource.CLINGEN,
+                classification=classification,
+                classification_term=classification.value.title(),
+                disease="MONDO:0007732",
+                disease_label="Holt-Oram syndrome",
+                moi="AD",
+                report_url=None,
+                gcep="Congenital Heart Disease",
+            ),
+        ),
+        state=ValidityState.EXPERT_CURATED,
+        has_source_discordance=False,
+    )
+
+
+def _submitter_only() -> GeneValidity:
+    """A gene two GenCC submitters assert and no ClinGen panel has graded."""
+    return GeneValidity(
+        records=tuple(
+            ValidityRecord(
+                source=ValiditySource.GENCC,
+                classification=Classification.LIMITED,
+                classification_term="Limited",
+                disease="MONDO:0007732",
+                disease_label="Holt-Oram syndrome",
+                moi="Autosomal dominant",
+                report_url=None,
+                submitter=submitter,
+            )
+            for submitter in ("G2P", "PanelApp Australia")
+        ),
+        state=ValidityState.SUBMITTER_CURATED,
+        has_source_discordance=False,
+    )
+
+
+def test_the_hero_note_splits_the_published_genes_by_which_warrant_admitted_them(
+    tmp_path: Path,
+) -> None:
+    """The front page's one sentence about provenance, and it was false for 16 genes.
+
+    It read "Every gene here is published on an upstream expert panel's
+    classification" until 2026-08-06. That was true of all 23 genes published
+    under the old rule and false the moment the gate widened: 16 of the 92 are
+    admitted on GenCC submitter agreement and no ClinGen panel has graded them
+    at all. The front door is where a reader forms the belief the rest of the
+    site has to correct.
+
+    **Measured 2026-08-06: reverting that sentence survived all 799 tests.** No
+    test read the hero note, so the fix for it was unguarded -- a fix whose test
+    passes with the fix removed is not a fix (CLAUDE.md section 8.3).
+
+    The three figures are deliberately all different -- 3 panel-graded, 1
+    submitter-admitted, 4 published -- because a fixture where two of them
+    coincide cannot tell the sentence apart from one wired to the wrong
+    population, and every gene fixture sharing one value is how three page
+    mutants survived this suite once already (section 4.36). The panel-graded
+    genes are graded at three different rungs for the same reason: the count is
+    of genes a panel graded, not of genes it graded `Definitive`.
+    """
+    validity = {
+        "HGNC:1": _panel_graded(Classification.DEFINITIVE),
+        "HGNC:2": _panel_graded(Classification.MODERATE),
+        "HGNC:3": _panel_graded(Classification.LIMITED),
+        "HGNC:4": _submitter_only(),
+    }
+
+    text = _build(
+        Corpus(root=Path("."), assertions=()),
+        {},
+        validity,
+        tmp_path,
+        published={"HGNC:1", "HGNC:2", "HGNC:3", "HGNC:4"},
+    )
+
+    note = re.search(r'<p class="hero-note">.*?</p>', text, re.S)
+    assert note, "the front page carries no hero note"
+    sentence = " ".join(note.group(0).split())
+
+    assert "3 on a ClinGen expert panel's classification" in sentence
+    assert "1 on two or more Gene Curation Coalition submitters" in sentence
+    # The claim the widening made false must not come back (section 4.35: the
+    # negative assertion is the half nobody is watching for).
+    assert "Every gene here is published on an upstream expert panel" not in text
 
 
 def test_the_published_and_mirrored_counts_are_derived_not_hardcoded(tmp_path: Path) -> None:

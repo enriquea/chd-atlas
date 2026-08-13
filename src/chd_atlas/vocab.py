@@ -113,10 +113,14 @@ class ValidityState(StrEnum):
 class AtlasCuration(StrEnum):
     """Whether the atlas itself has curated evidence for a gene it publishes.
 
-    D21 publishes a gene on an expert panel's classification, which is not the
-    atlas's own work. 22 of the 23 genes published today carry no
+    D21 publishes a gene on an external authority's assessment, which is not the
+    atlas's own work. 91 of the 92 genes published today carry no
     `LesionAssertion` at all, so a consumer that read `headline_confidence`
-    alone would take a mirrored ClinGen call for curated atlas content.
+    alone would take a mirrored ClinGen call for curated atlas content -- and
+    since the 2026-08-06 widening, 16 of those genes have no ClinGen record
+    either, so `headline_confidence` is `null` and the same consumer sees a gene
+    with no stated confidence from anyone. `admitted_by` in the bundle is what
+    says who did admit it.
 
     Published as a field rather than left inferable from `assertion_count == 0`
     for the reason `validity_state` is: a consumer filtering a browse list needs
