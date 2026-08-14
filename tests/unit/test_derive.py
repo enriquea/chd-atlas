@@ -508,3 +508,54 @@ def test_every_functional_record_about_a_gene_is_counted() -> None:
     # reports zero rather than raising, which is what the `Counter` buys over a
     # plain dict.
     assert gene_facts(_corpus(), {}, published={"HGNC:11604"})["HGNC:11604"].functional_count == 0
+
+
+def test_every_authority_reporting_no_association_is_named_in_a_fixed_order() -> None:
+    """The third axis names *all* of them, sorted. Issue #13.
+
+    **Two reporters, in reverse-alphabetical fixture order, because one cannot
+    test a sort.** Measured 2026-08-14: GDF1 is the only published gene on this
+    axis and Illumina is its only reporter, so the real corpus is a one-element
+    set -- which has one iteration order under every `PYTHONHASHSEED` and made
+    the sort inert. Dropping `sorted()` from `derive.gene_facts` survived the
+    whole suite against a real build (CLAUDE.md section 4.14).
+
+    Asserted against a literal rather than by building twice: `PYTHONHASHSEED`
+    is fixed for the life of one interpreter, so a same-process comparison
+    cannot see a dropped sort at any fixture size (section 4.13). The names are
+    accumulated through a `set` -- two submitters could report it for two
+    diseases -- and this array reaches published JSON, where `encode_json`'s
+    `sort_keys` orders dict keys and never list elements. Unsorted, the bundle
+    and its checksum differ between two builds of one commit.
+
+    The `Definitive` record is what supplies the other half of the pair: without
+    a supportive record the flag is false and the list empty, which
+    `test_no_known_association_is_a_third_axis_and_not_a_contest` pins.
+    """
+    validity = {
+        "HGNC:1": _gene_validity(
+            records=(
+                _validity_record(source=ValiditySource.GENCC, submitter="Zeta Genomics"),
+                _validity_record(
+                    source=ValiditySource.GENCC,
+                    submitter="Illumina",
+                    classification=Classification.NO_KNOWN_ASSOCIATION,
+                    classification_term="No Known Disease Relationship",
+                ),
+                _validity_record(
+                    source=ValiditySource.GENCC,
+                    submitter="Ambry Genetics",
+                    classification=Classification.NO_KNOWN_ASSOCIATION,
+                    classification_term="No Known Disease Relationship",
+                ),
+            ),
+            state=ValidityState.SUBMITTER_CURATED,
+        )
+    }
+
+    facts = gene_facts(_corpus(), validity, published={"HGNC:1"})["HGNC:1"]
+
+    assert facts.has_no_association_report is True
+    assert facts.no_association_reported_by == ("Ambry Genetics", "Illumina")
+    # The other axis is untouched: a null result is not a contest.
+    assert facts.has_conflicting_evidence is False
