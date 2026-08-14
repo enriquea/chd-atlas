@@ -559,6 +559,13 @@ PROFILE_QUANTILES = TableSchema(
     columns=(
         Column("dataset", pl.String),
         Column("tissue", pl.String),
+        # Not nullable, unlike `profiles.stage`: a quantile grid always names
+        # the stage it summarizes. The asymmetry is a hazard for whoever joins
+        # the two tables -- a null-stage `profiles` row can never have a
+        # quantile partner by construction, so a naive inner join on
+        # (dataset, tissue, stage) silently drops it (measured: 2 rows in, 1
+        # row out, no error). The join must be a left join, so the null-stage
+        # row still publishes, with a null percentile.
         Column("stage", pl.String),
         Column("percentile", pl.Int64, minimum=0, maximum=100),
         Column("value", pl.Float64),

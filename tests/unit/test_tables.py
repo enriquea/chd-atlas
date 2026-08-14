@@ -344,10 +344,15 @@ def test_profiles_admits_rpkm_and_still_refuses_an_unknown_unit() -> None:
 def test_profile_quantiles_is_registered_and_sharded_per_dataset() -> None:
     """The table that makes the percentile auditable must itself be reachable.
 
-    Registering it in `SHARDED_TABLES` is not cosmetic: `mirror_paths` only
-    yields files under a registered directory, and `unexpected_mirror_entries`
-    raises TBL009 for a directory no schema claims. Forget either and the file
-    is both unread and reported as a stray.
+    The two registries fail differently, not equivalently. Forget
+    `SHARDED_TABLES` and the file is both unread (`mirror_paths` only globs
+    directories it names) and reported as a stray (`unexpected_mirror_entries`
+    reports TBL009 for a directory no schema claims). Forget `TABLE_SCHEMAS`
+    instead and neither function notices -- both read `SHARDED_TABLES` only --
+    so the file is found and accepted, and validation crashes instead: the
+    first unguarded `TABLE_SCHEMAS[schema_name]` lookup downstream (the
+    per-mirror loop in `validate_repository` reaches one first) raises an
+    uncaught `KeyError` rather than reporting an issue.
     """
     schema = TABLE_SCHEMAS["profile_quantiles"]
     assert schema.column_names == (
@@ -366,12 +371,13 @@ def test_profile_quantiles_is_registered_and_sharded_per_dataset() -> None:
     percentile = next(c for c in schema.columns if c.name == "percentile")
     assert (percentile.minimum, percentile.maximum) == (0, 100)
     # The unit vocabulary must match `profiles` exactly, or PRF001 is comparing
-    # two different alphabets rather than two values.
+    # two different alphabets rather than two values. Identity, not just
+    # equality: a fresh, value-equal frozenset literal would pass an `==`
+    # check today and still leave the two tables free to drift apart later.
     unit = next(c for c in schema.columns if c.name == "unit")
-    assert (
-        unit.allowed
-        == next(c for c in TABLE_SCHEMAS["profiles"].columns if c.name == "unit").allowed
-    )
+    profiles_unit = next(c for c in TABLE_SCHEMAS["profiles"].columns if c.name == "unit")
+    assert unit.allowed == profiles_unit.allowed
+    assert unit.allowed is profiles_unit.allowed
 
 
 def test_mirror_paths_finds_flat_and_sharded_tables(tmp_path: Path) -> None:
