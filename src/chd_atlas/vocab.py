@@ -64,6 +64,41 @@ def has_conflicting_evidence(classifications: Iterable[Classification]) -> bool:
     return bool(contesting and supportive)
 
 
+def reports_no_association(classifications: Iterable[Classification]) -> bool:
+    """True when some authority reported no known association *and* another supports one.
+
+    **The third axis, and issue #13's resolution.** `NO_KNOWN_ASSOCIATION` takes
+    neither side of `has_conflicting_evidence` -- it is subtracted from the
+    supportive set and is not in `CONTESTED` -- so a gene one submitter calls
+    `Definitive` and another calls `No Known Disease Relationship` published
+    `has_conflicting_evidence: false` and said nothing else at all. That
+    exclusion is right and stays: "a panel looked and found no reported
+    evidence" is not "a panel disputes this", and folding the two together
+    would give one laboratory's null result the force of a chartered panel's
+    refutation. What was wrong was that the disagreement then reached no
+    published byte.
+
+    So this is a *separate* flag rather than a widening of the other. ClinGen
+    treats the assertion the same way -- a distinct verdict, not a rung of the
+    definitive-to-limited ladder -- which is the argument the issue itself makes
+    for a third axis over either of the two that exist.
+
+    **Symmetric with `has_conflicting_evidence`: it needs both sides.** A gene
+    whose *only* in-scope record is `no_known_association` is not in
+    disagreement with anything, and flagging it would tell a reader two
+    authorities differ where one spoke. Measured 2026-08-14 over the committed
+    mirrors: 9 in-scope genes are in exactly that position and none of them is
+    published, so the distinction is currently invisible in the output and is
+    pinned by fixture instead.
+
+    GDF1 is the live case and the only one: G2P `Definitive`, Labcorp `Strong`,
+    Illumina `No Known Disease Relationship`.
+    """
+    items = set(classifications)
+    supportive = items - CONTESTED - {Classification.NO_KNOWN_ASSOCIATION}
+    return Classification.NO_KNOWN_ASSOCIATION in items and bool(supportive)
+
+
 # The single place an authority's vocabulary becomes the atlas's. Mirrors store
 # what was published; this maps it. There is deliberately no `.get(term,
 # default)` anywhere downstream -- a term absent from these dicts is an error,

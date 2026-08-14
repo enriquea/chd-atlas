@@ -291,3 +291,97 @@ def test_every_link_on_every_page_resolves_to_a_file_the_build_wrote(site: Path)
         if target not in written and f"{target}/index.html" not in written
     ]
     assert not broken, f"pages link to files the build never wrote: {broken}"
+
+
+def test_every_cohort_a_published_burden_row_cites_resolves_with_its_caveat(site: Path) -> None:
+    """A bare cohort id in a bundle must resolve to a description in `cohorts.json`.
+
+    **This is the join the burden columns exist for.** A row names its sample
+    collections by bare id -- `["taa_cases"]`, `["gnomad_controls"]` -- and the
+    ids carry no meaning on their own. Until schema 2.9 nothing published mapped
+    them, so a consumer had the statistics and none of the caveats: measured
+    2026-08-06 over a real build, 13 distinct ids appeared across 915 published
+    rows and `curation/cohorts.yaml` reached zero published bytes.
+
+    Asserted over a *real* build rather than a fixture, because what could break
+    it is not the emitter -- covered by
+    `test_cohorts_json_publishes_the_registry_a_burden_row_resolves_against` --
+    but the publication gate moving under it. A widened gate can admit a gene
+    whose rows cite a collection nobody curated, and that is a dangling id in a
+    published payload rather than a build failure. `BUR009` refuses it at the
+    gate; this checks the guarantee survives to the bytes.
+
+    `taa_cases` is named explicitly. It is 777 thoracic aortic aneurysm probands
+    who **do not have congenital heart disease**, and it is the id whose
+    description most changes what a row means -- a reader who resolves it and a
+    reader who does not are reading different data.
+    """
+    registry = {
+        cohort["id"]: cohort
+        for cohort in json.loads((site / "cohorts.json").read_text(encoding="utf-8"))["cohorts"]
+    }
+    assert registry, "the build published no cohort registry"
+
+    cited: set[str] = set()
+    for bundle in sorted((site / "genes").glob("HGNC_*.json")):
+        for row in json.loads(bundle.read_text(encoding="utf-8"))["burden"]:
+            cited.update(row["case_cohorts"])
+            cited.update(row["control_cohorts"])
+
+    assert cited, "no published burden row names a cohort, so this proves nothing"
+    dangling = sorted(cited - set(registry))
+    assert not dangling, f"published rows cite cohorts that resolve to nothing: {dangling}"
+
+    # Every resolved record carries the sentence a reader needs, not just a name.
+    for identifier in sorted(cited):
+        assert registry[identifier]["description"].strip(), f"{identifier} publishes no caveat"
+
+    assert "not congenital heart disease" in registry["taa_cases"]["description"].lower()
+
+
+def test_a_gene_an_authority_reported_no_association_for_says_so_in_both_payloads(
+    site: Path,
+) -> None:
+    """Issue #13's third axis, on the one published gene that exercises it.
+
+    GDF1 carries G2P `Definitive`, Labcorp `Strong` and Illumina `No Known
+    Disease Relationship` in scope. Until schema 2.10 it published
+    `has_conflicting_evidence: false` and nothing else, so a consumer was told
+    the evidence did not conflict while two bodies disagreed about whether an
+    association exists at all. `no_known_association` takes neither side of
+    `CONTESTED` -- correctly, since a null result is not a refutation -- and the
+    disagreement therefore reached no published byte.
+
+    Asserted on the bundle **and** the browse row, because a flag a reader meets
+    on one and not the other is missing exactly where they are standing, and
+    asserted against a real build rather than a fixture because what breaks it is
+    the gate moving: GDF1 is admitted on GenCC agreement, and it is the only
+    published gene on this axis, so a widening or narrowing that drops it leaves
+    the axis published on nothing while every unit test still passes.
+
+    `has_conflicting_evidence` is asserted **false** in the same breath. The
+    whole design decision is that these are two axes rather than one, and a test
+    that checked only the new flag would pass with the two collapsed together.
+    """
+    bundle = json.loads((site / "genes" / "HGNC_4214.json").read_text(encoding="utf-8"))
+    assert bundle["symbol"] == "GDF1", "this test is about GDF1"
+
+    assert bundle["has_no_association_report"] is True
+    assert bundle["no_association_reported_by"] == ["Illumina"]
+    # The other axis stays untouched: a null result is not a contest.
+    assert bundle["has_conflicting_evidence"] is False
+
+    row = next(
+        item
+        for item in json.loads((site / "genes" / "index.json").read_text(encoding="utf-8"))["genes"]
+        if item["gene"] == "HGNC:4214"
+    )
+    assert row["has_no_association_report"] is True
+    assert row["no_association_reported_by"] == ["Illumina"]
+    assert row["has_conflicting_evidence"] is False
+
+    # The pair is consistent everywhere, not only on this gene: an authority
+    # named while the flag reads false would say two things at once.
+    for bundle_path in sorted((site / "genes").glob("HGNC_*.json")):
+        payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+        assert payload["has_no_association_report"] == bool(payload["no_association_reported_by"])

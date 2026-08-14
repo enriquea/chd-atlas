@@ -239,6 +239,12 @@ def _render(
             _stat("Genes published", _number(published_gene_count)),
             _stat("Burden statistics", _number(census.rows)),
             _stat("Independent datasets", _number(census.families)),
+            # Beside "Independent datasets" rather than at the end, because the
+            # two answer the same reader's question one level apart: how many
+            # separate collections the evidence rests on, and how many named
+            # sample collections those group. Both are published, and
+            # `cohorts.json` is where the caveats on each live.
+            _stat("Sample collections", _number(len(corpus.cohorts))),
             _stat("Genes with burden evidence", _number(census.genes)),
             _stat("Curated gene-disease assertions", _number(assertion_count)),
             _stat("Genes the atlas has curated", _number(len(curated_genes))),

@@ -151,6 +151,27 @@ from chd_atlas.corpus import Corpus
 # `no_enrichment`, because collapsing them is what turns "nobody looked" into
 # "somebody looked and found nothing".
 #
+# 2.10 adds `has_no_association_report` and `no_association_reported_by` to
+# every gene bundle and browse row. Additive, and a *third axis* rather than a
+# widening of `has_conflicting_evidence`, which keeps meaning exactly
+# `CONTESTED`. Issue #13: a gene one submitter calls `Definitive` and another
+# calls `No Known Disease Relationship` published `has_conflicting_evidence:
+# false` and said nothing else, so the disagreement reached no byte. GDF1 is the
+# live case. Folding the two together instead would give one laboratory's null
+# result the weight of a chartered panel's refutation.
+#
+# 2.9 adds `cohorts.json` and a `cohorts` count. Additive, so MINOR: no existing
+# key changes meaning and no payload loses one.
+#
+# It closes the gap 2.3 opened. Every burden row has named its sample collections
+# by bare id since `burden` was published -- `["taa_cases"]`, `["ukbb"]` -- and
+# nothing resolved those ids to anything: measured 2026-08-06, `curation/
+# cohorts.yaml` reached zero published bytes and `Cohort.url` reached none at
+# all. So every programmatic consumer had the numbers and none of the caveats
+# that qualify them, including that `taa_cases` is 777 probands who do not have
+# congenital heart disease. The descriptions rendered only inside a `<details>`
+# on the gene page, which is a property of the HTML and not of this API.
+#
 # 2.7 adds `genes`, `burden_rows` and `cohort_families` to `counts`. Additive,
 # so MINOR: every 2.6 key is present and unchanged.
 #
@@ -219,7 +240,7 @@ from chd_atlas.corpus import Corpus
 #   authorities asserting a gene frequently means it sits on more commercial
 #   panels, not that it is eight times better supported. D12 applies: a rank
 #   derived from it would be a validity call the atlas authored.
-SCHEMA_VERSION: Final = "2.8"
+SCHEMA_VERSION: Final = "2.10"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is
@@ -330,6 +351,10 @@ def write_manifest(
     """
     corpus_counts = {
         "assertions": len(corpus.assertions),
+        # The registry `cohorts.json` publishes entire, not the subset the
+        # published rows cite. Those are 13 and 13 today; the key is named for
+        # the file so the two cannot be confused if they ever part.
+        "cohorts": len(corpus.cohorts),
         "datasets": len(corpus.datasets),
         "featured": len(corpus.featured),
         "functional": len(corpus.functional),

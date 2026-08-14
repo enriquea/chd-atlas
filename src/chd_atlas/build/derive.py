@@ -34,6 +34,7 @@ from chd_atlas.vocab import (
     ValiditySource,
     ValidityState,
     has_conflicting_evidence,
+    reports_no_association,
     strongest,
 )
 
@@ -67,6 +68,22 @@ class GeneFacts:
     # split against itself; this one says the two authorities disagree with each
     # other, not merely that the evidence is mixed.
     has_source_discordance: bool
+    # The third axis (issue #13). True iff some authority reported *no known
+    # association* in scope while another asserted one. Deliberately not folded
+    # into `has_conflicting_evidence`, which means exactly `CONTESTED`: "a panel
+    # looked and found no reported evidence" is not "a panel disputes this", and
+    # merging them would give one laboratory's null result the weight of a
+    # chartered panel's refutation. Before this existed the disagreement reached
+    # no published byte at all -- GDF1 carries G2P `Definitive` and Illumina
+    # `No Known Disease Relationship` and published `has_conflicting_evidence:
+    # false` with nothing beside it. See `vocab.reports_no_association`.
+    has_no_association_report: bool
+    # Who reported it, sorted. A list beside the flag rather than a flag alone,
+    # for the reason `conflicting_lesion_groups` sits beside
+    # `has_conflicting_evidence`: the bare boolean tells a reader something is
+    # disputed and gives them no way to weigh it, and *which* body found nothing
+    # is most of the information. Empty exactly when the flag is false.
+    no_association_reported_by: tuple[str, ...]
     lesion_groups: tuple[LesionGroup, ...]
     # The same pairing as `headline_confidence`/`has_conflicting_evidence`, one
     # level down -- but grouped, not independently derived. ClinGen and GenCC
@@ -75,8 +92,15 @@ class GeneFacts:
     # collapses the *same* `strongest()` of the gene's mirrored classifications
     # under every lesion group the curated assertions name for the gene, which is
     # why every group a contested gene names ends up in `conflicting_lesion_groups`
-    # together -- there is no finer-grained signal to divide them with. Empty
-    # exactly when `headline_confidence` is `None`, for the same reason.
+    # together -- there is no finer-grained signal to divide them with.
+    #
+    # **Empty whenever `lesion_groups` is empty, and also when
+    # `headline_confidence` is `None`.** This said "empty exactly when
+    # `headline_confidence` is `None`" until 2026-08-14, which measured false for
+    # **75 of the 92** published rows: its keys are the gene's lesion groups, and
+    # those come from *curated assertions*, so it is empty for the 91 genes this
+    # atlas has not curated regardless of what any panel graded. The doc's twin
+    # paragraph had it right; only this comment was wrong.
     confidence_by_lesion_group: dict[LesionGroup, Classification]
     # Names every group `confidence_by_lesion_group` carries when the gene-level
     # `has_conflicting_evidence` is true, and none when it is false. A list
@@ -247,6 +271,25 @@ def gene_facts(
         ]
         headline = strongest(panel_graded) if panel_graded else None
         contested = has_conflicting_evidence(mirrored)
+        no_association = reports_no_association(mirrored)
+        # Sorted, because it reaches published JSON and `encode_json`'s
+        # `sort_keys` orders dict keys only. Read off the records rather than
+        # recomputed from `mirrored`, which has already dropped the attribution.
+        # Empty when the flag is false, so the pair cannot disagree: an authority
+        # named here while the flag reads false would say two things at once.
+        reported_by = (
+            tuple(
+                sorted(
+                    {
+                        record.submitter or record.gcep or str(record.source.value)
+                        for record in gene_validity.records
+                        if record.classification is Classification.NO_KNOWN_ASSOCIATION
+                    }
+                )
+            )
+            if no_association
+            else ()
+        )
 
         facts[gene] = GeneFacts(
             gene=gene,
@@ -254,6 +297,8 @@ def gene_facts(
             validity_state=gene_validity.state,
             has_conflicting_evidence=contested,
             has_source_discordance=gene_validity.has_source_discordance,
+            has_no_association_report=no_association,
+            no_association_reported_by=reported_by,
             lesion_groups=tuple(ordered_groups),
             confidence_by_lesion_group=(
                 {group: headline for group in ordered_groups} if headline is not None else {}
