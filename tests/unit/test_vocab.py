@@ -131,9 +131,7 @@ def test_no_known_association_is_a_third_axis_and_not_a_contest() -> None:
     assert not reports_no_association([])
 
     # A contested record is not "supportive", so it cannot supply the other half.
-    assert not reports_no_association(
-        [Classification.REFUTED, Classification.NO_KNOWN_ASSOCIATION]
-    )
+    assert not reports_no_association([Classification.REFUTED, Classification.NO_KNOWN_ASSOCIATION])
 
 
 def test_every_mirrored_classification_maps_and_an_unknown_one_raises() -> None:

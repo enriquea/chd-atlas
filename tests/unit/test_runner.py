@@ -71,6 +71,34 @@ def _validity_mirrors_missing(root: Path) -> None:
     (root / "mirrors" / "sources.yaml").write_text(VALID_SOURCES_YAML)
 
 
+def _gene_registry_missing(root: Path) -> None:
+    """Validity mirrors present, gene registry absent. Isolates GEN000's cause.
+
+    The inverse of `_validity_mirrors_missing`: here there *is* symbol work to
+    do -- both validity mirrors print a `gene_symbol` for every row -- and
+    nothing to resolve it against, which is the only state in which GEN000 is
+    supposed to fire. Both mirrors carry a header alone, which is enough for
+    `_mirror_gene_labels` to read the columns and find no rows... so a single
+    real row is written into ClinGen's, because a fixture with nothing to check
+    would take the "no work, no skip" branch and pin the opposite of what this
+    case is for.
+    """
+    (root / "curation").mkdir()
+    (root / "curation" / ".id_registry.yaml").write_text("{}\n")
+    (root / "mirrors").mkdir()
+    (root / "mirrors" / "sources.yaml").write_text(VALID_SOURCES_YAML)
+    (root / "mirrors" / "clingen_gene_validity.tsv").write_text(
+        "gene\tgene_symbol\tdisease\tdisease_label\tmoi\tsop\tclassification\t"
+        "classification_date\tgcep\treport_url\n"
+        "HGNC:11604\tTBX5\tMONDO:0007732\tHolt-Oram syndrome\tAD\tSOP9\tDefinitive\t"
+        "2023-01-01\tCHD\thttps://x\n"
+    )
+    (root / "mirrors" / "gencc_submissions.tsv").write_text(
+        "sgc_id\tgene\tgene_symbol\tdisease\tdisease_label\tmoi\tclassification\t"
+        "submitter\tsubmitted_on\treport_url\n"
+    )
+
+
 def test_report_counts_errors_and_warnings_separately() -> None:
     report = ValidationReport(
         issues=[
@@ -224,6 +252,16 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
             {"SCP000", "SCP005"},
             {"TBL012"},
             id="validity-mirrors-missing",
+        ),
+        # GEN000's own cause, isolated the same way TBL012 isolates SCP000's.
+        # A missing gene registry is TBL008, and without that error this skip
+        # would arrive alone in a report `ok` calls clean -- a repository whose
+        # every symbol was unresolvable, validating green. Issue #33.
+        pytest.param(
+            _gene_registry_missing,
+            {"GEN000"},
+            {"TBL008"},
+            id="gene-registry-missing",
         ),
     ],
 )
