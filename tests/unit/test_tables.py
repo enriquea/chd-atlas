@@ -11,7 +11,9 @@ from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import (
     CHROMOSOMES,
     CLINGEN_VALIDITY,
+    FLAT_TABLES,
     GENCC_SUBMISSIONS,
+    SHARDED_TABLES,
     TABLE_SCHEMAS,
     Column,
     TableSchema,
@@ -113,6 +115,7 @@ def test_registry_covers_every_mirror_table() -> None:
         "variants",
         "expression",
         "profiles",
+        "profile_quantiles",
         "proteomics",
         "phospho",
         "clingen_validity",
@@ -336,6 +339,39 @@ def test_profiles_admits_rpkm_and_still_refuses_an_unknown_unit() -> None:
     assert "rpkm" in allowed
     assert allowed == frozenset({"tpm", "nx", "cpm", "lfq", "rpkm"})
     assert "rpkms" not in allowed
+
+
+def test_profile_quantiles_is_registered_and_sharded_per_dataset() -> None:
+    """The table that makes the percentile auditable must itself be reachable.
+
+    Registering it in `SHARDED_TABLES` is not cosmetic: `mirror_paths` only
+    yields files under a registered directory, and `unexpected_mirror_entries`
+    raises TBL009 for a directory no schema claims. Forget either and the file
+    is both unread and reported as a stray.
+    """
+    schema = TABLE_SCHEMAS["profile_quantiles"]
+    assert schema.column_names == (
+        "dataset",
+        "tissue",
+        "stage",
+        "percentile",
+        "value",
+        "unit",
+        "n_genes",
+    )
+    assert schema.sort_key == ("dataset", "tissue", "stage", "percentile")
+    assert SHARDED_TABLES["profile_quantiles"] == "profile_quantiles"
+    assert "profile_quantiles" not in FLAT_TABLES
+
+    percentile = next(c for c in schema.columns if c.name == "percentile")
+    assert (percentile.minimum, percentile.maximum) == (0, 100)
+    # The unit vocabulary must match `profiles` exactly, or PRF001 is comparing
+    # two different alphabets rather than two values.
+    unit = next(c for c in schema.columns if c.name == "unit")
+    assert (
+        unit.allowed
+        == next(c for c in TABLE_SCHEMAS["profiles"].columns if c.name == "unit").allowed
+    )
 
 
 def test_mirror_paths_finds_flat_and_sharded_tables(tmp_path: Path) -> None:

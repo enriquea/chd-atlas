@@ -529,6 +529,11 @@ EXPRESSION = TableSchema(
     sort_key=("contrast", "gene"),
 )
 
+# The unit vocabulary is shared with PROFILES rather than repeated: PRF001
+# compares a dataset's two tables cell for cell, and two literals that drifted
+# apart would make that check compare different alphabets.
+_ABUNDANCE_UNITS: Final = frozenset({"tpm", "nx", "cpm", "lfq", "rpkm"})
+
 PROFILES = TableSchema(
     name="profiles",
     columns=(
@@ -541,12 +546,26 @@ PROFILES = TableSchema(
         # publishes RPKM; converting to TPM would be the atlas authoring a
         # number, and this column exists precisely so two incomparable
         # quantities cannot merge under one header.
-        Column("unit", pl.String, allowed=frozenset({"tpm", "nx", "cpm", "lfq", "rpkm"})),
+        Column("unit", pl.String, allowed=_ABUNDANCE_UNITS),
         Column("q25", pl.Float64, nullable=True),
         Column("q75", pl.Float64, nullable=True),
         Column("n_samples", pl.Int64, minimum=1),
     ),
     sort_key=("dataset", "gene", "tissue", "stage"),
+)
+
+PROFILE_QUANTILES = TableSchema(
+    name="profile_quantiles",
+    columns=(
+        Column("dataset", pl.String),
+        Column("tissue", pl.String),
+        Column("stage", pl.String),
+        Column("percentile", pl.Int64, minimum=0, maximum=100),
+        Column("value", pl.Float64),
+        Column("unit", pl.String, allowed=_ABUNDANCE_UNITS),
+        Column("n_genes", pl.Int64, minimum=1),
+    ),
+    sort_key=("dataset", "tissue", "stage", "percentile"),
 )
 
 PROTEOMICS = TableSchema(
@@ -703,6 +722,7 @@ TABLE_SCHEMAS: Final[dict[str, TableSchema]] = {
         VARIANTS,
         EXPRESSION,
         PROFILES,
+        PROFILE_QUANTILES,
         PROTEOMICS,
         PHOSPHO,
         CLINGEN_VALIDITY,
@@ -716,6 +736,7 @@ SHARDED_TABLES: Final[dict[str, str]] = {
     "variants": "variants",
     "expression": "expression",
     "profiles": "profiles",
+    "profile_quantiles": "profile_quantiles",
     "proteomics": "proteomics",
     "phospho": "phospho",
 }
