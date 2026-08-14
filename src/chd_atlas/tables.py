@@ -537,7 +537,11 @@ PROFILES = TableSchema(
         Column("tissue", pl.String),
         Column("stage", pl.String, nullable=True),
         Column("median_abundance", pl.Float64),
-        Column("unit", pl.String, allowed=frozenset({"tpm", "nx", "cpm", "lfq"})),
+        # `rpkm` added 2026-08-14 with the bulk developmental layer. The source
+        # publishes RPKM; converting to TPM would be the atlas authoring a
+        # number, and this column exists precisely so two incomparable
+        # quantities cannot merge under one header.
+        Column("unit", pl.String, allowed=frozenset({"tpm", "nx", "cpm", "lfq", "rpkm"})),
         Column("q25", pl.Float64, nullable=True),
         Column("q75", pl.Float64, nullable=True),
         Column("n_samples", pl.Int64, minimum=1),

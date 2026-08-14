@@ -323,6 +323,21 @@ def test_variants_chrom_rejects_a_chr_prefix() -> None:
     assert "chr1" not in column.allowed
 
 
+def test_profiles_admits_rpkm_and_still_refuses_an_unknown_unit() -> None:
+    """The source publishes RPKM; converting it to TPM would author a number.
+
+    `unit` exists so two incomparable quantities cannot merge, so widening it is
+    a deliberate vocabulary change, not a convenience. The negative half is the
+    half that matters: a typo must still fail.
+    """
+    column = next(c for c in TABLE_SCHEMAS["profiles"].columns if c.name == "unit")
+    allowed = column.allowed
+    assert allowed is not None
+    assert "rpkm" in allowed
+    assert allowed == frozenset({"tpm", "nx", "cpm", "lfq", "rpkm"})
+    assert "rpkms" not in allowed
+
+
 def test_mirror_paths_finds_flat_and_sharded_tables(tmp_path: Path) -> None:
     (tmp_path / "mirrors" / "variants").mkdir(parents=True)
     (tmp_path / "mirrors" / "genes.tsv").write_text("hgnc_id\n")
