@@ -337,3 +337,51 @@ def test_every_cohort_a_published_burden_row_cites_resolves_with_its_caveat(site
         assert registry[identifier]["description"].strip(), f"{identifier} publishes no caveat"
 
     assert "not congenital heart disease" in registry["taa_cases"]["description"].lower()
+
+
+def test_a_gene_an_authority_reported_no_association_for_says_so_in_both_payloads(
+    site: Path,
+) -> None:
+    """Issue #13's third axis, on the one published gene that exercises it.
+
+    GDF1 carries G2P `Definitive`, Labcorp `Strong` and Illumina `No Known
+    Disease Relationship` in scope. Until schema 2.10 it published
+    `has_conflicting_evidence: false` and nothing else, so a consumer was told
+    the evidence did not conflict while two bodies disagreed about whether an
+    association exists at all. `no_known_association` takes neither side of
+    `CONTESTED` -- correctly, since a null result is not a refutation -- and the
+    disagreement therefore reached no published byte.
+
+    Asserted on the bundle **and** the browse row, because a flag a reader meets
+    on one and not the other is missing exactly where they are standing, and
+    asserted against a real build rather than a fixture because what breaks it is
+    the gate moving: GDF1 is admitted on GenCC agreement, and it is the only
+    published gene on this axis, so a widening or narrowing that drops it leaves
+    the axis published on nothing while every unit test still passes.
+
+    `has_conflicting_evidence` is asserted **false** in the same breath. The
+    whole design decision is that these are two axes rather than one, and a test
+    that checked only the new flag would pass with the two collapsed together.
+    """
+    bundle = json.loads((site / "genes" / "HGNC_4214.json").read_text(encoding="utf-8"))
+    assert bundle["symbol"] == "GDF1", "this test is about GDF1"
+
+    assert bundle["has_no_association_report"] is True
+    assert bundle["no_association_reported_by"] == ["Illumina"]
+    # The other axis stays untouched: a null result is not a contest.
+    assert bundle["has_conflicting_evidence"] is False
+
+    row = next(
+        item
+        for item in json.loads((site / "genes" / "index.json").read_text(encoding="utf-8"))["genes"]
+        if item["gene"] == "HGNC:4214"
+    )
+    assert row["has_no_association_report"] is True
+    assert row["no_association_reported_by"] == ["Illumina"]
+    assert row["has_conflicting_evidence"] is False
+
+    # The pair is consistent everywhere, not only on this gene: an authority
+    # named while the flag reads false would say two things at once.
+    for bundle_path in sorted((site / "genes").glob("HGNC_*.json")):
+        payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+        assert payload["has_no_association_report"] == bool(payload["no_association_reported_by"])

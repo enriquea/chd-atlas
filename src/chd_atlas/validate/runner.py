@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from chd_atlas.corpus import load_curation, unexpected_curation_entries
+from chd_atlas.genes import GeneRegistry
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import (
     TABLE_SCHEMAS,
@@ -17,6 +18,7 @@ from chd_atlas.tables import (
     validate_table,
 )
 from chd_atlas.validate.burden import validate_burden, validate_burden_references
+from chd_atlas.validate.genes import validate_mirror_symbols
 from chd_atlas.validate.ids import load_id_registry, validate_ids
 from chd_atlas.validate.ontology import (
     OntologyRegistry,
@@ -126,6 +128,48 @@ def _known_genes(root: Path) -> set[str] | None:
     if frame is None or "hgnc_id" not in frame.columns:
         return None
     return {value for value in frame["hgnc_id"].to_list() if value is not None}
+
+
+def _symbol_registry(root: Path) -> GeneRegistry | None:
+    """`mirrors/genes.tsv` as a symbol lookup, or None when it cannot be read.
+
+    None rather than an empty registry, for the reason `_gene_registry` above
+    gives: an empty one makes every symbol in the corpus report GEN001, burying
+    the single real problem under one warning per row.
+    """
+    path = root / "mirrors" / "genes.tsv"
+    if not path.is_file():
+        return None
+    frame, _ = read_table(path, TABLE_SCHEMAS["genes"])
+    if frame is None or "hgnc_id" not in frame.columns or "symbol" not in frame.columns:
+        return None
+    return GeneRegistry(frame.iter_rows(named=True))
+
+
+def _mirror_gene_labels(root: Path) -> list[tuple[str, str, str]]:
+    """`(hgnc_id, symbol, where)` for every distinct pair the validity mirrors print.
+
+    Deduplicated by the caller's `set`, not here: ClinGen carries one row per
+    gene-disease pair, so a gene with four curated diseases would otherwise
+    report the same naming disagreement four times.
+    """
+    labelled: list[tuple[str, str, str]] = []
+    for name, schema in (
+        ("clingen_gene_validity.tsv", "clingen_validity"),
+        ("gencc_submissions.tsv", "gencc_submissions"),
+    ):
+        path = root / "mirrors" / name
+        if not path.is_file():
+            continue
+        frame, _ = read_table(path, TABLE_SCHEMAS[schema])
+        if frame is None or "gene" not in frame.columns or "gene_symbol" not in frame.columns:
+            continue
+        for gene, symbol in zip(
+            frame["gene"].to_list(), frame["gene_symbol"].to_list(), strict=True
+        ):
+            if gene is not None and symbol is not None:
+                labelled.append((str(gene), str(symbol), str(path)))
+    return labelled
 
 
 def _mirrored_validity(
@@ -423,6 +467,21 @@ def validate_repository(root: Path) -> ValidationReport:
                 for assertion in corpus.assertions
             }
             issues.extend(validate_curation_is_in_scope(curated_genes, in_scope_genes))
+
+    # Issue #33: every cross-source join keys on HGNC id, and the registry that
+    # makes that possible has to stay able to resolve the symbols the mirrors
+    # actually print. Independent of scope -- a stale registry entry is a
+    # naming fact about a gene, not about which diseases it is curated for --
+    # so this runs on its own rather than inside either scope branch, which is
+    # also what keeps it from being a call site that exists on one branch and
+    # not the other (CLAUDE.md section 4.34).
+    issues.extend(
+        validate_mirror_symbols(
+            _mirror_gene_labels(root),
+            _symbol_registry(root),
+            str(root / "mirrors" / "genes.tsv"),
+        )
+    )
 
     # Same reasoning as the referential skip above: on a failed registry load
     # `registry` is empty, so every source every mirror table uses would report

@@ -184,9 +184,10 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
 
     One function rather than two literals so the browse row and the page it
     opens cannot disagree, and — the reason it exists — so `headline_confidence`,
-    `validity_state`, `atlas_curation`, `has_conflicting_evidence` and
-    `has_source_discordance` are written together. Dropping any one of them from
-    one payload alone is not an edit that can be made here by accident.
+    `validity_state`, `atlas_curation`, `has_conflicting_evidence`,
+    `has_source_discordance`, `has_no_association_report` and
+    `no_association_reported_by` are written together. Dropping any one of them
+    from one payload alone is not an edit that can be made here by accident.
 
     `.value` publishes the vocabulary's string rather than leaning on a `StrEnum`
     member *being* a `str`. Measured, not assumed: mypy accepts either spelling
@@ -215,6 +216,13 @@ def _headline(gene: str, symbol: str, fact: GeneFacts) -> dict[str, Json]:
         "atlas_curation": fact.atlas_curation.value,
         "has_conflicting_evidence": fact.has_conflicting_evidence,
         "has_source_discordance": fact.has_source_discordance,
+        # The third axis, written here for exactly the reason the two above are:
+        # a reader who meets the flag on the browse row and not on the page, or
+        # the other way round, meets it exactly where it is missing. The list is
+        # empty whenever the flag is false, so the two cannot say different
+        # things about the same gene. Issue #13.
+        "has_no_association_report": fact.has_no_association_report,
+        "no_association_reported_by": list(fact.no_association_reported_by),
         "lesion_groups": [group.value for group in fact.lesion_groups],
     }
 
