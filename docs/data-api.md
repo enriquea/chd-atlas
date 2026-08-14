@@ -53,7 +53,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.9",
+  "schema_version": "2.10",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -146,6 +146,9 @@ wrong by the next one.
   gene" is now wrong for 16 genes. This is a population change inside an
   unchanged shape, which is why it is MINOR by the rule above; the obligation it
   creates is real regardless of the version letter.
+  `2.10` added `has_no_association_report` and `no_association_reported_by` to
+  every gene bundle and browse row, described above. Additive, and a third axis
+  rather than a widening of `has_conflicting_evidence`.
   `2.9` added [`cohorts.json`](#cohortsjson) and a `cohorts` count. Additive: no
   existing key changes meaning and no payload loses one. It closes a gap open
   since `2.3` — every burden row has named its sample collections by bare id
@@ -237,8 +240,10 @@ assumptions are now false — see the next section.
       "functional_count": 0,
       "gene": "HGNC:11604",
       "has_conflicting_evidence": false,
+      "has_no_association_report": false,
       "has_source_discordance": false,
       "headline_confidence": "definitive",
+      "no_association_reported_by": [],
       "lesion_groups": ["septal"],
       "symbol": "TBX5",
       "validity_state": "expert_curated",
@@ -333,6 +338,27 @@ assumptions are now false — see the next section.
   while the *other* supports it. It is narrower than `has_conflicting_evidence`,
   which also fires when a single source is internally split across diseases or
   panels — see [Contested genes](#contested-genes-the-one-consumer-obligation).
+- `has_no_association_report` is **a third axis, not a third rung**, added in
+  schema `2.10`. It is `true` when some authority reported *no known
+  association* in scope while another asserted one, and
+  `no_association_reported_by` names who — sorted, and empty exactly when the
+  flag is `false`, so the two can never say different things.
+
+  It is deliberately **not** folded into `has_conflicting_evidence`, which means
+  exactly `disputed`/`refuted`. "A panel looked and found no reported evidence"
+  is not "a panel disputes this", and merging them would give one laboratory's
+  null result the weight of a chartered panel's refutation. ClinGen treats the
+  assertion the same way — a distinct verdict rather than a rung of the
+  definitive-to-limited ladder.
+
+  Before `2.10` that disagreement reached no published byte at all. **GDF1 is
+  the live case and currently the only one:** G2P grades it `Definitive`,
+  Labcorp `Strong`, and Illumina reports `No Known Disease Relationship`. It
+  published `has_conflicting_evidence: false` with nothing beside it, so a
+  consumer was told the evidence did not conflict while two bodies disagreed
+  about whether an association exists. A gene whose *only* in-scope record is
+  `no_known_association` does **not** set this flag — it is not in disagreement
+  with anything, and there are 9 such genes in the mirrors, none published.
 - `confidence_by_lesion_group` applies the gene's mirrored `headline_confidence`
   to every lesion group its curated assertions declare — ClinGen and GenCC
   classify a gene against a disease, never against a specific lesion, so there
@@ -406,6 +432,8 @@ One gene's whole detail page, in one fetch.
   "atlas_curation": "curated",
   "has_conflicting_evidence": false,
   "has_source_discordance": false,
+  "has_no_association_report": false,
+  "no_association_reported_by": [],
   "lesion_groups": ["septal"],
   "validity": { "state": "expert_curated", "has_source_discordance": false, "records": [ … ] },
   "publications": ["PMID:8988165"],

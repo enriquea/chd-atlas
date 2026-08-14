@@ -22,6 +22,7 @@ from chd_atlas.vocab import (
     Technology,
     Zygosity,
     has_conflicting_evidence,
+    reports_no_association,
     strongest,
 )
 
@@ -94,6 +95,45 @@ def test_uncontested_classifications_are_not_conflicting() -> None:
     assert not has_conflicting_evidence([Classification.DEFINITIVE, Classification.MODERATE])
     assert not has_conflicting_evidence([Classification.REFUTED])
     assert not has_conflicting_evidence([])
+
+
+def test_no_known_association_is_a_third_axis_and_not_a_contest() -> None:
+    """Issue #13. `NO_KNOWN_ASSOCIATION` fires its own flag, never the other one.
+
+    The two must stay separable in both directions, and each assertion below
+    fails a different collapse of them:
+
+    - a supportive record beside a null result sets the new flag and **not**
+      `has_conflicting_evidence` -- folding them together would give one
+      laboratory's "we looked and found nothing" the weight of a chartered
+      panel's refutation, which is what `CONTESTED` is for;
+    - a genuinely contested gene sets `has_conflicting_evidence` and **not** the
+      new flag, so the new one cannot be a second name for the old;
+    - a null result *alone* sets neither. It disagrees with nothing, and a flag
+      claiming otherwise would tell a reader two authorities differ where one
+      spoke. Measured 2026-08-14: 9 in-scope genes are in exactly that position
+      and none is published, so only a fixture can distinguish this.
+
+    GDF1 is the live case -- G2P `Definitive`, Illumina `No Known Disease
+    Relationship` -- and it published `has_conflicting_evidence: false` with
+    nothing beside it until this existed.
+    """
+    supportive_and_null = [Classification.DEFINITIVE, Classification.NO_KNOWN_ASSOCIATION]
+    assert reports_no_association(supportive_and_null)
+    assert not has_conflicting_evidence(supportive_and_null)
+
+    contested = [Classification.DEFINITIVE, Classification.REFUTED]
+    assert has_conflicting_evidence(contested)
+    assert not reports_no_association(contested)
+
+    assert not reports_no_association([Classification.NO_KNOWN_ASSOCIATION])
+    assert not reports_no_association([Classification.DEFINITIVE])
+    assert not reports_no_association([])
+
+    # A contested record is not "supportive", so it cannot supply the other half.
+    assert not reports_no_association(
+        [Classification.REFUTED, Classification.NO_KNOWN_ASSOCIATION]
+    )
 
 
 def test_every_mirrored_classification_maps_and_an_unknown_one_raises() -> None:

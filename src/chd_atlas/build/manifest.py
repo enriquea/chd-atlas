@@ -151,6 +151,15 @@ from chd_atlas.corpus import Corpus
 # `no_enrichment`, because collapsing them is what turns "nobody looked" into
 # "somebody looked and found nothing".
 #
+# 2.10 adds `has_no_association_report` and `no_association_reported_by` to
+# every gene bundle and browse row. Additive, and a *third axis* rather than a
+# widening of `has_conflicting_evidence`, which keeps meaning exactly
+# `CONTESTED`. Issue #13: a gene one submitter calls `Definitive` and another
+# calls `No Known Disease Relationship` published `has_conflicting_evidence:
+# false` and said nothing else, so the disagreement reached no byte. GDF1 is the
+# live case. Folding the two together instead would give one laboratory's null
+# result the weight of a chartered panel's refutation.
+#
 # 2.9 adds `cohorts.json` and a `cohorts` count. Additive, so MINOR: no existing
 # key changes meaning and no payload loses one.
 #
@@ -231,7 +240,7 @@ from chd_atlas.corpus import Corpus
 #   authorities asserting a gene frequently means it sits on more commercial
 #   panels, not that it is eight times better supported. D12 applies: a rank
 #   derived from it would be a validity call the atlas authored.
-SCHEMA_VERSION: Final = "2.9"
+SCHEMA_VERSION: Final = "2.10"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is

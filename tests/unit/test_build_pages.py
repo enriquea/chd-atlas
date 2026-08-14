@@ -68,13 +68,23 @@ def _facts(
     curation: AtlasCuration,
     groups: tuple[LesionGroup, ...] = (),
     functional_count: int = 0,
+    no_association_reported_by: tuple[str, ...] = (),
 ) -> GeneFacts:
+    """A published gene's facts. The third axis defaults off and is opt-in.
+
+    `no_association_reported_by` carries both halves of the pair: the flag is
+    derived from it here rather than passed separately, so a fixture cannot
+    construct the impossible state -- an authority named while the flag reads
+    false -- that `derive.gene_facts` refuses to produce.
+    """
     return GeneFacts(
         gene=gene,
         headline_confidence=Classification.DEFINITIVE,
         validity_state=ValidityState.EXPERT_CURATED,
         has_conflicting_evidence=False,
         has_source_discordance=False,
+        has_no_association_report=bool(no_association_reported_by),
+        no_association_reported_by=no_association_reported_by,
         lesion_groups=groups,
         confidence_by_lesion_group={group: Classification.DEFINITIVE for group in groups},
         conflicting_lesion_groups=(),
