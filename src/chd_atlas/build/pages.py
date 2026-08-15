@@ -69,6 +69,17 @@ from chd_atlas.build.concordance import FamilyState, family_state
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.paths import GENE_INDEX_PAGE, gene_bundle_path, gene_page_path
+from chd_atlas.build.profiles import (
+    EMPTY_EXPRESSION_PROFILE,
+    DatasetProfileEntry,
+    ExpressionProfile,
+    PhaseInfo,
+    PhaseOutcome,
+    ProfileGap,
+    Specificity,
+    StageProfileEntry,
+    TissueProfileEntry,
+)
 from chd_atlas.build.render import (
     EVIDENCE_POWER_CAVEAT,
     FILTER_SCRIPT,
@@ -88,6 +99,7 @@ from chd_atlas.build.validity import GeneValidity, agreeing_submitters, uncurate
 from chd_atlas.identifiers import HgncId
 from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.models.cohort import Cohort
+from chd_atlas.models.dataset import Dataset
 from chd_atlas.models.literature import Publication
 from chd_atlas.vocab import AtlasCuration, Classification, ValiditySource, ValidityState
 
@@ -1577,6 +1589,362 @@ def _names(ids: Sequence[str], cohorts: Mapping[str, Cohort]) -> str:
     )
 
 
+# --- Developmental expression -----------------------------------------------
+#
+# `ExpressionProfile` (`build/profiles.py`) already carries every figure this
+# section renders -- a percentile band, tau, a phase placement -- with every
+# qualifier D39 requires attached to it in the JSON. Nothing below computes
+# anything; it only chooses the English for a payload whose own module
+# docstring says exactly that is a later task's job.
+#
+# D32 governs this section absolutely: sentences and small per-organ tables,
+# never a plot. A future `<svg>`, `<canvas>` or `<img>` here would break the
+# one rule this layer exists to keep -- `test_the_section_never_renders_a_
+# chart_only_text_and_tables` is what watches for it.
+
+# What each `ProfileGap` means, in English. Split into three maps rather than
+# one, because `ProfileGap`'s own docstring says only the first two members
+# mean exactly the same fact wherever they appear -- `dataset_not_registered`
+# and `detection_floor_undeclared` are dataset-level gaps with one meaning in
+# both fields that publish them, while `no_quantile_grid` is placement-only and
+# `one_organ_sampled`/`undefined` are tau-only. Sharing only the two that
+# genuinely share a meaning is `EVIDENCE_STATE_LABELS`'s discipline applied
+# here: one vocabulary where the fact is one fact, never a false shared
+# spelling for two different ones.
+_DATASET_GAP_CLAUSE: Final[dict[str, str]] = {
+    ProfileGap.DATASET_NOT_REGISTERED.value: (
+        "this dataset is not registered in the atlas's own records"
+    ),
+    ProfileGap.FLOOR_UNDECLARED.value: "this dataset has not declared a detection floor",
+}
+
+_PLACEMENT_GAP_CLAUSE: Final[dict[str, str]] = {
+    **_DATASET_GAP_CLAUSE,
+    ProfileGap.NO_QUANTILE_GRID.value: (
+        "no complete percentile grid is published for this organ at this stage"
+    ),
+}
+
+_SPECIFICITY_GAP_CLAUSE: Final[dict[str, str]] = {
+    **_DATASET_GAP_CLAUSE,
+    ProfileGap.ONE_ORGAN_SAMPLED.value: (
+        "only one organ was sampled at this stage, and τ needs at least two"
+    ),
+    ProfileGap.UNDEFINED.value: "it could not be computed for this gene at this stage",
+}
+
+_EXPRESSION_HEADERS: Final = ("tissue", "median abundance", "percentile")
+
+# The shape `bundles._expression_profile` publishes for a gene no curated bulk
+# RNA-seq dataset mentions at all (`EMPTY_EXPRESSION_PROFILE`, imported rather
+# than reconstructed here, so the two cannot drift on what "empty" means).
+#
+# **Chosen over "this dataset does not cover it", and that is a different
+# claim.** `datasets == []` means no `profiles.tsv` row anywhere names this
+# gene: there is no specific dataset in view to say did not cover it, and
+# saying so would invent a check this atlas never ran. This is the `_not_
+# curated` idiom, not `_burden_section`'s: an absent section here would read as
+# "the atlas looked and found nothing", indistinguishable from what this
+# sentence actually means, so the section renders regardless.
+_NOT_CURATED_EXPRESSION: Final = (
+    "<p>The atlas has <strong>not yet curated</strong> a developmental expression "
+    "profile for this gene: no curated bulk RNA-seq dataset mentions it today. That is "
+    "a different claim from a specific dataset having looked at this gene and found "
+    "nothing.</p>"
+)
+
+# Unconditional -- rendered beside a page of nothing but detected, well-placed
+# figures exactly as beside a gene with every organ below the floor. The
+# precedent for both the wording and the placement decision is
+# `_POOLING_NOTICE`: made conditional once, it read false in the position that
+# motivated the fix, because a caveat that appears only next to the bad news
+# reads as an excuse for it. This one is a general fact about bulk RNA-seq and
+# CHD gene biology, true whatever this gene's own numbers say, so it carries no
+# clause that could be false in either position.
+#
+# This is the burden layer's "a missing cell is not a null result" discipline,
+# needed more here: that layer leaves a gap as an absence, while this one turns
+# a low number into a sentence, which is the more persuasive -- and more
+# dangerous -- thing to get wrong.
+_BULK_DILUTION_NOTICE: Final = (
+    '<p class="notice-inline"><strong>Every measurement below is from whole, bulk '
+    "tissue, never a single cell type.</strong> A whole embryonic heart is "
+    "cardiomyocytes alongside endocardium, epicardium, cardiac neural crest, cushion "
+    "mesenchyme and blood, and many congenital heart disease genes act in one rare "
+    "lineage &mdash; the cardiac neural crest and outflow tract, the second heart "
+    "field, the conduction system. A gene expressed intensely in one such lineage can "
+    "still read low, or fall below the detection floor, once diluted across the whole "
+    "organ: a low or absent bulk figure is not evidence that a gene is unimportant to "
+    "heart development.</p>"
+)
+
+_EXPRESSION_READING_NOTES: Final = (
+    "<p>Each organ's median abundance is placed against that organ's own percentile "
+    "grid for that dataset and developmental stage, and the number of genes measured "
+    "travels with every percentile shown below. No percentile is published below a "
+    "dataset's own detection floor, because the rank of an unreliable measurement is "
+    "not itself a measurement.</p>"
+)
+
+# Conditional on the section actually showing more than one placement.
+# Rendered on a page with at most one, this would warn a reader against
+# comparing figures the page does not even lay out side by side -- the same
+# reason `_composite_note` and `_SYNONYMOUS_NOTICE` are conditional on a row
+# that could earn them actually being on the page.
+_PERCENTILE_COMPARABILITY_NOTICE: Final = (
+    "<p>Percentiles on this page are <strong>not comparable across organs or across "
+    "developmental stages</strong>: each organ transcribes a different fraction of the "
+    "whole gene set, and the reference distribution itself changes shape as the heart "
+    "matures. A high percentile shown for one organ or stage says nothing about a "
+    "lower one shown elsewhere on this page.</p>"
+)
+
+
+def _phase_sentence(phase: PhaseInfo) -> str:
+    """Where a stage falls in the curated cardiac-phase vocabulary, or why not.
+
+    **Every branch names a state; none renders blank.** `curation/cardiac_
+    phases.yaml` declares zero phases today (Task 4's placeholder, boundaries
+    not yet transcribed from a verified source), so on the real corpus every
+    stage resolves to `OUTSIDE_WINDOW` with reason "outside the curated
+    window" -- true, and this function says exactly that rather than omitting
+    the line or rendering an empty one, which is the difference between a
+    documented gap and what reads as a rendering bug.
+
+    `MATCHED` is the only branch that names a `phase_id` rather than a
+    `reason` -- `profiles.PhaseAssignment` guarantees the two are never both
+    set -- and is unreachable on the committed corpus for the reason above.
+    The underscore-to-space rewrite is the only transformation applied to it,
+    because `phase_id` is this atlas's own slug (`curation/cardiac_
+    phases.yaml`), not third-party mirrored text.
+
+    Every other branch renders `reason` verbatim, through `html.escape` like
+    every other value this function assembles by hand. `profiles.py` already
+    wrote those as short, reader-facing clauses -- "outside the curated
+    window", "post-natal", "stage not declared by this dataset", "no
+    developmental stage recorded for this measurement" -- and a second,
+    parallel vocabulary here could only ever repeat them or drift from them.
+    """
+    if phase["outcome"] == PhaseOutcome.MATCHED.value:
+        label = html.escape((phase["phase_id"] or "").replace("_", " ")) or "unnamed phase"
+        return f"Developmental phase: <strong>{label}</strong>."
+    reason = phase["reason"] or "not available"
+    return f"Developmental phase: {html.escape(reason)}."
+
+
+def _specificity_sentence(spec: Specificity, cardiac_tissues: frozenset[str]) -> str:
+    """tau, with its scale and its organ list, and the argmax-gated gloss.
+
+    **No branch omits the scale or the tissue list.** They sit in the one
+    f-string that also carries the number, so there is no code path that
+    renders tau without them -- the same guarantee `_effect` keeps for its
+    measure label, after the same near miss: a bare number under a header that
+    does not say what it measures.
+
+    **"Heart-preferential" is gated on `highest_in` being one of this
+    dataset's own declared `cardiac_tissues`, never on tau alone.** tau
+    measures concentration, not location: a gene at heart 20, liver 200, five
+    other organs at 5 scores tau = 0.623 on log2 with `highest_in` = liver, and
+    a gloss keyed on the number alone would call that gene heart-preferential
+    -- the opposite of the truth. Three mutually exclusive endings -- the
+    argmax is cardiac, the argmax is some other organ, or the peak is tied
+    (`highest_in is None`) -- and only the first ever uses that phrase.
+
+    No adjective and no band on the number itself: this function states the
+    scale, the organs and the argmax and stops there, never "highly specific"
+    or "broadly expressed" -- D39(c) reserves that judgement from the atlas.
+    """
+    tissues = ", ".join(html.escape(tissue) for tissue in spec["tissues"])
+    base = (
+        f"τ = {_fmt(spec['tau'])} ({html.escape(spec['scale'])} scale) across "
+        f"{tissues} ({spec['n_tissues']} organs sampled)."
+    )
+    highest = spec["highest_in"]
+    if highest is None:
+        peak = "No single organ has the highest median at this stage; the peak is tied."
+    elif highest in cardiac_tissues:
+        peak = (
+            "Expression is heart-preferential at this stage: it peaks in "
+            f"{html.escape(highest)}, one of this dataset's cardiac tissues."
+        )
+    else:
+        peak = (
+            f"Expression peaks in {html.escape(highest)} at this stage, which this "
+            "dataset does not treat as a cardiac tissue."
+        )
+    return f'<p class="method">{base} {peak}</p>'
+
+
+def _specificity_gap_sentence(reason: str | None, floor: float | None) -> str:
+    """Why tau is absent for a stage, in the same voice as `_specificity_sentence`.
+
+    `peak_below_detection_floor` is kept out of `_SPECIFICITY_GAP_CLAUSE`
+    because it is the one reason with a number to show: the floor value, named
+    for the same reason rule 5 requires it beside a tissue's own placement gap
+    -- a reader told a figure is missing because of a floor is owed the floor.
+    """
+    if reason == ProfileGap.PEAK_BELOW_DETECTION_FLOOR.value:
+        qualifier = f" (detection floor {_fmt(floor)})" if floor is not None else ""
+        return (
+            "τ is not available: every organ sampled at this stage is below the "
+            f"detection floor{qualifier}."
+        )
+    clause = _SPECIFICITY_GAP_CLAUSE.get(reason or "", "no reason was recorded for this gap")
+    return f"τ is not available: {clause}."
+
+
+def _abundance(tissue: TissueProfileEntry) -> str:
+    """ "100 rpkm (n=3 samples)" -- never the number alone.
+
+    `n_samples` travels with every figure on this page, the `_count`/
+    `count_unit` discipline applied here: the schema permits `n_samples` = 1,
+    so "median" can be one observation, and a reader must be told rather than
+    left to assume a study-sized sample sits behind every row.
+    """
+    noun = "sample" if tissue["n_samples"] == 1 else "samples"
+    unit = tissue["unit"]
+    return f"{_fmt(tissue['median_abundance'])} {unit} (n={tissue['n_samples']} {noun})"
+
+
+def _percentile_cell(tissue: TissueProfileEntry, floor: float | None) -> str:
+    """The percentile band, or why there is none -- never the words "not detected".
+
+    **`below_detection_floor` is the one reason with its own required wording
+    (rule 5).** "Not detected" is a positive-sounding negative assertion a
+    clinical reader takes as evidence against a gene, and this atlas measured
+    no such thing: a value below a bulk assay's detection floor is a
+    measurement this atlas does not vouch for, not an absence. The floor's own
+    value is shown beside it, because a reader cannot judge how far below
+    without it.
+    """
+    placed = tissue["placement"]
+    if placed is not None:
+        band = ""
+        if placed["q25_percentile"] is not None and placed["q75_percentile"] is not None:
+            band = f", IQR {placed['q25_percentile']}-{placed['q75_percentile']}"
+        return f"{placed['median_percentile']} of {placed['n_genes']:,} genes{band}"
+    reason = tissue["not_placed_reason"]
+    if reason == ProfileGap.BELOW_DETECTION_FLOOR.value:
+        qualifier = (
+            f" (detection floor {_fmt(floor)} {tissue['unit']})" if floor is not None else ""
+        )
+        return f"below the detection floor in whole {tissue['tissue']} at this stage{qualifier}"
+    fallback = "no percentile is available for this measurement"
+    return _PLACEMENT_GAP_CLAUSE.get(reason or "", fallback)
+
+
+def _tissue_table(tissues: Sequence[TissueProfileEntry], floor: float | None) -> str:
+    """One row per organ measured at one stage. A list, never a cross-organ grid.
+
+    Rows, not columns: laying organs out side by side would itself be the
+    layout rule 8 warns against, since a table invites a reader's eye to
+    compare adjacent cells. `_PERCENTILE_COMPARABILITY_NOTICE` is what a list
+    alone cannot say, and is rendered beside it where it applies.
+    """
+    rows = [
+        Row(cells=(tissue["tissue"], _abundance(tissue), _percentile_cell(tissue, floor)))
+        for tissue in tissues
+    ]
+    return data_table(_EXPRESSION_HEADERS, rows)
+
+
+def _stage_block(
+    stage: StageProfileEntry, cardiac_tissues: frozenset[str], floor: float | None
+) -> str:
+    """One (dataset, stage) cross-section: its phase, its tau, its organs."""
+    label = html.escape(stage["stage"]) if stage["stage"] is not None else "no stage recorded"
+    spec = stage["specificity"]
+    if spec is not None:
+        specificity_html = _specificity_sentence(spec, cardiac_tissues)
+    else:
+        gap = _specificity_gap_sentence(stage["specificity_unavailable_reason"], floor)
+        specificity_html = f'<p class="method">{gap}</p>'
+    return (
+        f"<h4>{label}</h4>"
+        f'<p class="method">{_phase_sentence(stage["phase"])}</p>'
+        f"{specificity_html}"
+        f"{_tissue_table(stage['tissues'], floor)}"
+    )
+
+
+def _dataset_block(entry: DatasetProfileEntry, dataset: Dataset | None) -> str:
+    """One dataset's whole contribution: its stages, and a link to its own grid.
+
+    The link is D39(b)'s other half reaching a reader rather than only a
+    program: `build_profile_quantiles` publishes the 101-point grid a
+    percentile above was read against, and this is the one place a person
+    reading the page -- not a script reading the bundle -- can reach it.
+    Omitted when `quantile_shard` is `None` (a corpus mid-curation, or the
+    gate bypassed) rather than linking a file `Emitter` never wrote.
+
+    `dataset` is looked up by the caller and may be `None` --
+    `ProfileGap.DATASET_NOT_REGISTERED` is a real, named state, not a caller
+    error, so this degrades to no cardiac tissues and no floor rather than
+    raising: the gap is already stated on every cell it affects, and this
+    function's job is to render what the payload says, not to police a
+    registration mismatch a validator already reports elsewhere.
+    """
+    heading = f"<h3>{html.escape(entry['dataset'])}"
+    shard = entry["quantile_shard"]
+    if shard:
+        heading += f' <a href="../{html.escape(shard)}">percentile grid as JSON</a>'
+    heading += "</h3>"
+    cardiac = frozenset(dataset.cardiac_tissues) if dataset is not None else frozenset()
+    floor = dataset.detection_floor if dataset is not None else None
+    stages = "".join(_stage_block(stage, cardiac, floor) for stage in entry["stages"])
+    return heading + stages
+
+
+def _placement_count(entries: Sequence[DatasetProfileEntry]) -> int:
+    """How many organ/stage/dataset cells actually carry a percentile.
+
+    What `_PERCENTILE_COMPARABILITY_NOTICE` is conditioned on: a page with at
+    most one placement has nothing side by side for a reader to compare.
+    """
+    return sum(
+        1
+        for entry in entries
+        for stage in entry["stages"]
+        for tissue in stage["tissues"]
+        if tissue["placement"] is not None
+    )
+
+
+def _expression_section(profile: ExpressionProfile, datasets: Mapping[str, Dataset]) -> str:
+    """Developmental expression: percentile, tau and phase, per organ and stage.
+
+    **Renders a section even for a gene with no data, unlike `_burden_
+    section`.** A burden table's absence would misstate a null result as
+    evidence against a gene it was never tested for, so that section returns
+    `""`. There is no equivalent risk here: `datasets == []` states a fact this
+    atlas already knows -- no curated dataset mentions this gene -- and
+    omitting the section would make that indistinguishable from the atlas
+    never having built this feature at all. `_NOT_CURATED_EXPRESSION` follows
+    `_not_curated`'s idiom, not `_burden_section`'s.
+
+    `datasets` resolves each entry's own accession to the curated `Dataset` it
+    came from, for `cardiac_tissues` (the argmax gate) and `detection_floor`
+    (rule 5's required value) -- both dataset-level facts this per-gene
+    payload does not repeat. A gene absent from the caller's own `profiles`
+    mapping is the caller's job to default to `EMPTY_EXPRESSION_PROFILE`,
+    matching `bundles._expression_profile`'s own fallback, so the page and the
+    bundle cannot disagree about which genes carry data.
+    """
+    entries = profile["datasets"]
+    if not entries:
+        return "<h2>Developmental expression</h2>" + _NOT_CURATED_EXPRESSION
+
+    blocks = "".join(_dataset_block(entry, datasets.get(entry["dataset"])) for entry in entries)
+    notes = _EXPRESSION_READING_NOTES
+    if _placement_count(entries) > 1:
+        notes += _PERCENTILE_COMPARABILITY_NOTICE
+    reading = (
+        '<details class="reading-notes"><summary>How to read these figures</summary>'
+        f"{notes}</details>"
+    )
+    return "<h2>Developmental expression</h2>" + _BULK_DILUTION_NOTICE + reading + blocks
+
+
 def build_gene_pages(
     facts: Mapping[str, GeneFacts],
     emitter: Emitter,
@@ -1589,6 +1957,8 @@ def build_gene_pages(
     cohorts: Mapping[str, Cohort],
     families: tuple[frozenset[str], ...] = (),
     axes: tuple[tuple[str, str], ...] = (),
+    profiles: Mapping[str, ExpressionProfile] | None = None,
+    datasets: Mapping[str, Dataset] | None = None,
 ) -> None:
     """Emit one HTML page per gene in `facts`.
 
@@ -1605,11 +1975,26 @@ def build_gene_pages(
     own heading, not a missing section, for the reason `render.data_table`
     renders a header over no rows at all.
 
+    `profiles` and `datasets` both default to `None` -- and to `{}` inside --
+    rather than to `{}` in the signature, the same reason `concordance` on
+    `build_gene_index_page` does: an empty *literal* dict default is one object
+    shared across every call that omits the argument, which is harmless only as
+    long as nobody ever mutates it, and this project does not rely on that
+    holding forever. A gene absent from `profiles` gets `EMPTY_EXPRESSION_
+    PROFILE`, matching `bundles._expression_profile`'s own fallback exactly, so
+    the page and the bundle cannot disagree about which genes carry a
+    developmental expression profile. `datasets` resolves an entry's own
+    accession to the curated record `_expression_section` reads
+    `cardiac_tissues` and `detection_floor` from; see that function's docstring
+    for why a missing dataset degrades rather than raises.
+
     Sorted, like every loop in this build that iterates a mapping: `sort_keys`
     orders dict keys in a JSON payload and has nothing to say about the order
     files are written in, and a differing write order would move nothing here
     today but is the habit this project keeps.
     """
+    profile_by_gene = profiles or {}
+    dataset_registry = datasets or {}
     for gene in sorted(facts):
         fact = facts[gene]
         symbol = symbols.get(gene, gene)
@@ -1641,6 +2026,14 @@ def build_gene_pages(
             # -- inside what it refers to. It also keeps the atlas's own curation
             # adjacent to the notice about whether there is any.
             + _burden_section(burden.get(gene, ()), publications, cohorts, families, axes)
+            # Last: burden and expression are both mirrored/derived evidence
+            # layers rather than the atlas's own curation, and expression is
+            # the newer of the two -- appending keeps every existing section's
+            # position, and therefore every existing test slicing this page by
+            # position, unchanged.
+            + _expression_section(
+                profile_by_gene.get(gene, EMPTY_EXPRESSION_PROFILE), dataset_registry
+            )
             + "</div></div>"
         )
         emitter.write_text(

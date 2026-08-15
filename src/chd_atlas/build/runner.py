@@ -300,6 +300,15 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     cardiac_tissues = {
         str(dataset.id): frozenset(dataset.cardiac_tissues) for dataset in corpus.datasets
     }
+    # The whole curated record per dataset, not only its `cardiac_tissues`
+    # projection above -- `build_gene_pages`'s expression section also needs
+    # `detection_floor` to name the value a below-floor caveat requires, the
+    # same "publish the whole record, not a projection" rule `cohort_registry`
+    # follows for `Cohort`. A second dict rather than widening `cardiac_tissues`
+    # itself: that mapping is `build_omics`'s own parameter today, and a second
+    # consumer reading a wider shape through the same name is a needless
+    # coupling between the two.
+    dataset_registry = {str(dataset.id): dataset for dataset in corpus.datasets}
     # `select_top` ranks the cardiac series on `percentile_lookup` above, so
     # the rank a reader's bundle preview is chosen by and the percentile the
     # bundle itself publishes (via `expression_profiles`, handed to
@@ -393,6 +402,11 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         cohorts=cohort_registry(corpus.cohorts),
         families=families,
         axes=axes,
+        # The same `expression_profiles` the bundles were built from, a few
+        # lines above -- so a gene page cannot show developmental expression
+        # data its own bundle does not carry, or vice versa.
+        profiles=expression_profiles,
+        datasets=dataset_registry,
     )
     # `validity` again, and the same object `build_gene_pages` was handed: the
     # browse row's `definitive for` cell and the gene page's `definitive for`
