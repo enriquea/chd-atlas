@@ -597,12 +597,88 @@ def test_a_missing_percentile_sorts_after_every_row_that_has_one() -> None:
     assert [row["stage"] for row in top] == ["02", "01"]
 
 
+def test_the_cardiac_series_is_ranked_by_percentile_not_by_stage_token(
+    tmp_path: Path,
+) -> None:
+    """The ranker reads a key nothing used to write.
+
+    Measured before this fix: no writer existed, so every profiles row tied at
+    "missing percentile" and the stage token alone decided which rows a reader
+    sees. It degraded silently rather than failing, which is why it survived.
+    """
+    _table(
+        tmp_path,
+        "profiles",
+        "E-MTAB-9999.tsv",
+        PROFILES_HEADER
+        # "s1" sorts before "s9" alphabetically but is the *lower*-ranked row:
+        # stage-token order and percentile order disagree by construction, or
+        # this test would pass whether or not `percentiles` is even consulted
+        # -- the trap this project has hit four times (§4.14/15b/30/36).
+        + "E-MTAB-9999\tHGNC:11604\tHeart\ts1\t10.0\trpkm\t\t\t3\n"
+        + "E-MTAB-9999\tHGNC:11604\tHeart\ts9\t90.0\trpkm\t\t\t3\n",
+    )
+    percentiles = {
+        ("HGNC:11604", "E-MTAB-9999", "Heart", "s1"): 10,
+        ("HGNC:11604", "E-MTAB-9999", "Heart", "s9"): 90,
+    }
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(
+        tmp_path,
+        emitter,
+        cardiac={"E-MTAB-9999": frozenset({"Heart"})},
+        percentiles=percentiles,
+    )
+
+    top = summaries["HGNC:11604"]["profiles"]["top"]
+    assert [row["stage"] for row in top] == ["s9", "s1"]
+
+
+def test_a_row_with_no_percentile_annotation_sorts_last_not_first_or_crashing(
+    tmp_path: Path,
+) -> None:
+    """A null-stage row can never have a quantile grid, by construction
+    (`profile_quantiles.stage` is not nullable -- `profiles.py`'s own module
+    docstring), so it can never gain an entry in `percentiles` either. This
+    proves that absence degrades to "sorts last" through the real
+    `build_omics`/`_profile_percentile` wiring, not merely through a row dict
+    a test built by hand with `"percentile": None` already in it.
+    """
+    _table(
+        tmp_path,
+        "profiles",
+        "E-MTAB-9999.tsv",
+        PROFILES_HEADER
+        # Null stage first on disk, so a builder that forgot to rank at all --
+        # or that ranked a missing percentile *first* -- would still put this
+        # row ahead of "s1" instead of behind it.
+        + "E-MTAB-9999\tHGNC:11604\tHeart\t\t5.0\trpkm\t\t\t3\n"
+        + "E-MTAB-9999\tHGNC:11604\tHeart\ts1\t10.0\trpkm\t\t\t3\n",
+    )
+    percentiles = {("HGNC:11604", "E-MTAB-9999", "Heart", "s1"): 10}
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(
+        tmp_path,
+        emitter,
+        cardiac={"E-MTAB-9999": frozenset({"Heart"})},
+        percentiles=percentiles,
+    )
+
+    top = summaries["HGNC:11604"]["profiles"]["top"]
+    assert [row["stage"] for row in top] == ["s1", None]
+
+
 def _profile_tsv_rows(dataset: str, gene: str, stages: int) -> str:
     """Rows for every organ in `ORGANS`, with no `percentile` column at all.
 
-    Unlike `_profile_rows` above, which supplies the percentile the build will
-    eventually derive: `build/profiles.py` (Task 9) does not exist yet, so this
-    is the row shape `build_omics` actually reads from a mirror today.
+    Unlike `_profile_rows` above, which supplies a percentile by hand: a real
+    `mirrors/profiles/*.tsv` row never has one on disk -- `build_omics` derives
+    and writes it via `_profile_percentile` before `select_top` runs, and with
+    no `percentiles` mapping supplied (as here) that derivation answers `None`
+    for every row, which is the row shape a bare read of the mirror actually
+    produces.
     """
     return "".join(
         f"{dataset}\t{gene}\t{organ}\t{i:02d}\t{100 - i}.0\ttpm\t\t\t3\n"

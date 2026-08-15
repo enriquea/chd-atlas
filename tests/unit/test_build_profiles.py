@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from chd_atlas.build.emit import Emitter
+from chd_atlas.build.omics import build_omics
 from chd_atlas.build.profiles import (
     LOOKUP_RULE,
     TAU_METHOD,
@@ -33,6 +34,7 @@ from chd_atlas.build.profiles import (
     band,
     build_profile_quantiles,
     gene_expression_profiles,
+    percentile_annotations,
     percentile_of,
     placement,
     specificity,
@@ -1274,3 +1276,97 @@ def test_datasets_stages_and_tissues_are_all_sorted(tmp_path: Path) -> None:
 
     tissues = next(entry for entry in stages if entry["stage"] == "s3")["tissues"]
     assert [entry["tissue"] for entry in tissues] == ["Alpha", "Zebra"]
+
+
+# --- percentile_annotations: the flat lookup build_omics ranks on (Task 8b) -
+
+
+def test_percentile_annotations_reads_back_every_placed_cell_and_only_those(
+    tmp_path: Path,
+) -> None:
+    """The one flat read of the `Placement`s `gene_expression_profiles`
+    already computed -- never a second derivation of a percentile.
+
+    HGNC:1 is above the floor and gets an entry keyed on the exact cell it was
+    measured in; HGNC:2 is below it and gets none, the same way `placement`
+    itself returns `None` rather than a number that would mislead a reader.
+    Asserting the whole returned dict, rather than checking HGNC:1's entry in
+    isolation, is what proves the second gene contributes nothing at all.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", tissue="Heart", stage="7wpc", median=42.0),
+            _profile_row(gene="HGNC:2", tissue="Heart", stage="7wpc", median=0.5),
+        ],
+    )
+    _write_quantiles(tmp_path, "E-MTAB-6814", {("Heart", "7wpc"): _ASCENDING_GRID})
+
+    profiles = gene_expression_profiles(tmp_path, (_dataset(detection_floor=1.0),), None, {})
+    annotations = percentile_annotations(profiles)
+
+    assert annotations == {("HGNC:1", "E-MTAB-6814", "Heart", "7wpc"): 42}
+
+
+def test_build_omics_and_the_published_bundle_rank_on_the_same_percentile(
+    tmp_path: Path,
+) -> None:
+    """`build_omics` must never compute its own percentile.
+
+    Both figures below trace to the one call to `gene_expression_profiles`:
+    `percentile_annotations` only reads `median_percentile` back out of the
+    `Placement`s that call already returned, the same object `build_genes`
+    would go on to publish as the gene's `expression_profile`. Stage tokens
+    are chosen so alphabetical order and rank order disagree ("s1" sorts
+    first, "s9" ranks first) -- agreeing fixtures pass whether or not the
+    annotation is wired up at all, the trap recorded at §4.14/15b/30/36.
+
+    This reproduces `runner.py`'s own call sequence (`build_profile_quantiles`
+    then `gene_expression_profiles` then `percentile_annotations` then
+    `build_omics`, one shared `Emitter`) rather than `build_site`'s YAML
+    corpus, so it is cheap while still exercising the real wiring between the
+    two modules -- the one place a key-shape mismatch between the producer and
+    the consumer would actually show up.
+    """
+    dataset = _dataset(stages=(Stage(token="s1", wpc=1.0), Stage(token="s9", wpc=9.0)))
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:11604", tissue="Heart", stage="s1", median=10.0),
+            _profile_row(gene="HGNC:11604", tissue="Heart", stage="s9", median=90.0),
+        ],
+    )
+    _write_quantiles(
+        tmp_path,
+        "E-MTAB-6814",
+        {("Heart", "s1"): _ASCENDING_GRID, ("Heart", "s9"): _ASCENDING_GRID},
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+
+    quantile_shards = build_profile_quantiles(tmp_path, emitter)
+    profiles = gene_expression_profiles(tmp_path, (dataset,), None, quantile_shards)
+    percentiles = percentile_annotations(profiles)
+    omics = build_omics(
+        tmp_path,
+        emitter,
+        cardiac={"E-MTAB-6814": frozenset({"Heart"})},
+        percentiles=percentiles,
+    )
+
+    stages = {entry["stage"]: entry for entry in profiles["HGNC:11604"]["datasets"][0]["stages"]}
+    s1_placement = stages["s1"]["tissues"][0]["placement"]
+    s9_placement = stages["s9"]["tissues"][0]["placement"]
+    assert s1_placement is not None and s9_placement is not None
+    assert (s1_placement["median_percentile"], s9_placement["median_percentile"]) == (10, 90)
+
+    top = omics["HGNC:11604"]["profiles"]["top"]
+    # `build_omics` puts the row carrying the higher `median_percentile`
+    # above first -- read from the same computation, not a second one -- even
+    # though "s1" sorts first alphabetically.
+    assert [row["stage"] for row in top] == ["s9", "s1"]
+    # The raw shard carries the same annotation the summary ranked on, not a
+    # second, unpublished copy of it.
+    shard = json.loads((tmp_path / "dist" / "omics" / "profiles" / "E-MTAB-6814.json").read_text())
+    assert {row["stage"]: row["percentile"] for row in shard["rows"]} == {"s1": 10, "s9": 90}

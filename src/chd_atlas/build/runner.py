@@ -36,7 +36,11 @@ from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
 from chd_atlas.build.pages import build_gene_index_page, build_gene_pages
-from chd_atlas.build.profiles import build_profile_quantiles, gene_expression_profiles
+from chd_atlas.build.profiles import (
+    build_profile_quantiles,
+    gene_expression_profiles,
+    percentile_annotations,
+)
 from chd_atlas.build.search import GeneLabels, build_search
 from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.build.variants import build_variants
@@ -243,28 +247,6 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     burden = load_burden(root)
 
     emitter = Emitter(root=out)
-    # Keyed by accession (as `str`, not the `AccessionId` newtype, to match
-    # `profiles.dataset` cell-for-cell) so `build_omics` can resolve, for
-    # whichever datasets contributed rows to one gene's profiles slice, which
-    # of *that* dataset's own tissue tokens is the heart. `frozenset()` for a
-    # contrast dataset is the correct answer, not a gap: that design never
-    # reaches the profiles path at all.
-    cardiac_tissues = {
-        str(dataset.id): frozenset(dataset.cardiac_tissues) for dataset in corpus.datasets
-    }
-    # `select_top` ranks the cardiac series on a `percentile` the build itself
-    # derives. `build/profiles.py` exists now (Tasks 9-13), but nothing yet
-    # annotates a `profiles` row with its derived percentile before this call
-    # runs -- that wiring is still open, not this task's scope, and it
-    # degrades rather than breaks while it stays open: a missing percentile
-    # sorts last (`_by_percentile_then_stage`), so the cardiac series still
-    # leads but is ordered by stage token instead of by rank -- exactly the
-    # kind of silent quality loss that survives a green build, since no check
-    # fails and no row goes missing. Inert today regardless: the committed
-    # corpus mirrors no profiles data at all. Whoever closes it MUST annotate
-    # each profiles row with its derived percentile before this call runs,
-    # not after.
-    omics = build_omics(root, emitter, cardiac=cardiac_tissues)
     # `build_omics` skips this table outright -- it is keyed on `_GENE_COLUMN`,
     # and a quantile grid has no gene column -- so without this call
     # `mirrors/profile_quantiles/` is mirrored, schema-validated, sort-checked
@@ -274,13 +256,18 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # every other check reports clean. Must run before `write_manifest`,
     # which seals the emitter and would refuse a write placed after it.
     #
+    # Moved ahead of `build_omics` (Task 8b, which closes what a comment here
+    # used to record as open wiring): `select_top` ranks a `profiles` row on
+    # the percentile `gene_expression_profiles` derives below, so that figure
+    # has to exist before `build_omics` runs, not be computed from the rows
+    # it has already ranked.
+    #
     # Returns `{accession: shard path}`, consumed immediately below by
     # `gene_expression_profiles` -- the same way `ModalitySummary.shards`
     # links a gene bundle to an omics shard today. Reusing the exact path
     # this call wrote, rather than reconstructing it with a second call to
     # `slug`, is what keeps the two from drifting apart.
     quantile_shards = build_profile_quantiles(root, emitter)
-    variants = build_variants(root, emitter)
     # Pure derivation, no `emitter`: reads `mirrors/profiles/*.tsv` and
     # `mirrors/profile_quantiles/*.tsv` directly and returns one
     # `ExpressionProfile` per gene those mirrors mention, published or not --
@@ -296,6 +283,39 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     expression_profiles = gene_expression_profiles(
         root, corpus.datasets, corpus.cardiac_phases, quantile_shards
     )
+    # The one flat read of the `Placement`s just computed above -- never a
+    # second derivation of a percentile. `percentile_annotations` only walks
+    # the nested `ExpressionProfile`s and copies `median_percentile` back out;
+    # see its own docstring for why that keeps the two uses below from
+    # drifting apart. `build_omics` is the sole consumer of this return; the
+    # bundle itself gets `expression_profiles` directly, a few lines below,
+    # from this same call's result.
+    percentile_lookup = percentile_annotations(expression_profiles)
+    # Keyed by accession (as `str`, not the `AccessionId` newtype, to match
+    # `profiles.dataset` cell-for-cell) so `build_omics` can resolve, for
+    # whichever datasets contributed rows to one gene's profiles slice, which
+    # of *that* dataset's own tissue tokens is the heart. `frozenset()` for a
+    # contrast dataset is the correct answer, not a gap: that design never
+    # reaches the profiles path at all.
+    cardiac_tissues = {
+        str(dataset.id): frozenset(dataset.cardiac_tissues) for dataset in corpus.datasets
+    }
+    # `select_top` ranks the cardiac series on `percentile_lookup` above, so
+    # the rank a reader's bundle preview is chosen by and the percentile the
+    # bundle itself publishes (via `expression_profiles`, handed to
+    # `build_genes` below) are the same number by construction -- there is
+    # exactly one computation of any gene's percentile in this build.
+    #
+    # This call is not safe to move back above `quantile_shards` /
+    # `expression_profiles` / `percentile_lookup`: `percentile_lookup` would
+    # not exist yet at that point in the function, and Python raises
+    # `UnboundLocalError` rather than silently falling back to
+    # `percentiles=None` -- measured directly, by making that exact edit and
+    # running the suite, in preference to assuming it (every test that calls
+    # `build_site` fails on it, since the name is unbound regardless of
+    # whether the corpus being built has any profiles data at all).
+    omics = build_omics(root, emitter, cardiac=cardiac_tissues, percentiles=percentile_lookup)
+    variants = build_variants(root, emitter)
     # `facts` rather than a second `gene_facts` call below: the pages and the
     # bundles render from one derivation, so a page cannot state a confidence the
     # bundle it links to contradicts. See `build_genes`' docstring.

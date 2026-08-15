@@ -14,13 +14,19 @@ are not, because D32 forbids publishing the matrix they came from. Stated as a
 trade rather than claimed as a proof.
 
 This module carries the percentile band (Task 9), tau (Task 10), phase
-assignment (Task 11), quantile shard emission (Task 12) and the per-gene
+assignment (Task 11), quantile shard emission (Task 12), the per-gene
 assembly that reads both mirrors and turns them into one `ExpressionProfile`
-per gene (Task 13). Task 12 is the other half of D39(b)'s bargain: Task 9's
-percentile is re-derivable only if the breakpoints it was read against are
-themselves fetchable, and `build_omics` never emits this table -- it skips
-every schema absent from its own `_GENE_COLUMN`, and a quantile grid has no
-gene column at all.
+per gene (Task 13), and `percentile_annotations` (Task 8b). Task 12 is the
+other half of D39(b)'s bargain: Task 9's percentile is re-derivable only if
+the breakpoints it was read against are themselves fetchable, and
+`build_omics` never emits this table -- it skips every schema absent from its
+own `_GENE_COLUMN`, and a quantile grid has no gene column at all.
+
+`percentile_annotations` is the other half of a different bargain: `omics.py`
+ranks a `profiles` row's stratified slice on the percentile the row is never
+told at read time, so this module hands the figure back out, flattened, from
+the exact `Placement`s Task 13 already computed -- read once here, never
+derived a second time. See that function's own docstring.
 
 Task 13's join is deliberately a LEFT join on (dataset, tissue, stage), never
 an inner one. `profiles.stage` is nullable and `profile_quantiles.stage` is
@@ -1005,3 +1011,48 @@ def gene_expression_profiles(
         ]
         result[gene] = ExpressionProfile(datasets=datasets_entries)
     return result
+
+
+def percentile_annotations(
+    profiles: Mapping[str, ExpressionProfile],
+) -> dict[tuple[str, str, str, str | None], int]:
+    """Every published placement's percentile, flattened to one lookup.
+
+    Keyed `(gene, dataset, tissue, stage)`. Not a second computation: every
+    value here is a `Placement["median_percentile"]` read back out of the
+    exact `ExpressionProfile`s the caller is about to hand `build_genes` for
+    publication -- there is exactly one call to `placement()` in the whole
+    build, inside `gene_expression_profiles` above, and this function only
+    ever reads its answer back rather than re-deriving it from a median and a
+    grid a second way.
+
+    `build_omics` is the only consumer (`omics._profile_percentile`), which
+    annotates a `profiles` row with this figure before `select_top` ranks the
+    cardiac series (`omics._by_percentile_then_stage`). So the rank a reader's
+    bundle preview is chosen by and the percentile the bundle itself publishes
+    cannot drift apart by construction -- not merely by agreeing today, the
+    way two independent computations of the same number would.
+
+    A cell with no placement (`not_placed_reason` set -- below the detection
+    floor, no quantile grid, the dataset itself unregistered, and so on)
+    contributes no entry. That is not a loss: `_by_percentile_then_stage`
+    already treats a missing key as "sorts last", the same "not evidence of
+    high expression" reading `placement`'s own `None` return gets everywhere
+    else this atlas renders it.
+    """
+    annotations: dict[tuple[str, str, str, str | None], int] = {}
+    for gene, profile in profiles.items():
+        for dataset_entry in profile["datasets"]:
+            for stage_entry in dataset_entry["stages"]:
+                for tissue_entry in stage_entry["tissues"]:
+                    placed = tissue_entry["placement"]
+                    if placed is None:
+                        continue
+                    key = (
+                        gene,
+                        dataset_entry["dataset"],
+                        tissue_entry["tissue"],
+                        stage_entry["stage"],
+                    )
+                    annotations[key] = placed["median_percentile"]
+    return annotations

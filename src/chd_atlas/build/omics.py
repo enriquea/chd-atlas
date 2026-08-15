@@ -201,6 +201,40 @@ def _genes_for_row(
     return index.genes_for(accession)
 
 
+def _profile_percentile(
+    row: Mapping[str, Any], percentiles: Mapping[tuple[str, str, str, str | None], int]
+) -> int | None:
+    """The one figure `_by_percentile_then_stage` ranks a `profiles` row on.
+
+    Read back from `percentiles` -- `profiles.percentile_annotations`'s own
+    return, threaded down from `runner.py` -- rather than computed here: this
+    module has no access to the quantile grids a percentile needs, and must
+    not grow a second, parallel way to derive one. A row this attribution
+    cannot place (no entry for its cell, including every null-stage row,
+    which can never have one by construction -- `profile_quantiles.stage` is
+    not nullable) returns `None`, exactly the answer `placement()` itself
+    gives for the same fact, and `_by_percentile_then_stage` already reads
+    `None` as "sorts last".
+
+    `row["genes"]` is read rather than `row["gene"]` re-cast to `str`: it is
+    this same attribution loop's own answer, written the line above the call
+    site, so this reuses it instead of deriving "which gene" a second way. A
+    row with no gene (`genes` empty) returns `None` -- such a row is never
+    filed under any gene's `top` list either, so the value this returns is
+    never read, but computing it must still not raise.
+    """
+    genes = row.get("genes")
+    if not genes:
+        return None
+    dataset = row.get("dataset")
+    tissue = row.get("tissue")
+    if not isinstance(dataset, str) or not isinstance(tissue, str):
+        return None
+    stage = row.get("stage")
+    key = (genes[0], dataset, tissue, stage if isinstance(stage, str) else None)
+    return percentiles.get(key)
+
+
 def _comparable(value: object) -> tuple[int, float, str]:
     """One totally ordered form of a cell, so a mixed-type key cannot raise.
 
@@ -246,9 +280,10 @@ def _by_percentile_then_stage(row: Mapping[str, Any]) -> tuple[float, str]:
     """Most highly ranked first, ties broken by the stage token.
 
     A missing percentile sorts last rather than first: a row the build could
-    not place is not evidence of high expression. `build/profiles.py` (Task 9)
-    is what will eventually write `percentile` -- see the comment at the
-    `build_omics` call site in `runner.py` for what happens while it does not.
+    not place is not evidence of high expression. `build_omics` writes
+    `percentile` via `_profile_percentile`, above, before this ever runs --
+    see that function's docstring for where the figure comes from and
+    `profiles.percentile_annotations` for why it is never computed twice.
     """
     percentile = row.get("percentile")
     rank = -float(percentile) if isinstance(percentile, int | float) else float("inf")
@@ -356,6 +391,7 @@ def build_omics(
     emitter: Emitter,
     *,
     cardiac: Mapping[str, frozenset[str]] | None = None,
+    percentiles: Mapping[tuple[str, str, str, str | None], int] | None = None,
 ) -> dict[str, dict[str, ModalitySummary]]:
     """Emit one shard per omics table and return a per-gene, per-modality summary.
 
@@ -370,9 +406,23 @@ def build_omics(
     tissue as an ordinary comparison organ and round-robining across all of
     them, which preserves breadth instead of silently preferring whichever
     tissue happens to sort first.
+
+    `percentiles` is `{(gene, dataset, tissue, stage): median_percentile}` --
+    `profiles.percentile_annotations`'s own return, built by `runner.py` from
+    the same `gene_expression_profiles` call that also produces the published
+    bundle, and threaded down here rather than recomputed (see that function's
+    docstring for why the two cannot drift apart). Consulted only for the
+    `profiles` modality, to annotate each row with the figure
+    `_by_percentile_then_stage` ranks on before `select_top` runs. Defaulting
+    an absent mapping — or an absent entry within one — to no percentile at
+    all is the same safe degrade `cardiac` documents above: `select_top`
+    responds by falling back to the stage token alone, exactly as it already
+    did before this figure existed to rank on.
     """
     if cardiac is None:
         cardiac = {}
+    if percentiles is None:
+        percentiles = {}
     index = _accession_index(root)
     summaries: dict[str, dict[str, ModalitySummary]] = {}
 
@@ -412,6 +462,12 @@ def build_omics(
         # the attribution would otherwise be two things that could disagree.
         for row in rows:
             row["genes"] = list(_genes_for_row(row, _GENE_COLUMN[schema_name], index))
+            # The one modality whose rows carry no significance column at all
+            # (`_RANK_BY[schema_name] is None` -- see that dict's own comment
+            # for why this is the discriminator rather than the literal name
+            # "profiles") needs a figure to rank on before `select_top` runs.
+            if _RANK_BY[schema_name] is None:
+                row["percentile"] = _profile_percentile(row, percentiles)
 
         # Through `slug` for the same reason a gene bundle path is: the stem is a
         # filename, and a space or a colon in one would be published as a URL
