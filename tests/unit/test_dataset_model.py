@@ -24,6 +24,7 @@ def _dataset(**overrides: object) -> dict[str, object]:
         "id": "PXD012345",
         "archive": "pride",
         "technology": "phosphoproteomics",
+        "design": "contrast",
         "tissue": "right ventricle",
         "developmental_stage": "infant",
         "organism": "NCBITaxon:9606",
@@ -33,6 +34,41 @@ def _dataset(**overrides: object) -> dict[str, object]:
     }
     base.update(overrides)
     return base
+
+
+def _a_contrast(**overrides: object) -> Contrast:
+    base: dict[str, object] = {
+        "id": "tof_vs_control",
+        "description": "Tetralogy of Fallot right ventricle versus non-CHD control",
+        "case_group": "TOF RV",
+        "control_group": "Non-CHD RV",
+        "statistical_method": "limma-voom",
+        "software": "limma 3.58.1",
+    }
+    base.update(overrides)
+    return Contrast(**base)
+
+
+def _profile_dataset(**overrides: object) -> Dataset:
+    base: dict[str, object] = {
+        "id": "E-MTAB-6814",
+        "archive": "arrayexpress",
+        "technology": "bulk_rnaseq",
+        "design": "profile",
+        "tissue": "Heart",
+        "developmental_stage": "embryonic",
+        "organism": "NCBITaxon:9606",
+        "n_samples": 297,
+        "licence": "CC BY 4.0",
+        "contrasts": [],
+        "cardiac_tissues": ["Heart"],
+        "detection_floor": 1.0,
+        "floor_source": "source methods, section 4",
+        "quantile_estimator": "linear",
+        "stages": [{"token": "7wpc", "wpc": 7.0}, {"token": "senior", "wpc": None}],
+    }
+    base.update(overrides)
+    return Dataset(**base)
 
 
 def test_parses_a_well_formed_dataset() -> None:
@@ -128,3 +164,48 @@ def test_rejects_a_whitespace_only_licence() -> None:
     """
     with pytest.raises(ValidationError, match="licence must not be blank"):
         Dataset.model_validate(_dataset(licence="   "))
+
+
+def test_a_profile_dataset_declares_no_contrast_and_a_contrast_dataset_must() -> None:
+    """`design` is explicit so an empty list cannot mean two different things.
+
+    Relaxing `contrasts` to "may be empty" would make a curator who simply
+    forgot the contrasts indistinguishable from an abundance atlas that
+    correctly has none.
+    """
+    assert _profile_dataset().contrasts == []
+
+    with pytest.raises(ValidationError, match="design 'profile' declares no contrasts"):
+        _profile_dataset(contrasts=[_a_contrast()])
+
+    with pytest.raises(ValidationError, match="design 'contrast' requires at least one contrast"):
+        _profile_dataset(design="contrast", contrasts=[])
+
+
+def test_a_profile_dataset_must_name_a_cardiac_tissue_it_actually_has() -> None:
+    """D40: the cardiac token is declared, never matched on the string "heart".
+
+    A set, not a scalar: a dataset with two cardiac tokens would otherwise file
+    the second as a comparison organ, and tau would measure specificity against
+    the heart's own other chamber.
+    """
+    assert _profile_dataset().cardiac_tissues == ("Heart",)
+    assert _profile_dataset(cardiac_tissues=["Heart", "Atrium"]).cardiac_tissues == (
+        "Heart",
+        "Atrium",
+    )
+
+    with pytest.raises(ValidationError, match="cardiac_tissues must not be empty"):
+        _profile_dataset(cardiac_tissues=[])
+
+    with pytest.raises(ValidationError, match="duplicate cardiac_tissues"):
+        _profile_dataset(cardiac_tissues=["Heart", "Heart"])
+
+
+def test_stage_tokens_are_unique_and_wpc_may_be_null_postnatally() -> None:
+    stages = {stage.token: stage.wpc for stage in _profile_dataset().stages}
+    assert stages["7wpc"] == 7.0
+    assert stages["senior"] is None
+
+    with pytest.raises(ValidationError, match="duplicate stage tokens"):
+        _profile_dataset(stages=[{"token": "7wpc", "wpc": 7.0}, {"token": "7wpc", "wpc": 9.0}])

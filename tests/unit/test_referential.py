@@ -294,6 +294,7 @@ def _dataset(accession: str = "PXD012345", **overrides: object) -> Dataset:
         "id": accession,
         "archive": "pride",
         "technology": "phosphoproteomics",
+        "design": "contrast",
         "tissue": "right ventricle",
         "developmental_stage": "infant",
         "organism": "NCBITaxon:9606",
@@ -349,6 +350,7 @@ DATASET_YAML = """\
 id: PXD012345
 archive: pride
 technology: phosphoproteomics
+design: contrast
 tissue: right ventricle
 developmental_stage: infant
 organism: NCBITaxon:9606
