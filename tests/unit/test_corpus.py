@@ -161,6 +161,43 @@ def test_loads_phenotypes_and_featured(tmp_path: Path) -> None:
     assert len(corpus.featured) == 1
 
 
+def test_an_absent_cardiac_phases_file_is_legitimate_and_loads_as_none(tmp_path: Path) -> None:
+    """No curator has verified a phase source yet, so the file may not exist at all.
+
+    Distinct from the model-level tests in test_models_phases.py: this exercises
+    `load_curation` itself, which is the one place a wiring mistake -- forgetting
+    to pass the parsed value into the `Corpus(...)` call -- would otherwise reach
+    no test. Nothing under `build/` reads this field yet, so a silently dropped
+    value would be invisible everywhere else in the suite.
+    """
+    _write_minimal_corpus(tmp_path)
+
+    corpus, issues = load_curation(tmp_path)
+
+    assert issues == []
+    assert corpus.cardiac_phases is None
+
+
+def test_loads_cardiac_phases(tmp_path: Path) -> None:
+    """A real (non-placeholder) file must reach `corpus.cardiac_phases` intact."""
+    _write_minimal_corpus(tmp_path)
+    (tmp_path / "curation" / "cardiac_phases.yaml").write_text(
+        "attributed_to: O'Rahilly & Muller 1987\n"
+        "citation: ISBN:0872796248\n"
+        "phases:\n"
+        "  - id: looping\n"
+        "    label: Cardiac looping\n"
+        "    start_wpc: 3.0\n"
+        "    end_wpc: 5.0\n"
+    )
+
+    corpus, issues = load_curation(tmp_path)
+
+    assert issues == []
+    assert corpus.cardiac_phases is not None
+    assert [phase.id for phase in corpus.cardiac_phases.phases] == ["looping"]
+
+
 def test_a_misnamed_assertion_file_is_reported(tmp_path: Path) -> None:
     """Renaming TBX5.yaml to TBX5.yml made the assertion invisible to every
     check while the gate still exited 0."""
