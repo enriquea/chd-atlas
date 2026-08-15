@@ -363,6 +363,38 @@ def test_prf008_message_lists_every_offending_unit_in_sorted_order() -> None:
     )
 
 
+def test_prf001_message_also_sorts_the_profiles_side_unit_list() -> None:
+    """PRF001's message has two independent sorted lists -- `p_units` and
+    `q_units` -- and only `q_units` had a fixture that could tell a dropped
+    `sorted()` apart from doing nothing.
+
+    **A real, pre-existing gap, found by checking rather than assuming.**
+    Every PRF001 fixture in this file gives the *profiles* side of a
+    mismatched dataset exactly one unit (`p_units` is always a 1-element
+    set), so `sorted(p_units)` and `list(p_units)` render identically
+    regardless of whether the sort actually runs. Measured directly: applying
+    that exact mutation and re-running the full file reported all 27 tests
+    passing, unchanged -- the mutant survived every test that existed before
+    this one.
+
+    A dataset whose own profiles rows carry more than one unit also trips
+    PRF008 (a separate, unconditional check on the profiles side alone), so
+    this cannot share the fixtures above without conflating two findings --
+    hence a dedicated dataset and an assertion that expects both codes.
+    """
+    synthetic_units = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+    profiles = [_p(tissue="Heart", unit=unit) for unit in synthetic_units]
+    quantiles = _grid(tissue="Heart", unit="india")
+
+    issues = validate_profiles(_root_with(profiles=profiles, quantiles=quantiles))
+    assert sorted(issue.code for issue in issues) == ["PRF001", "PRF008"]
+    prf001 = next(issue for issue in issues if issue.code == "PRF001")
+    assert (
+        "['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']"
+        in prf001.message
+    )
+
+
 def test_multiple_missing_triples_are_reported_in_sorted_order() -> None:
     """PRF002 issues are sorted by (dataset, tissue, stage), not set/hash order.
 
