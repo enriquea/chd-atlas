@@ -2,7 +2,7 @@
 import pytest
 from pydantic import ValidationError
 
-from chd_atlas.models.dataset import _ARCHIVE_TECHNOLOGIES, Contrast, Dataset
+from chd_atlas.models.dataset import _ARCHIVE_TECHNOLOGIES, Contrast, Dataset, Stage
 from chd_atlas.vocab import Archive, Technology
 
 
@@ -202,6 +202,41 @@ def test_a_profile_dataset_must_name_a_cardiac_tissue_it_actually_has() -> None:
         _profile_dataset(cardiac_tissues=["Heart", "Heart"])
 
 
+@pytest.mark.parametrize("blank_tissues", [[""], ["  "]])
+def test_a_blank_cardiac_tissue_is_rejected(blank_tissues: list[str]) -> None:
+    """Same reasoning as `licence_is_not_blank`: a blank entry names no tissue,
+    and `cardiac_tissues_are_unique` only catches two identical blanks, not one
+    stray blank from a YAML slip.
+    """
+    with pytest.raises(ValidationError, match="cardiac_tissues must not contain a blank"):
+        _profile_dataset(cardiac_tissues=blank_tissues)
+
+
+@pytest.mark.parametrize(
+    ("override", "match"),
+    [
+        pytest.param({"stages": []}, "stages must not be empty", id="stages"),
+        pytest.param(
+            {"detection_floor": None}, "detection_floor and floor_source", id="detection_floor"
+        ),
+        pytest.param({"floor_source": ""}, "detection_floor and floor_source", id="floor_source"),
+        pytest.param({"quantile_estimator": ""}, "quantile_estimator", id="quantile_estimator"),
+    ],
+)
+def test_a_profile_dataset_must_declare_everything_the_derivation_needs(
+    override: dict[str, object], match: str
+) -> None:
+    """D41 and the fields beside it: each is the input to a published figure
+    (see `a_profile_dataset_is_fully_declared`), so a profile dataset missing
+    any one of them is rejected rather than silently computed against a
+    default nobody curated. Each case changes exactly one field away from the
+    otherwise-valid `_profile_dataset()` baseline, so it is unambiguous which
+    branch caught it.
+    """
+    with pytest.raises(ValidationError, match=match):
+        _profile_dataset(**override)
+
+
 def test_stage_tokens_are_unique_and_wpc_may_be_null_postnatally() -> None:
     stages = {stage.token: stage.wpc for stage in _profile_dataset().stages}
     assert stages["7wpc"] == 7.0
@@ -209,3 +244,10 @@ def test_stage_tokens_are_unique_and_wpc_may_be_null_postnatally() -> None:
 
     with pytest.raises(ValidationError, match="duplicate stage tokens"):
         _profile_dataset(stages=[{"token": "7wpc", "wpc": 7.0}, {"token": "7wpc", "wpc": 9.0}])
+
+
+@pytest.mark.parametrize("wpc", [0, -1])
+def test_stage_wpc_must_be_positive(wpc: float) -> None:
+    """`gt=0` is the bound; nullability (a postnatal stage) is covered above."""
+    with pytest.raises(ValidationError):
+        Stage(token="x", wpc=wpc)

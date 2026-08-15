@@ -119,6 +119,14 @@ class Dataset(BaseModel):
             raise ValueError("licence must not be blank")
         return value
 
+    @field_validator("cardiac_tissues")
+    @classmethod
+    def cardiac_tissues_are_not_blank(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Same rule as `licence_is_not_blank`: a blank entry names no tissue at all."""
+        if any(not tissue.strip() for tissue in value):
+            raise ValueError("cardiac_tissues must not contain a blank entry")
+        return value
+
     @model_validator(mode="after")
     def accession_matches_archive(self) -> Dataset:
         prefixes = _ACCESSION_PREFIX[self.archive]
