@@ -242,7 +242,25 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     burden = load_burden(root)
 
     emitter = Emitter(root=out)
-    omics = build_omics(root, emitter)
+    # Keyed by accession (as `str`, not the `AccessionId` newtype, to match
+    # `profiles.dataset` cell-for-cell) so `build_omics` can resolve, for
+    # whichever datasets contributed rows to one gene's profiles slice, which
+    # of *that* dataset's own tissue tokens is the heart. `frozenset()` for a
+    # contrast dataset is the correct answer, not a gap: that design never
+    # reaches the profiles path at all.
+    cardiac_tissues = {
+        str(dataset.id): frozenset(dataset.cardiac_tissues) for dataset in corpus.datasets
+    }
+    # `select_top` ranks the cardiac series on a `percentile` the build itself
+    # derives -- but `build/profiles.py` (Task 9) does not exist yet, so
+    # nothing writes that key today. It degrades rather than breaks while that
+    # is true: a missing percentile sorts last (`_by_percentile_then_stage`),
+    # so the cardiac series still leads but is ordered by stage token instead
+    # of by rank -- exactly the kind of silent quality loss that survives a
+    # green build, since no check fails and no row goes missing. Once
+    # `build/profiles.py` exists it MUST annotate each profiles row with its
+    # derived percentile before this call runs, not after.
+    omics = build_omics(root, emitter, cardiac=cardiac_tissues)
     variants = build_variants(root, emitter)
     # `facts` rather than a second `gene_facts` call below: the pages and the
     # bundles render from one derivation, so a page cannot state a confidence the
