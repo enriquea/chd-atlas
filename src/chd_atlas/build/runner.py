@@ -40,6 +40,7 @@ from chd_atlas.build.profiles import (
     build_profile_quantiles,
     gene_expression_profiles,
     percentile_annotations,
+    profile_census,
 )
 from chd_atlas.build.search import GeneLabels, build_search
 from chd_atlas.build.validity import gene_validity, published_genes
@@ -283,6 +284,14 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     expression_profiles = gene_expression_profiles(
         root, corpus.datasets, corpus.cardiac_phases, quantile_shards
     )
+    # One derivation, two consumers -- `build_landing`'s new card and
+    # `write_manifest`'s `counts` below -- the same discipline `census`
+    # (burden) already keeps: computed once here so the front page and the
+    # manifest cannot state two different censuses of one build. Restricted to
+    # `published`, not to what `mirrors/profiles/*.tsv` happens to mention --
+    # see `profile_census`'s own docstring for why neither figure has the
+    # `families`-style exception `burden_census` carries.
+    profile_stats = profile_census(expression_profiles, published)
     # The one flat read of the `Placement`s just computed above -- never a
     # second derivation of a percentile. `percentile_annotations` only walks
     # the nested `ExpressionProfile`s and copies `median_percentile` back out;
@@ -380,6 +389,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         validity=validity,
         published=published,
         census=census,
+        profile_census=profile_stats,
         emitter=emitter,
     )
     # The HTML over everything above. Wired here and nowhere else: until this
@@ -427,13 +437,13 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     )
     # Last, and enforced as last: this seals the emitter.
     #
-    # The build counts come from `census`, the object `build_landing` was handed
-    # a moment ago, so `manifest.json` and `index.html` cannot publish two
-    # censuses of one build. `genes` is `len(published)` rather than
-    # `census.genes`: they are equal today at 23 of 23, but they answer different
-    # questions — how many genes the site publishes, and how many of those carry
-    # burden evidence — and the day they diverge each key must still mean what it
-    # says.
+    # The build counts come from `census` and `profile_stats`, the same objects
+    # `build_landing` was handed a moment ago, so `manifest.json` and
+    # `index.html` cannot publish two censuses of one build. `genes` is
+    # `len(published)` rather than `census.genes`: they are equal today at 23 of
+    # 23, but they answer different questions — how many genes the site
+    # publishes, and how many of those carry burden evidence — and the day they
+    # diverge each key must still mean what it says.
     write_manifest(
         corpus,
         emitter,
@@ -442,6 +452,8 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
             "genes": len(published),
             "burden_rows": census.rows,
             "cohort_families": census.families,
+            "profile_genes": profile_stats["genes"],
+            "profile_datasets": profile_stats["datasets"],
         },
     )
     return dict(emitter.checksums)

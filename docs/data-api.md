@@ -47,13 +47,14 @@ What the build produced, and a checksum for every file in it.
   "counts": {
     "assertions": 1, "burden_rows": 915, "cohort_families": 3,
     "cohorts": 13, "datasets": 0, "featured": 1, "functional": 0,
-    "genes": 92, "phenotypes": 3, "publications": 4
+    "genes": 92, "phenotypes": 3, "profile_datasets": 0, "profile_genes": 0,
+    "publications": 4
   },
   "files": {
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.10",
+  "schema_version": "2.11",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -154,6 +155,11 @@ wrong by the next one.
   since `2.3` — every burden row has named its sample collections by bare id
   since `burden` was published, and nothing resolved those ids to anything, so a
   consumer had the numbers and none of the caveats that qualify them.
+  `2.11` added `profile_datasets` and `profile_genes` to `counts`, restricted
+  to `published` for the same reason `genes` and `burden_rows` already are,
+  plus a "Developmental expression" pair of cards on `index.html`. Additive:
+  both keys are always present, and both are `0` in this example because no
+  `profiles` mirror has been committed yet.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for

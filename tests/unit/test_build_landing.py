@@ -15,6 +15,7 @@ from chd_atlas.build.burden import BurdenCensus, BurdenRow, burden_census
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.landing import build_landing
 from chd_atlas.build.paths import LANDING
+from chd_atlas.build.profiles import ProfileCensus
 from chd_atlas.build.render import RESEARCH_USE_NOTICE, STYLESHEET
 from chd_atlas.build.runner import build_site
 from chd_atlas.build.validity import GeneValidity, ValidityRecord, uncurated
@@ -26,6 +27,9 @@ from chd_atlas.vocab import Classification, ValiditySource, ValidityState
 # file that is about something else -- escaping, pluralisation, the shell --
 # renders against it.
 _NO_BURDEN = BurdenCensus(rows=0, genes=0, families=0)
+
+# The developmental-expression counterpart to `_NO_BURDEN`, for the same tests.
+_NO_PROFILES = ProfileCensus(genes=0, datasets=0)
 
 TBX5 = "HGNC:11604"
 GATA4 = "HGNC:4173"
@@ -149,6 +153,7 @@ def _build(
     tmp_path: Path,
     published: set[str] | None = None,
     census: BurdenCensus = _NO_BURDEN,
+    profile_census: ProfileCensus = _NO_PROFILES,
 ) -> str:
     """Render the page.
 
@@ -163,7 +168,10 @@ def _build(
     `census` defaults to an empty one for the same reason, and the tests about
     the burden figures build theirs from a real `burden_census` call over a
     fixture rather than handing this function three literals -- a page test that
-    invented its own census could not see the derivation go wrong.
+    invented its own census could not see the derivation go wrong. `profile_census`
+    defaults the same way, for the developmental-expression pair -- this
+    default lives only here, never in `build_landing` itself, which requires
+    the argument for the reason its own docstring gives.
     """
     emitter = Emitter(root=tmp_path)
     build_landing(
@@ -174,6 +182,7 @@ def _build(
             {assertion.gene for assertion in corpus.assertions} if published is None else published
         ),
         census=census,
+        profile_census=profile_census,
         emitter=emitter,
     )
     return (tmp_path / LANDING).read_text(encoding="utf-8")
@@ -337,6 +346,7 @@ def test_the_page_is_published_through_write_text_and_reaches_the_checksums(
         validity={TBX5: uncurated()},
         published={TBX5},
         census=_NO_BURDEN,
+        profile_census=_NO_PROFILES,
         emitter=emitter,
     )
 
@@ -594,6 +604,37 @@ def test_the_burden_census_reaches_the_page_in_both_places_and_agrees_with_itsel
     assert re.search(r"<dt>Genes published</dt>\s*<dd>4</dd>", listed)
 
 
+def test_the_landing_card_names_the_layer_the_build_publishes(tmp_path: Path) -> None:
+    """Adding a whole evidence layer without touching the front page is how
+    `index.html` once advertised an empty atlas for three releases with the
+    word "burden" appearing on it zero times (CLAUDE.md section 4.29). Pinned
+    against a literal, never against a constant a rewrite could carry along
+    with it -- the same discipline `_MIRRORED_ROW_LABEL` is asserted with.
+
+    **Every profile count is 0 on the committed corpus** -- there is no
+    `profiles` mirror to derive one from -- so `genes=3, datasets=2` here is
+    what tells a real card from a hardcoded "0" that would also satisfy every
+    other assertion in this file. `test_the_page_and_the_manifest_publish_
+    one_census_of_a_real_build` is what proves this same wiring holds on the
+    real, zero-valued build; this is what proves it is not two zeros wired to
+    each other by coincidence.
+    """
+    corpus = Corpus(root=Path("."), assertions=(_assertion(),))
+
+    text = _build(
+        corpus,
+        {TBX5: "TBX5"},
+        {TBX5: uncurated()},
+        tmp_path,
+        profile_census=ProfileCensus(genes=3, datasets=2),
+    )
+    listed = _section(text, "<h2>What's published</h2>")
+
+    assert "Developmental expression" in text
+    assert re.search(r"<dt>Developmental expression datasets</dt>\s*<dd>2</dd>", listed)
+    assert re.search(r"<dt>Genes with developmental expression data</dt>\s*<dd>3</dd>", listed)
+
+
 def test_the_front_page_teaches_the_glyphs_before_a_reader_meets_them(tmp_path: Path) -> None:
     """The dot strip is this atlas's one invented notation, and it is unexplained.
 
@@ -712,6 +753,8 @@ def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
         "functional": "Functional evidence records",
         "genes": "Genes published",
         "phenotypes": "Phenotype terms (HPO)",
+        "profile_datasets": "Developmental expression datasets",
+        "profile_genes": "Genes with developmental expression data",
         "publications": "Publications cited",
     }
     assert set(cards) == set(counts), (

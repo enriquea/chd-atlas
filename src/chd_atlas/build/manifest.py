@@ -240,7 +240,34 @@ from chd_atlas.corpus import Corpus
 #   authorities asserting a gene frequently means it sits on more commercial
 #   panels, not that it is eight times better supported. D12 applies: a rank
 #   derived from it would be a validity call the atlas authored.
-SCHEMA_VERSION: Final = "2.10"
+#
+# 2.11 adds `profile_datasets` and `profile_genes` to `counts`, and a
+# "Developmental expression" pair of cards to `index.html`'s published list --
+# the bulk developmental RNA expression layer built across Tasks 1-14, landing
+# here with nothing published mentioning it yet. Additive, so MINOR: no
+# existing key changes meaning and no payload loses one.
+#
+# Both are restricted to `published`, for the same reason `genes` and
+# `burden_rows` already are (2.7's own paragraph above): `mirrors/profiles/*.tsv`
+# can name a gene no external authority has admitted, the same 154-vs-92
+# asymmetry `mirrors/genes.tsv` carries for burden, so a count reading the
+# mirror instead of the population would advertise developmental-expression
+# evidence no consumer of this API can fetch. `profile_datasets` counts the
+# distinct dataset accessions named by a *published* gene's own
+# `expression_profile.datasets` -- never `len(corpus.datasets)`, which already
+# means something else and is unrestricted: every registered omics dataset,
+# `profile`-design and `contrast`-design alike. Two keys both named "datasets"
+# and both meaning something different is exactly the confusion
+# `cohort_families` was kept apart from `independent_datasets` to avoid (2.7's
+# paragraph again), so this one counts only what a published gene's own bundle
+# actually carries.
+#
+# Both are 0 on the committed corpus: no `profiles` mirror has ever been
+# committed, so every gene bundle's `expression_profile` is the empty
+# `{"datasets": []}` shape and neither figure can be told apart from the other
+# or from a hardcoded zero without a fixture -- `profiles.profile_census`'s own
+# tests build one rather than trusting a real build to distinguish them.
+SCHEMA_VERSION: Final = "2.11"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is
@@ -340,14 +367,15 @@ def write_manifest(
     rather than an intention — see `Emitter.seal`.
 
     `counts` carries the figures this module cannot derive from a `Corpus`: the
-    published gene population, the burden rows reaching a bundle, and the number
-    of cohort families. They are passed in rather than recomputed for the reason
-    `runner.py` threads `published` to three builders — the front page, the
-    browse payload and this manifest must state one census, and the only way
-    they cannot disagree is to count the same objects. Merged over the corpus
-    counts rather than nested under a key of their own, because a consumer
-    reading `counts` wants the census, not a lesson about which half of it came
-    from where.
+    published gene population, the burden rows reaching a bundle, the number
+    of cohort families, and the developmental-expression layer's own
+    `profile_datasets`/`profile_genes` (`profiles.profile_census`). They are
+    passed in rather than recomputed for the reason `runner.py` threads
+    `published` to three builders — the front page, the browse payload and this
+    manifest must state one census, and the only way they cannot disagree is to
+    count the same objects. Merged over the corpus counts rather than nested
+    under a key of their own, because a consumer reading `counts` wants the
+    census, not a lesson about which half of it came from where.
     """
     corpus_counts = {
         "assertions": len(corpus.assertions),

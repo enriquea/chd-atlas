@@ -37,6 +37,7 @@ from chd_atlas.build.profiles import (
     percentile_annotations,
     percentile_of,
     placement,
+    profile_census,
     specificity,
 )
 from chd_atlas.models.dataset import Dataset, Stage
@@ -1370,3 +1371,72 @@ def test_build_omics_and_the_published_bundle_rank_on_the_same_percentile(
     # second, unpublished copy of it.
     shard = json.loads((tmp_path / "dist" / "omics" / "profiles" / "E-MTAB-6814.json").read_text())
     assert {row["stage"]: row["percentile"] for row in shard["rows"]} == {"s1": 10, "s9": 90}
+
+
+# --- profile_census: the two figures index.html and manifest.json share (Task 15) -
+
+
+def test_the_census_counts_published_genes_and_their_datasets_not_the_registry(
+    tmp_path: Path,
+) -> None:
+    """Two figures that are equal today are one figure to every test (CLAUDE.md
+    section 4.15b/30/36) -- so this fixture is built to make `genes` and
+    `datasets` each move independently under the `published` restriction,
+    rather than trusting a real build where every profile count is 0 to tell
+    a correct implementation apart from one that counts the mirror.
+
+    HGNC:1 and HGNC:2 are published and share one dataset (E-AAAA-1). HGNC:3
+    is registered in the mirror -- `mirrors/profiles/*.tsv` can cover a gene
+    no external authority has admitted, the same 154-vs-92 asymmetry
+    `mirrors/genes.tsv` already has for burden -- but is not published, and it
+    is the *only* gene naming E-BBBB-2. So a `genes` count wired to
+    `len(profiles)` would read 3 instead of 2, and a `datasets` count wired to
+    every dataset the mirror mentions would read 2 instead of 1: dropping
+    HGNC:3 has to drop its private dataset too, not merely itself.
+
+    No `Dataset` record and no quantile grid is registered for either
+    accession. Neither is needed: `gene_expression_profiles` still emits a
+    `DatasetProfileEntry` naming the dataset for every gene it covers, with
+    `not_placed_reason` explaining the absent floor -- `profile_census` counts
+    that every gene and dataset was *named*, not that a percentile was
+    successfully derived for it.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-AAAA-1",
+        [
+            _profile_row(gene="HGNC:1", tissue="Heart", stage="7wpc"),
+            _profile_row(gene="HGNC:2", tissue="Heart", stage="7wpc"),
+        ],
+    )
+    _write_profiles(
+        tmp_path,
+        "E-BBBB-2",
+        [_profile_row(gene="HGNC:3", tissue="Heart", stage="7wpc")],
+    )
+
+    profiles = gene_expression_profiles(tmp_path, (), None, {})
+    assert set(profiles) == {"HGNC:1", "HGNC:2", "HGNC:3"}, "the fixture must cover all three"
+
+    census = profile_census(profiles, published={"HGNC:1", "HGNC:2"})
+
+    assert census["genes"] == 2  # not 3 -- HGNC:3 is registered, not published
+    assert census["datasets"] == 1  # not 2 -- E-BBBB-2 is HGNC:3's alone
+
+
+def test_a_gene_with_no_profile_row_at_all_does_not_count(tmp_path: Path) -> None:
+    """A published gene absent from `profiles` is not a caller error.
+
+    `_concordance_for` raises on exactly this shape of absence for burden
+    concordance, because there every published gene is supposed to have an
+    entry. Here most published genes have no profile dataset covering them at
+    all -- there is no committed `profiles` mirror today -- so `profile_census`
+    must treat a missing key as "contributes nothing", the same reading
+    `bundles._expression_profile` gives it when assembling a bundle.
+    """
+    _write_profiles(tmp_path, "E-AAAA-1", [_profile_row(gene="HGNC:1")])
+    profiles = gene_expression_profiles(tmp_path, (), None, {})
+
+    census = profile_census(profiles, published={"HGNC:1", "HGNC:404"})
+
+    assert census == {"genes": 1, "datasets": 1}

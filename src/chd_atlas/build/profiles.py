@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import bisect
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -1056,3 +1056,77 @@ def percentile_annotations(
                     )
                     annotations[key] = placed["median_percentile"]
     return annotations
+
+
+class ProfileCensus(TypedDict):
+    """The two developmental-expression figures this atlas derives, once, for
+    two consumers: `index.html`'s "Developmental expression" cards and
+    `manifest.json`'s `counts.profile_datasets`/`counts.profile_genes`.
+
+    A `TypedDict`, not a scalar pair, for the same reason every other derived
+    shape in this module is one: a caller unpacking `profile_census(...)["genes"]`
+    at two call sites cannot transpose the two fields the way two positional
+    return values could.
+
+    Lives beside `gene_expression_profiles` rather than in `landing.py` or
+    `manifest.py`, the same placement `burden.py` gives `BurdenCensus` and for
+    the same reason: a figure with two consumers in different layers belongs to
+    neither of them.
+    """
+
+    genes: int
+    datasets: int
+
+
+def profile_census(
+    profiles: Mapping[str, ExpressionProfile], published: Collection[str]
+) -> ProfileCensus:
+    """What the developmental-expression layer *this site publishes* amounts to.
+
+    **Both figures are restricted to `published`, with no exception.** Unlike
+    `burden_census`'s `families` -- deliberately left unrestricted because a
+    cohort family is a property of the corpus's sample collections, and
+    dropping one whose studies tested no published gene can split it into
+    what then reads as two independent datasets (D33) -- a profile dataset
+    carries no such connectedness to protect. There is no reason for either
+    figure here to read wider than what a consumer can actually reach.
+
+    `genes` counts published genes whose `expression_profile` is non-empty --
+    never `len(profiles)`. `gene_expression_profiles` returns an entry for
+    every gene `mirrors/profiles/*.tsv` mentions "published or not" (its own
+    docstring), the same 154-vs-92 asymmetry `mirrors/genes.tsv` already has
+    for burden, so counting the mapping directly would advertise
+    developmental-expression evidence behind genes this API publishes no
+    bundle for.
+
+    `datasets` counts the distinct dataset accessions named by those same
+    genes' own `expression_profile.datasets` entries -- never
+    `len(corpus.datasets)`, which already means something else: *every*
+    registered omics dataset, `profile`-design and `contrast`-design alike,
+    with no restriction to `published` at all (that count predates this
+    layer and is deliberately left as-is; see `manifest.py`'s schema-history
+    comment for 2.11). Two keys both named "datasets" and both meaning
+    something different is exactly the confusion `cohort_families` was kept
+    apart from `independent_datasets` to avoid, so this counts only
+    accessions actually reachable from a published gene's own bundle.
+
+    Both figures are 0 on every corpus this atlas has built so far -- no
+    `profiles` mirror has ever been committed -- so a fixture giving `profiles`
+    a gene outside `published` and a dataset only that gene cites is what
+    tells this function's restriction apart from a hardcoded zero; see
+    `tests/unit/test_build_profiles.py`.
+    """
+    genes = 0
+    datasets: set[str] = set()
+    for gene in published:
+        # `.get`, not `profiles[gene]` with a `KeyError` guard: a published
+        # gene absent from `profiles` is not a caller error the way a gene
+        # absent from `concordance` is (`bundles._concordance_for`'s own
+        # docstring draws the same distinction) -- most published genes have
+        # no profile dataset covering them at all.
+        profile = profiles.get(gene)
+        if profile is None or not profile["datasets"]:
+            continue
+        genes += 1
+        datasets.update(entry["dataset"] for entry in profile["datasets"])
+    return ProfileCensus(genes=genes, datasets=len(datasets))
