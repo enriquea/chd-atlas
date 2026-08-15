@@ -15,8 +15,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from chd_atlas.issues import Severity
+from chd_atlas.models.dataset import Dataset
+from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile
 from chd_atlas.tables import PROFILE_QUANTILES, PROFILES
-from chd_atlas.validate.profiles import validate_profiles
+from chd_atlas.validate.profiles import validate_profile_references, validate_profiles
 
 _DATASET = "GSE999999"
 
@@ -135,6 +138,50 @@ def _root_with(
     if quantiles:
         _write_shard(root, "profile_quantiles", PROFILE_QUANTILES.column_names, quantiles)
     return root
+
+
+def _profile_dataset(**overrides: object) -> Dataset:
+    """A minimal, valid profile-design `Dataset`, for `validate_profile_references`.
+
+    Defaults to `id=_DATASET` -- matching `_p`/`_grid`'s own default dataset --
+    so a fixture combining this with `_root_with` addresses the same dataset
+    unless a test overrides both. `tests/unit/test_dataset_model.py::
+    _profile_dataset` is the model-level precedent this mirrors; its `id`
+    defaults to a real ArrayExpress accession that has no reason to agree
+    with this file's `_DATASET`, so it is not reused directly.
+    """
+    base: dict[str, object] = {
+        "id": _DATASET,
+        "archive": "geo",
+        "technology": "bulk_rnaseq",
+        "design": "profile",
+        "tissue": "Heart",
+        "developmental_stage": "embryonic",
+        "organism": "NCBITaxon:9606",
+        "n_samples": 12,
+        "licence": "CC BY 4.0",
+        "contrasts": [],
+        "cardiac_tissues": ["Heart"],
+        "detection_floor": 1.0,
+        "floor_source": "test fixture",
+        "quantile_estimator": "linear",
+        "stages": [{"token": "7wpc", "wpc": 7.0}],
+    }
+    base.update(overrides)
+    return Dataset(**base)
+
+
+def _phase(phase_id: str, start_wpc: float, end_wpc: float) -> CardiacPhase:
+    return CardiacPhase(id=phase_id, label=phase_id, start_wpc=start_wpc, end_wpc=end_wpc)
+
+
+def _phase_file(*phases: CardiacPhase) -> CardiacPhaseFile:
+    """A minimal, valid `CardiacPhaseFile` wrapping the given phases."""
+    return CardiacPhaseFile(
+        attributed_to="Test Reference Atlas of Human Heart Development",
+        citation="Test et al., 2026",
+        phases=list(phases),
+    )
 
 
 def test_a_clean_matching_repository_reports_nothing() -> None:
@@ -429,3 +476,519 @@ def test_an_unreadable_shard_does_not_stop_the_others() -> None:
     issues = validate_profiles(root)
     assert [issue.code for issue in issues] == ["PRF002"]
     assert "GSE_GOOD" in issues[0].message
+
+
+# ---------------------------------------------------------------------------
+# validate_profile_references -- PRF004/005/006/007/009
+# ---------------------------------------------------------------------------
+
+
+def test_a_clean_repository_reports_nothing_via_references() -> None:
+    """The references-function smoke test every check below rests on.
+
+    Mirrors `test_a_clean_matching_repository_reports_nothing` above: without
+    it, a rule that fired unconditionally would still make every negative
+    case below look like it passed for the right reason.
+    """
+    root = _root_with(
+        profiles=[_p(gene="HGNC:11604", tissue="Heart", stage="7wpc")],
+        quantiles=_grid(tissue="Heart", stage="7wpc"),
+    )
+    issues = validate_profile_references(
+        root,
+        datasets=(_profile_dataset(),),
+        known_genes={"HGNC:11604"},
+        published_genes={"HGNC:11604"},
+        phases=_phase_file(_phase("septation", 5.0, 8.0)),
+    )
+    assert issues == []
+
+
+def test_prf004_names_a_declared_cardiac_tissue_missing_from_profiles() -> None:
+    """D40: a tau computation needs the declared token to have real data behind it.
+
+    `cardiac_tissues` is checked as a declared set, never matched against the
+    literal string "heart" -- so a labelling drift between the curated
+    dataset record and the converted profiles rows (a different tissue
+    string, or no row at all) must be caught, not silently computed against
+    zero rows.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="7wpc")]),
+        datasets=(_profile_dataset(cardiac_tissues=["Heart", "Atrium"]),),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF004"]
+    assert issues[0].severity is Severity.ERROR
+    assert _DATASET in issues[0].message
+    assert "['Atrium']" in issues[0].message
+
+
+def test_prf004_fires_even_when_the_dataset_has_no_profiles_rows_at_all() -> None:
+    """A curated Dataset record with nothing behind it yet is still an error.
+
+    Unlike an absent `profile_quantiles` mirror (Task 7's PRF000/PRF010),
+    which the runner treats as the ordinary mid-curation state because
+    profiles genuinely precedes it, here the Dataset record is the newer
+    artefact and its declared `cardiac_tissues` token already asserts a claim
+    the mirror has not backed up. Also confirms PRF005 does not spuriously
+    fire in the mirror-image empty case: zero observed stage tokens is zero
+    undeclared ones.
+    """
+    issues = validate_profile_references(
+        _root_with(),
+        datasets=(_profile_dataset(),),
+        known_genes=None,
+        published_genes=set(),
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF004"]
+    assert _DATASET in issues[0].location
+
+
+def test_prf005_names_a_stage_token_the_dataset_record_never_declared() -> None:
+    """The reverse direction from PRF004: the mirror has data the record does
+    not vouch for, rather than a declaration the mirror does not back up.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="99wpc")]),
+        datasets=(_profile_dataset(),),  # declares stages=[{"token": "7wpc", ...}]
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF005"]
+    assert issues[0].severity is Severity.ERROR
+    assert "['99wpc']" in issues[0].message
+
+
+def test_prf004_and_prf005_are_reported_in_sorted_order_by_dataset_and_within_message() -> None:
+    """Two independent dropped-`sorted()` mutants per code, guarded at once --
+    sizes measured directly, not carried over from Task 5's docstring unchecked.
+
+    `_prf004_issues` and `_prf005_issues` each sort twice: once across
+    datasets, and once within one dataset's missing-token message. The first
+    is a list sort over a tuple the function re-sorts itself rather than
+    trusting caller order (not hash-seed dependent), so five datasets are
+    constructed here in a scrambled (Zebra, Alfa, Yankee, Midl, Brav)
+    construction order -- not the alphabetical order the report must come
+    back in.
+
+    **The message-list sorts needed more than five elements, and a different
+    string family, measured.** Task 5 documented five as enough (1-in-120 by
+    permutation counting) and measured 0/10 survivors for its own fixtures.
+    This test originally used five elements too (`Atrium, Heart, OFT,
+    SinusVenosus, Ventricle` for the tissue set; `10wpc`..`14wpc` for the
+    stage set) and one slow pytest-based fresh-process run measured 10/10
+    killed for both -- which turned out to be a lucky sample, not a safe
+    fixture. A follow-up probe under 500 explicit PYTHONHASHSEED values (not
+    10 random ones) found a real, nonzero coincidence rate behind that one
+    clean run: 4/500 for the original tissue set, 10/500 for the original
+    stage set (both differed only in a short numeric or near-numeric suffix,
+    the same shape that made PRF007/PRF009's gene-id fixtures measurably
+    flaky below). Eight elements, and words that do not share a short
+    numeric suffix, measured 0/500 for both replacement sets in the same
+    probe.
+    """
+    ids_alphabetical = ["E-ALFA-1", "E-BRAV-1", "E-MIDL-1", "E-YANK-1", "E-ZEBR-1"]
+    cardiac_structures = [
+        "Atrium",
+        "Bulbus",
+        "Conotruncus",
+        "Ductus",
+        "Endocardium",
+        "Foramen",
+        "GreatVessel",
+        "Horn",
+    ]
+    developmental_stages = [
+        "cleavage",
+        "gastrula",
+        "neurula",
+        "somite",
+        "pharyngula",
+        "limbbud",
+        "fetal",
+        "neonatal",
+    ]
+    datasets = (
+        _profile_dataset(id="E-ZEBR-1", archive="arrayexpress", cardiac_tissues=cardiac_structures),
+        _profile_dataset(id="E-ALFA-1", archive="arrayexpress", cardiac_tissues=["Heart"]),
+        _profile_dataset(id="E-YANK-1", archive="arrayexpress", cardiac_tissues=["Heart"]),
+        _profile_dataset(id="E-MIDL-1", archive="arrayexpress", cardiac_tissues=["Heart"]),
+        _profile_dataset(id="E-BRAV-1", archive="arrayexpress", cardiac_tissues=["Heart"]),
+    )
+    rows = [
+        _p(dataset=dataset_id, tissue="Liver", stage="99wpc")
+        for dataset_id in ["E-ALFA-1", "E-BRAV-1", "E-MIDL-1", "E-YANK-1"]
+    ]
+    rows += [_p(dataset="E-ZEBR-1", tissue="Liver", stage=stage) for stage in developmental_stages]
+
+    issues = validate_profile_references(
+        _root_with(profiles=rows),
+        datasets=datasets,
+        known_genes=None,
+        published_genes=set(),
+        phases=None,
+    )
+    prf004 = [i for i in issues if i.code == "PRF004"]
+    prf005 = [i for i in issues if i.code == "PRF005"]
+    assert len(prf004) == 5
+    assert len(prf005) == 5
+    for index, dataset_id in enumerate(ids_alphabetical):
+        assert dataset_id in prf004[index].message
+        assert dataset_id in prf005[index].message
+    assert (
+        "['Atrium', 'Bulbus', 'Conotruncus', 'Ductus', 'Endocardium', "
+        "'Foramen', 'GreatVessel', 'Horn']" in prf004[4].message
+    )
+    assert (
+        "['cleavage', 'fetal', 'gastrula', 'limbbud', 'neonatal', "
+        "'neurula', 'pharyngula', 'somite']" in prf005[4].message
+    )
+
+
+def test_prf006_is_silent_on_contiguous_or_absent_phases() -> None:
+    """No interior gap, and no curated vocabulary at all, both report nothing.
+
+    The region past the last phase (here, wpc >= 8) is the ordinary case --
+    an embryology window that legitimately stops before the post-natal
+    stages -- and must never fire: a check that fires on every correct
+    vocabulary is a check a curator learns to ignore.
+    """
+    touching = _phase_file(_phase("early", 3.0, 5.0), _phase("late", 5.0, 8.0))
+    issues = validate_profile_references(
+        _root_with(), datasets=(), known_genes=None, published_genes=set(), phases=touching
+    )
+    assert issues == []
+
+    issues_no_vocabulary = validate_profile_references(
+        _root_with(), datasets=(), known_genes=None, published_genes=set(), phases=None
+    )
+    assert issues_no_vocabulary == []
+
+
+def test_prf006_reports_one_issue_per_interior_gap_in_wpc_order() -> None:
+    """Phases declared out of wpc order in the file, to prove the re-sort is load-bearing.
+
+    Declared D, A, C, B: adjacent-in-list pairs (D,A), (A,C), (C,B) are not
+    adjacent in developmental time, so a dropped `sorted()` here does not
+    merely reorder the report -- it compares the wrong phases, missing real
+    gaps and (D ends at 25, A starts at 1) inventing none where the raw
+    pairing happens not to overlap either. Four phases sorted by wpc are
+    A(1-3), B(5-8), C(10-15), D(20-25): three interior gaps, and neither the
+    region before A (wpc < 1) nor after D (wpc >= 25) may be reported.
+    """
+    phases = _phase_file(
+        _phase("D", 20.0, 25.0),
+        _phase("A", 1.0, 3.0),
+        _phase("C", 10.0, 15.0),
+        _phase("B", 5.0, 8.0),
+    )
+    issues = validate_profile_references(
+        _root_with(), datasets=(), known_genes=None, published_genes=set(), phases=phases
+    )
+    assert [i.code for i in issues] == ["PRF006"] * 3
+    assert all(i.severity is Severity.WARNING for i in issues)
+    assert "'A'" in issues[0].message and "'B'" in issues[0].message
+    assert "3.0" in issues[0].message and "5.0" in issues[0].message
+    assert "'B'" in issues[1].message and "'C'" in issues[1].message
+    assert "8.0" in issues[1].message and "10.0" in issues[1].message
+    assert "'C'" in issues[2].message and "'D'" in issues[2].message
+    assert "15.0" in issues[2].message and "20.0" in issues[2].message
+
+
+def test_prf007_names_a_gene_id_no_registry_knows() -> None:
+    """Measured 2026-08-14: without this, such a row costs zero issues.
+
+    A repository carrying a profiles row for HGNC:99999 -- in no registry, no
+    mirror, nothing -- validated at 0 errors, 3 warnings, identical to
+    baseline. There is no REF001 equivalent for a mirror table's gene column:
+    REF001 covers curated records, `validate_mirror_references` checks
+    `dataset` and `contrast`, and TBL005 checks the id's *shape*.
+
+    HGNC withdraws and merges ids routinely, so a matrix mapped through an
+    older release yields pattern-valid ids whose whole expression evidence
+    publishes into a shard and reaches no bundle, under a green build.
+    BUR011 is the in-repo precedent.
+    """
+    issues = validate_profile_references(
+        _root_with(
+            profiles=[
+                _p(gene="HGNC:11604", tissue="Heart"),
+                _p(gene="HGNC:99999", tissue="Liver"),
+            ]
+        ),
+        datasets=(),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF007"]
+    assert issues[0].severity is Severity.ERROR
+    assert "HGNC:99999" in issues[0].message
+
+
+def test_prf007_multiple_unknown_genes_are_reported_in_sorted_order() -> None:
+    """PRF007 issues are sorted by gene id, not by row or set/hash order.
+
+    `profile_genes - known_genes` is a freshly built `set`; iterating it
+    unsorted would let the report's order follow PYTHONHASHSEED, so two
+    validate runs over one identical repository could disagree on which gene
+    is named first.
+
+    **The string family matters, and this was measured, not assumed.** Task
+    5 documented five elements as enough (1-in-120 by permutation counting)
+    and measured 0/10 survivors for its own dataset-name and unit fixtures.
+    Eight HGNC-id-shaped strings differing only in a trailing digit
+    (`HGNC:100001`..`HGNC:100008`) measured *worse* than Task 5's
+    five-element fixtures: dropping this exact `sorted()` call survived 1/10
+    twice over (2/20), and PRF009's sibling test below (same mutation shape)
+    survived 1/10 once (1/20) at the same size. A follow-up probe outside
+    pytest -- constructing each candidate `set` directly under 300 explicit
+    `PYTHONHASHSEED` values rather than 10 random ones -- measured why:
+    numeric-suffix HGNC ids coincidentally iterate in sorted order at
+    18-21/300 (6-7%) even at eight elements, where qualitatively different
+    words measured **0/300 at both five and eight elements**. Permutation
+    counting (1-in-120 for five elements) is the wrong model for how a small
+    `set`'s hash-table slots land; it does not hold for strings that differ
+    in only a short numeric suffix. The fix here is the string family, not
+    the count: eight distinct words, each still prefixed `HGNC:` to read as
+    a gene id (nothing downstream of this function checks the shape).
+    """
+    genes = [
+        "HGNC:AMBER",
+        "HGNC:BLUE",
+        "HGNC:CORAL",
+        "HGNC:DENIM",
+        "HGNC:EBONY",
+        "HGNC:FUCHSIA",
+        "HGNC:GOLD",
+        "HGNC:HAZEL",
+    ]
+    root = _root_with(profiles=[_p(gene=gene, tissue="Heart", stage="7wpc") for gene in genes])
+    issues = validate_profile_references(
+        root, datasets=(), known_genes=set(), published_genes=set(), phases=None
+    )
+    assert [i.code for i in issues] == ["PRF007"] * len(genes)
+    assert [i.message for i in issues] == [
+        f"gene {gene} is not in mirrors/genes.tsv" for gene in sorted(genes)
+    ]
+
+
+def test_an_unreadable_registry_skips_prf007_rather_than_reporting_every_row() -> None:
+    """`known_genes=None` means "the registry did not load", not "no gene exists".
+
+    Reporting hundreds of dangling references for one unreadable file is the
+    cascade REF000/SRC000/ONT000 exist to prevent.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(gene="HGNC:99999")]),
+        datasets=(),
+        known_genes=None,
+        published_genes=set(),
+        phases=None,
+    )
+    assert [i.code for i in issues] == []
+
+
+def test_an_empty_but_loaded_registry_reports_every_gene_unlike_none() -> None:
+    """`known_genes=set()` -- a header-only mirrors/genes.tsv -- is loaded and
+    genuinely empty, which is different from `None` (could not be read at
+    all): every profiles gene is then unknown, correctly. This is also what
+    pins the guard as `is not None` rather than a truthy check -- `set()` is
+    falsy in Python, and a truthy check would wrongly treat it like `None`.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(gene="HGNC:11604")]),
+        datasets=(),
+        known_genes=set(),
+        published_genes=set(),
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF007"]
+    assert "HGNC:11604" in issues[0].message
+
+
+def test_prf009_distinguishes_not_sampled_from_dropped() -> None:
+    """PRF004 catches a token matching nothing; the realistic failure is partial.
+
+    A converter that drops NA rows leaves `cardiac_tissues` matching thousands
+    of rows while some published genes have no heart row at all -- PRF004
+    passes, the cardiac sentence has nothing to render, and tau silently runs
+    over six organs. `profile_quantiles` records which cells were assayed, so
+    the question can be inverted.
+
+    `known_genes` and `published_genes` are deliberately different sets here
+    (registered-but-unpublished HGNC:3030 is in the first, not the second):
+    PRF009 must read only `published_genes`, so HGNC:3030's absence from this
+    one assayed cell must not be named, while published HGNC:2020's must.
+    """
+    issues = validate_profile_references(
+        _root_with(
+            profiles=[_p(gene="HGNC:11604", tissue="Heart", stage="7wpc")],
+            quantiles=_grid(tissue="Heart", stage="7wpc"),
+        ),
+        datasets=(),
+        known_genes={"HGNC:11604", "HGNC:2020", "HGNC:3030"},
+        published_genes={"HGNC:11604", "HGNC:2020"},
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF009"]
+    assert issues[0].severity is Severity.WARNING
+    assert "HGNC:2020" in issues[0].message
+    assert "HGNC:3030" not in issues[0].message
+
+
+def test_prf009_groups_by_assayed_cell_not_by_gene_or_by_row() -> None:
+    """Aggregation choice, pinned: one PRF009 issue per assayed cell.
+
+    The realistic failure PRF009 guards against -- a converter that drops a
+    scattered subset of rows within one tissue/stage slice (dropped NA rows,
+    a bad range in a copy-paste) -- leaves every dropped gene sharing the
+    *same* cell, so one issue per cell names the whole defect once. Grouping
+    by gene instead would split that single root cause into as many issues as
+    genes it dropped; grouping by (gene, cell) pair would make the report's
+    size the product of published genes and assayed cells (92 x ~150 today).
+    Bounded instead by the number of assayed cells.
+
+    Two cells: Heart is missing three published genes, Liver is missing one.
+    Grouping by cell costs exactly two issues -- by gene it would cost three
+    (HGNC:2 and HGNC:3 only at Heart, HGNC:4 at both, HGNC:1 nowhere), and by
+    row it would cost four.
+    """
+    quantiles = _grid(tissue="Heart", stage="7wpc") + _grid(tissue="Liver", stage="7wpc")
+    profiles = [
+        _p(gene="HGNC:1", tissue="Heart", stage="7wpc"),
+        _p(gene="HGNC:1", tissue="Liver", stage="7wpc"),
+        _p(gene="HGNC:2", tissue="Liver", stage="7wpc"),
+        _p(gene="HGNC:3", tissue="Liver", stage="7wpc"),
+    ]
+    published = {"HGNC:1", "HGNC:2", "HGNC:3", "HGNC:4"}
+
+    issues = validate_profile_references(
+        _root_with(profiles=profiles, quantiles=quantiles),
+        datasets=(),
+        known_genes=published,
+        published_genes=published,
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF009", "PRF009"]
+    heart_issue = next(i for i in issues if "Heart" in i.message)
+    liver_issue = next(i for i in issues if "Liver" in i.message)
+    assert heart_issue is not liver_issue
+    assert "['HGNC:2', 'HGNC:3', 'HGNC:4']" in heart_issue.message
+    assert "['HGNC:4']" in liver_issue.message
+    assert "HGNC:2" not in liver_issue.message
+    assert "HGNC:3" not in liver_issue.message
+
+
+def test_prf009_issues_and_their_message_lists_are_sorted() -> None:
+    """Two independent dropped-`sorted()` mutants, guarded at once -- both
+    fixture sizes measured directly rather than reused from Task 5's docstring.
+
+    `_prf009_issues` sorts twice: once across assayed (dataset, tissue,
+    stage) triples -- a `set` scan whose unsorted order can follow
+    PYTHONHASHSEED -- and once within one triple's missing-gene list, a
+    second `set` difference with the same risk.
+
+    **The triple-order guard is a `set` of 3-tuples, not of bare strings, and
+    that changes the number needed.** Task 5's own five-tissue fixture
+    (`Alpha, Bravo, Middle, Yankee, Zebra`) is what this test used first,
+    matching its `PRF002` precedent, and a slow pytest-based run measured it
+    surviving 1/10. A fast probe outside pytest -- constructing
+    `{("GSE999999", tissue, "7wpc") for tissue in tissues}` directly (the
+    actual object `_prf009_issues` sorts, not a bare string) under 500
+    explicit `PYTHONHASHSEED` values -- found why: wrapped in a triple with a
+    constant dataset and stage, those five words coincidentally iterate
+    already sorted at 9/500 (1.8%), where the *same five words as bare
+    strings* had measured 0/300 -- the tuple wrapping itself changes the
+    hash-table layout enough to matter. Eight NATO-alphabet words
+    (`Alpha`..`Hotel`) measured 0/500 in the same tuple-wrapped probe, and
+    that is the fixture below.
+
+    **The message-list guard needed a different string family, not just more
+    elements.** Task 5 documented five elements as enough for this mutation
+    shape (1-in-120 by permutation counting) and measured 0/10 survivors for
+    its own fixtures. Genes shaped like `HGNC:1`..`HGNC:9` (differing only in
+    a trailing digit) measured worse here at both five *and* eight elements:
+    dropping the missing-gene `sorted()` call survived 1/10 once at five and
+    once more at eight (and PRF007's sibling test above, same mutation shape,
+    survived 1/10 twice at eight). A bare-string probe under 300 seeds found
+    why: numeric-suffix HGNC ids coincidentally iterate already sorted at
+    18-21/300 (6-7%) regardless of element count in the 8-12 range, where
+    qualitatively different words measured 0/300 at both five and eight.
+    Permutation counting does not model how a small `set`'s hash-table slots
+    land for strings that differ only in a digit, or for a tuple built from
+    them. The missing-gene set below is therefore eight distinct *words*,
+    still `HGNC:`-prefixed to read as gene ids (nothing downstream of this
+    function checks the shape) -- the same fix, and the same eight words, as
+    the PRF007 test above.
+
+    Both fixed fixtures measured 10/10 killed in a slow pytest-based
+    fresh-process re-run after this rewrite.
+    """
+    tissues = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel"]
+    quantiles = [row for tissue in tissues for row in _grid(tissue=tissue, stage="7wpc")]
+    candidates = [
+        "HGNC:AMBER",
+        "HGNC:BLUE",
+        "HGNC:CORAL",
+        "HGNC:DENIM",
+        "HGNC:EBONY",
+        "HGNC:FUCHSIA",
+        "HGNC:GOLD",
+        "HGNC:HAZEL",
+    ]
+    published = {"HGNC:PRESENT", *candidates}
+    profiles = [_p(gene="HGNC:PRESENT", tissue=tissue, stage="7wpc") for tissue in tissues]
+    # Every tissue but Hotel also carries every candidate gene but one
+    # ("HGNC:HAZEL"), so each still produces its own single-gene PRF009 --
+    # Hotel alone carries none of the eight, guarding the eight-element
+    # missing-gene list sort.
+    profiles += [
+        _p(gene=gene, tissue=tissue, stage="7wpc")
+        for tissue in tissues[:-1]
+        for gene in candidates[:-1]
+    ]
+
+    issues = validate_profile_references(
+        _root_with(profiles=profiles, quantiles=quantiles),
+        datasets=(),
+        known_genes=published,
+        published_genes=published,
+        phases=None,
+    )
+    assert [i.code for i in issues] == ["PRF009"] * len(tissues)
+    for index, tissue in enumerate(tissues):
+        assert tissue in issues[index].message
+    assert "['HGNC:HAZEL']" in issues[0].message
+    assert (
+        "['HGNC:AMBER', 'HGNC:BLUE', 'HGNC:CORAL', 'HGNC:DENIM', 'HGNC:EBONY', "
+        "'HGNC:FUCHSIA', 'HGNC:GOLD', 'HGNC:HAZEL']" in issues[-1].message
+    )
+
+
+def test_prf009_reports_nothing_when_no_quantile_shard_can_be_read() -> None:
+    """No assayed-cell evidence exists at all, so there is nothing to invert.
+
+    Unlike PRF001/PRF002 in `validate_profiles` -- which subtract *from* the
+    profiles side, so treating an unread quantile mirror as merely empty
+    would report every profiles triple as missing -- PRF009 iterates the
+    quantile side directly. An unread `profile_quantiles` mirror makes
+    `quantile_triples` empty by construction, and the loop over it is then
+    simply a no-op: no separate `quantile_available` guard is needed here,
+    unlike Task 5's flag for PRF001/PRF002. Measured directly rather than
+    reasoned about: a published gene with a plausible profiles gap, and no
+    profile_quantiles mirror at all, must report nothing.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(gene="HGNC:1", tissue="Heart", stage="7wpc")]),
+        datasets=(),
+        known_genes={"HGNC:1", "HGNC:2"},
+        published_genes={"HGNC:1", "HGNC:2"},
+        phases=None,
+    )
+    assert [i.code for i in issues] == []

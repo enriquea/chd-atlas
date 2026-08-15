@@ -45,10 +45,12 @@ skipped here rather than cascading; naming that skip so a report cannot go
 quietly green over it is a separate check, added together with the runner
 wiring that calls this module.
 
-Reference checks against other registries (a gene id, a declared tissue or
-stage token) belong in a separate function, per the `validate_burden` /
-`validate_burden_references` split: one unreadable registry must not be able
-to take these table-internal checks down with it.
+Reference checks against other registries (a gene id, a declared cardiac
+tissue or stage token, a curated phase vocabulary) live in
+`validate_profile_references` below, kept separate for the same reason
+`validate_burden_references` is separate from `validate_burden`: one
+unreadable registry must not be able to take these table-internal checks
+down with it.
 
 Every check here reports rather than raises, per the project's split:
 validators collect issues, and `build_site` is what refuses.
@@ -62,6 +64,8 @@ from pathlib import Path
 from typing import Any
 
 from chd_atlas.issues import Severity, ValidationIssue
+from chd_atlas.models.dataset import Dataset
+from chd_atlas.models.phases import CardiacPhaseFile
 from chd_atlas.tables import PROFILE_QUANTILES, PROFILES, TableSchema, mirror_paths, read_table
 
 # A private alias purely for readability below: every check in this module is
@@ -70,6 +74,12 @@ _Triple = tuple[str, str, str]
 
 _PROFILES_COLUMNS: tuple[str, ...] = ("dataset", "tissue", "stage", "unit")
 _QUANTILES_COLUMNS: tuple[str, ...] = ("dataset", "tissue", "stage", "percentile", "value", "unit")
+# Columns `validate_profile_references` needs from each table -- distinct from
+# the two constants above (`validate_profiles`'s own needs): it reads `gene`,
+# which internal consistency never touches, and does not need `unit`/
+# `percentile`/`value` at all.
+_PROFILES_REFERENCE_COLUMNS: tuple[str, ...] = ("dataset", "gene", "tissue", "stage")
+_QUANTILES_REFERENCE_COLUMNS: tuple[str, ...] = ("dataset", "tissue", "stage")
 
 
 def validate_profiles(root: Path) -> list[ValidationIssue]:
@@ -154,6 +164,116 @@ def validate_profiles(root: Path) -> list[ValidationIssue]:
         _prf002_issues(profile_triples, profile_triple_path, quantile_triples, quantile_available)
     )
     issues.extend(_prf003_issues(breakpoints, breakpoint_path))
+    return issues
+
+
+def validate_profile_references(
+    root: Path,
+    datasets: tuple[Dataset, ...],
+    known_genes: set[str] | None,
+    published_genes: set[str],
+    phases: CardiacPhaseFile | None,
+) -> list[ValidationIssue]:
+    """Check profiles rows against the registries that give them meaning.
+
+    Separate from `validate_profiles` for the reason BUR009-011 are separate
+    from BUR001-008: one unreadable registry must not silently take the
+    consistency checks with it. This function does its own pass over
+    `profiles`/`profile_quantiles` rather than sharing state with
+    `validate_profiles`, matching how `validate_burden_references` re-reads
+    `mirrors/burden.tsv` independently of `validate_burden`.
+
+    `known_genes` is `None` when the gene registry did not load, and every
+    gene check (PRF007) is then skipped rather than reporting each row as
+    dangling -- the cascade REF000/SRC000/ONT000 exist to prevent. It is
+    deliberately distinct from an empty-but-loaded registry (a header-only
+    `mirrors/genes.tsv`), which correctly flags every gene as unknown; the
+    skip is an `is not None` check for exactly that reason, never a truthy
+    one, since an empty `set` is falsy.
+
+    `published_genes` is a different set from `known_genes` and the two must
+    not be conflated: `known_genes` is the whole gene registry (every gene
+    this atlas has an id for), `published_genes` is the population that
+    clears the publication gate (`build.validity.published_genes()`'s
+    return). PRF007 checks the profiles column against the registry, because
+    an unregistered id is a shape problem regardless of what publishes;
+    PRF009 checks a gap against the published population, because a gene
+    absent from a cell only matters to a reader once it has a page to be
+    absent *from*.
+
+    Five codes:
+
+    - **PRF004** (ERROR) -- a dataset's declared `cardiac_tissues` token
+      matched by no `profiles` row for that dataset.
+    - **PRF005** (ERROR) -- a `profiles.stage` token a dataset's own record
+      does not declare in `stages`.
+    - **PRF006** (WARNING) -- an interior gap between two declared cardiac
+      phases; see `_prf006_issues` for why only interior gaps, and only a
+      warning.
+    - **PRF007** (ERROR) -- a `profiles.gene` id in no gene registry.
+    - **PRF009** (WARNING) -- a published gene missing a `profiles` row in a
+      `(dataset, tissue, stage)` cell that `profile_quantiles` shows was
+      actually assayed; see `_prf009_issues` for the grouping choice.
+
+    PRF004/005/007 are errors because each names a claim the corpus makes
+    that its own mirrors do not back up (a declaration with no data, data
+    with no declaration, an id naming nothing). PRF009 is a warning because a
+    gene missing from one source matrix is ordinary -- the burden layer's
+    nine registered genes absent from the Audain supplement are the
+    precedent -- and the point is to name the gap, not to block the build
+    over it.
+    """
+    # One pass over `profiles`: which tissues, stages and genes each dataset's
+    # rows actually carry, and which shard (or its first-seen file) to blame.
+    tissues_by_dataset: dict[str, set[str]] = defaultdict(set)
+    stages_by_dataset: dict[str, set[str]] = defaultdict(set)
+    shard_path_by_dataset: dict[str, Path] = {}
+    profile_genes: set[str] = set()
+    gene_path: dict[str, Path] = {}
+    # (dataset, tissue, stage) -> genes with a profiles row there. Restricted
+    # to rows with a non-null stage, for the same reason `validate_profiles`'s
+    # `profile_triples` is: `profile_quantiles.stage` is never null, so a
+    # null-stage row could never belong to an assayed cell in the first place.
+    genes_by_triple: dict[_Triple, set[str]] = defaultdict(set)
+
+    for path, row in _shard_rows(root, PROFILES, "profiles", _PROFILES_REFERENCE_COLUMNS):
+        dataset, gene, tissue, stage = row["dataset"], row["gene"], row["tissue"], row["stage"]
+        if dataset is None:
+            # A null on a non-nullable column is TBL003's to report.
+            continue
+        shard_path_by_dataset.setdefault(dataset, path)
+        if tissue is not None:
+            tissues_by_dataset[dataset].add(tissue)
+        if stage is not None:
+            stages_by_dataset[dataset].add(stage)
+        if gene is not None:
+            profile_genes.add(gene)
+            gene_path.setdefault(gene, path)
+        if tissue is not None and stage is not None and gene is not None:
+            genes_by_triple[(dataset, tissue, stage)].add(gene)
+
+    # One pass over `profile_quantiles`: which (dataset, tissue, stage) cells
+    # were actually assayed, and a shard path to blame for each.
+    quantile_triples: set[_Triple] = set()
+    quantile_triple_path: dict[_Triple, Path] = {}
+    for path, row in _shard_rows(
+        root, PROFILE_QUANTILES, "profile_quantiles", _QUANTILES_REFERENCE_COLUMNS
+    ):
+        dataset, tissue, stage = row["dataset"], row["tissue"], row["stage"]
+        if dataset is None or tissue is None or stage is None:
+            continue
+        triple = (dataset, tissue, stage)
+        quantile_triples.add(triple)
+        quantile_triple_path.setdefault(triple, path)
+
+    issues: list[ValidationIssue] = []
+    issues.extend(_prf004_issues(root, datasets, tissues_by_dataset, shard_path_by_dataset))
+    issues.extend(_prf005_issues(root, datasets, stages_by_dataset, shard_path_by_dataset))
+    issues.extend(_prf006_issues(root, phases))
+    issues.extend(_prf007_issues(profile_genes, gene_path, known_genes))
+    issues.extend(
+        _prf009_issues(quantile_triples, quantile_triple_path, genes_by_triple, published_genes)
+    )
     return issues
 
 
@@ -314,4 +434,247 @@ def _prf003_issues(
                     )
                 )
                 break
+    return issues
+
+
+def _prf004_issues(
+    root: Path,
+    datasets: tuple[Dataset, ...],
+    tissues_by_dataset: dict[str, set[str]],
+    shard_path_by_dataset: dict[str, Path],
+) -> list[ValidationIssue]:
+    """PRF004 -- a declared `cardiac_tissues` token matched by no profiles row.
+
+    Checked from the curated side, one dataset at a time: for each dataset
+    this atlas actually has a record for, its own declared tokens are
+    compared against the tissues its own profiles rows use. A `profiles` row
+    naming a dataset with no curated record at all is out of scope for this
+    check (and for PRF005 below) -- there is no declaration here to compare
+    it against, and inventing one would be guessing rather than checking.
+
+    A dataset with zero profiles rows at all still fires this, once, naming
+    every declared token: a curated record with nothing behind it yet is a
+    claim its own mirror has not backed up, not a tolerated mid-curation
+    state. The location then falls back to the shard path the dataset's
+    accession would use by convention (`mirrors/profiles/<id>.tsv`), even
+    though the file may not exist -- still the file a curator would create.
+
+    Sorted by dataset id explicitly, rather than trusting `datasets`' own
+    tuple order (which follows directory-listing order in `corpus.py`, not
+    id) -- and each message's missing-token list is sorted too, since it is
+    built from a `set` difference whose unsorted iteration order can follow
+    PYTHONHASHSEED. Pinned together by
+    `test_prf004_and_prf005_are_reported_in_sorted_order_by_dataset_and_within_message`.
+    """
+    issues: list[ValidationIssue] = []
+    for dataset in sorted(datasets, key=lambda item: item.id):
+        observed = tissues_by_dataset.get(dataset.id, set())
+        missing = sorted(set(dataset.cardiac_tissues) - observed)
+        if missing:
+            path = shard_path_by_dataset.get(
+                dataset.id, root / "mirrors" / "profiles" / f"{dataset.id}.tsv"
+            )
+            issues.append(
+                ValidationIssue(
+                    "PRF004",
+                    Severity.ERROR,
+                    str(path),
+                    f"dataset '{dataset.id}' declares cardiac_tissues {missing}, "
+                    f"matched by no profiles row for this dataset",
+                )
+            )
+    return issues
+
+
+def _prf005_issues(
+    root: Path,
+    datasets: tuple[Dataset, ...],
+    stages_by_dataset: dict[str, set[str]],
+    shard_path_by_dataset: dict[str, Path],
+) -> list[ValidationIssue]:
+    """PRF005 -- a `profiles.stage` token a dataset's own record does not declare.
+
+    The reverse direction from PRF004, over the same curated datasets: PRF004
+    asks whether a declaration is backed up by data, this asks whether the
+    data is backed up by a declaration. A dataset with zero profiles rows
+    contributes nothing here (`stages_by_dataset.get(..., set())` is empty),
+    correctly -- there is no observed token to call undeclared.
+    """
+    issues: list[ValidationIssue] = []
+    for dataset in sorted(datasets, key=lambda item: item.id):
+        declared = {stage.token for stage in dataset.stages}
+        extra = sorted(stages_by_dataset.get(dataset.id, set()) - declared)
+        if extra:
+            path = shard_path_by_dataset.get(
+                dataset.id, root / "mirrors" / "profiles" / f"{dataset.id}.tsv"
+            )
+            issues.append(
+                ValidationIssue(
+                    "PRF005",
+                    Severity.ERROR,
+                    str(path),
+                    f"dataset '{dataset.id}' has profiles rows naming stage(s) {extra} "
+                    f"that its own dataset record does not declare in 'stages'",
+                )
+            )
+    return issues
+
+
+def _prf006_issues(root: Path, phases: CardiacPhaseFile | None) -> list[ValidationIssue]:
+    """PRF006 -- an interior gap between two declared cardiac phases.
+
+    WARNING, not ERROR, and interior gaps only -- the spec's single-line code
+    table hid that this splits in two. The *overlap* half is already enforced
+    at model-load time by `CardiacPhaseFile.phases_are_unique_and_disjoint`: a
+    file whose phases overlap does not load at all, which is stronger than
+    anything a validator can add, and needs no PRF006. What the model cannot
+    see is a **hole**: `[3,5)` and `[6,8)` both load cleanly, and a stage at
+    5.x wpc then falls in no phase with nothing said anywhere.
+
+    Never the region before the first phase or after the last: a curated
+    window legitimately stops before the post-natal stages (a null-wpc stage
+    is post-natal *by construction*, per `Stage.wpc`), so firing there would
+    trigger on every correct vocabulary -- and a check that fires on every
+    correct input is a check a curator learns to ignore. `phases=None` (no
+    vocabulary curated yet) skips this entirely, the same treatment
+    `validate_profiles` gives an unread `profile_quantiles` mirror.
+
+    Sorted by `(start_wpc, id)` -- the same key
+    `CardiacPhaseFile.phases_are_unique_and_disjoint` and `phase_for` already
+    sort by -- rather than trusting `phases.phases`' own list order, which is
+    YAML declaration order and need not be chronological. Pinned by
+    `test_prf006_reports_one_issue_per_interior_gap_in_wpc_order`, whose
+    phases are declared out of order specifically to make a dropped sort
+    compare the wrong pairs rather than merely reorder the report.
+    """
+    if phases is None:
+        return []
+    issues: list[ValidationIssue] = []
+    location = str(root / "curation" / "cardiac_phases.yaml")
+    ordered = sorted(phases.phases, key=lambda phase: (phase.start_wpc, phase.id))
+    # strict=False: `ordered[1:]` is one element shorter than `ordered` by
+    # construction, the standard pairwise-zip idiom -- not a length mismatch
+    # to guard against. Consecutive pairs only, which is what makes this
+    # interior: the region before `ordered[0]` and after `ordered[-1]` never
+    # appears as either half of a pair.
+    for earlier, later in zip(ordered, ordered[1:], strict=False):
+        if later.start_wpc > earlier.end_wpc:
+            issues.append(
+                ValidationIssue(
+                    "PRF006",
+                    Severity.WARNING,
+                    location,
+                    f"a gap [{earlier.end_wpc}, {later.start_wpc}) falls between phase "
+                    f"'{earlier.id}' (ends {earlier.end_wpc}) and phase '{later.id}' "
+                    f"(starts {later.start_wpc}); a stage in this range falls in no phase",
+                )
+            )
+    return issues
+
+
+def _prf007_issues(
+    profile_genes: set[str], gene_path: dict[str, Path], known_genes: set[str] | None
+) -> list[ValidationIssue]:
+    """PRF007 -- a `profiles.gene` id in no gene registry.
+
+    `known_genes=None` means the registry did not load, and this whole check
+    is skipped rather than reporting each row as dangling -- the cascade
+    REF000/SRC000/ONT000 exist to prevent. Deliberately `is not None` rather
+    than a truthy check: an empty-but-loaded registry (a header-only
+    `mirrors/genes.tsv`) must still flag every gene as unknown, and an empty
+    `set` is falsy in Python.
+
+    One issue per distinct gene id, matching `validate_burden_references`'s
+    BUR011 -- a shard with one bad id yields one issue, not one per row that
+    cites it.
+    """
+    if known_genes is None:
+        return []
+    issues: list[ValidationIssue] = []
+    for gene in sorted(profile_genes - known_genes):
+        issues.append(
+            ValidationIssue(
+                "PRF007",
+                Severity.ERROR,
+                str(gene_path[gene]),
+                f"gene {gene} is not in mirrors/genes.tsv",
+            )
+        )
+    return issues
+
+
+def _prf009_issues(
+    quantile_triples: set[_Triple],
+    quantile_triple_path: dict[_Triple, Path],
+    genes_by_triple: dict[_Triple, set[str]],
+    published_genes: set[str],
+) -> list[ValidationIssue]:
+    """PRF009 -- a published gene missing a profiles row in a cell that was assayed.
+
+    Inverts PRF002's question. `profile_quantiles` records which
+    `(dataset, tissue, stage)` cells were actually assayed; for each one, a
+    published gene with no `profiles` row there was *dropped*, not merely
+    unsampled -- a distinction `tau` cannot make, since it only ever sees the
+    rows that exist. WARNING, not ERROR: a gene absent from a source matrix is
+    ordinary on its own (the burden layer's nine registered genes missing
+    from the Audain supplement are the precedent), and the point is to name
+    the gap, not to block the build over it.
+
+    Checked against `published_genes`, never `known_genes`: the two are
+    different sets and this function must not conflate them. A merely
+    registered gene missing from one cell is unremarkable -- most of the
+    154-gene registry is not published at all -- while a *published* one is a
+    gap on a page a reader can already reach.
+
+    **Grouped by assayed cell, not by gene or by (gene, cell) pair.** The
+    realistic failure this guards against -- a converter that drops a
+    scattered subset of rows within one tissue/stage slice, such as dropped
+    NA rows or a bad range in a copy-paste -- leaves every dropped gene
+    sharing the *same* cell, so one issue per cell names the whole defect
+    once, listing every gene missing there. Grouping by gene instead would
+    split that single root cause into as many issues as genes it happened to
+    drop; grouping by (gene, cell) pair would size the report at the product
+    of published genes and assayed cells (92 x roughly 150 today -- up to
+    13,800), which is the spam this choice exists to avoid. Bounded instead
+    by the number of assayed cells alone. Pinned by
+    `test_prf009_groups_by_assayed_cell_not_by_gene_or_by_row`.
+
+    No `quantile_available`-style guard is needed here, unlike PRF001/PRF002
+    in `validate_profiles`. Those subtract *from* the profiles side, so
+    treating an unread quantile mirror as merely empty would make that
+    subtraction return everything in `profiles` -- the false cascade the flag
+    exists to stop. This function instead iterates `quantile_triples`
+    *directly*: when no `profile_quantiles` shard could be read, that set is
+    empty by construction, and the loop below is then simply a no-op. Pinned
+    by `test_prf009_reports_nothing_when_no_quantile_shard_can_be_read`
+    rather than left as reasoning nobody checked.
+
+    `quantile_triples` is itself a `set` of 3-tuples, so its unsorted
+    iteration order can follow PYTHONHASHSEED exactly like PRF002's
+    `profile_triples - quantile_triples` in `validate_profiles` -- wrapping a
+    value in a tuple does not remove that risk, it only changes the specific
+    coincidence rate (measured: a five-word tissue set that never coincided
+    with sorted order as bare strings measured a real, nonzero rate once
+    wrapped as `(dataset, tissue, stage)`). `sorted(quantile_triples)` fixes
+    that regardless of table layout, comparing the full triple
+    lexicographically. Each message's missing-gene list is sorted for the
+    same reason PRF004's is. See
+    `test_prf009_issues_and_their_message_lists_are_sorted` for the measured
+    rates behind the fixture size chosen there.
+    """
+    issues: list[ValidationIssue] = []
+    for triple in sorted(quantile_triples):
+        missing = sorted(published_genes - genes_by_triple.get(triple, set()))
+        if missing:
+            dataset, tissue, stage = triple
+            issues.append(
+                ValidationIssue(
+                    "PRF009",
+                    Severity.WARNING,
+                    str(quantile_triple_path[triple]),
+                    f"dataset '{dataset}' tissue '{tissue}' stage '{stage}' was assayed "
+                    f"(profile_quantiles has data for it), but {len(missing)} published "
+                    f"gene(s) have no profiles row here: {missing}",
+                )
+            )
     return issues
