@@ -99,6 +99,92 @@ def _gene_registry_missing(root: Path) -> None:
     )
 
 
+_GENES_TSV_HEADER = (
+    "hgnc_id\tsymbol\tname\taliases\tensembl_gene\tncbi_gene\tlocus\tuniprot\tmane_select\n"
+)
+_PROFILES_TSV_HEADER = "dataset\tgene\ttissue\tstage\tmedian_abundance\tunit\tq25\tq75\tn_samples\n"
+_EMPTY_CLINGEN_TSV = (
+    "gene\tgene_symbol\tdisease\tdisease_label\tmoi\tsop\tclassification\t"
+    "classification_date\tgcep\treport_url\n"
+)
+_EMPTY_GENCC_TSV = (
+    "sgc_id\tgene\tgene_symbol\tdisease\tdisease_label\tmoi\tclassification\t"
+    "submitter\tsubmitted_on\treport_url\n"
+)
+# A minimal, valid profile-design `Dataset` YAML, transcribed from
+# `test_validate_profiles.py::_profile_dataset`'s field values so a profiles
+# row naming this accession, tissue and stage does not also trip PRF004/005
+# or REF005 -- noise this file's fixtures otherwise isolate away from.
+_PROFILE_DATASET_YAML = """\
+id: GSE999999
+archive: geo
+technology: bulk_rnaseq
+design: profile
+tissue: Heart
+developmental_stage: embryonic
+organism: NCBITaxon:9606
+n_samples: 12
+licence: CC BY 4.0
+contrasts: []
+cardiac_tissues: [Heart]
+detection_floor: 1.0
+floor_source: test fixture
+quantile_estimator: linear
+stages:
+  - token: 7wpc
+    wpc: 7.0
+"""
+
+
+def _repo_with_profiles_but_no_quantiles(root: Path) -> Path:
+    """Profiles committed, quantiles not yet -- the ordinary state mid-curation.
+
+    Absent is not unreadable, and only unreadable raises TBL000 (`mirror_paths`
+    in `tables.py` yields a shard only when `path.is_file()`). Without a
+    partner error, PRF000 would be a lone warning; `ValidationReport.ok`
+    ignores warnings; the build would publish every gene with its percentile
+    band silently missing and nothing on the site saying a figure is missing.
+
+    Everything else here is made to load cleanly -- the gene registry (which
+    also carries the one gene the profiles row cites, so PRF007 does not
+    additionally fire), the curated dataset record (so neither PRF004/005 nor
+    REF005 fires), the id registry, the source registry and both (empty)
+    validity mirrors -- following `_gene_registry_missing`'s and
+    `_validity_mirrors_missing`'s precedent, so PRF000/PRF010 are isolated to
+    their own causing pair rather than riding along with unrelated noise.
+    """
+    (root / "curation" / "datasets").mkdir(parents=True)
+    (root / "curation" / "datasets" / "GSE999999.yaml").write_text(_PROFILE_DATASET_YAML)
+    (root / "curation" / ".id_registry.yaml").write_text("{}\n")
+    (root / "mirrors").mkdir()
+    (root / "mirrors" / "genes.tsv").write_text(
+        _GENES_TSV_HEADER
+        + "\t".join(["HGNC:11604", "TBX5", "T-box transcription factor 5", "", "", "", "", "", ""])
+        + "\n"
+    )
+    (root / "mirrors" / "sources.yaml").write_text(VALID_SOURCES_YAML)
+    (root / "mirrors" / "clingen_gene_validity.tsv").write_text(_EMPTY_CLINGEN_TSV)
+    (root / "mirrors" / "gencc_submissions.tsv").write_text(_EMPTY_GENCC_TSV)
+    (root / "mirrors" / "profiles").mkdir()
+    (root / "mirrors" / "profiles" / "GSE999999.tsv").write_text(
+        _PROFILES_TSV_HEADER
+        + "\t".join(["GSE999999", "HGNC:11604", "Heart", "7wpc", "10.0", "tpm", "", "", "5"])
+        + "\n"
+    )
+    return root
+
+
+def _repo_with_no_profiles(root: Path) -> Path:
+    """No `mirrors/profiles/` at all -- nothing here for PRF000 to check.
+
+    Not simply an empty `tmp_path`: PRF000 must be provably absent when a
+    `mirrors/` directory exists for other tables too, not merely when the
+    whole repository happens to be empty by coincidence.
+    """
+    (root / "mirrors").mkdir(parents=True)
+    return root
+
+
 def test_report_counts_errors_and_warnings_separately() -> None:
     report = ValidationReport(
         issues=[
@@ -262,6 +348,17 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
             {"GEN000"},
             {"TBL008"},
             id="gene-registry-missing",
+        ),
+        # PRF000's own cause, isolated the same way TBL008 isolates GEN000's.
+        # Profiles committed, quantiles not yet -- the ordinary state
+        # mid-curation -- and without the partner error PRF010, this skip
+        # would arrive alone in a report `ok` calls clean: every gene loses
+        # its percentile band, silently, on a green build.
+        pytest.param(
+            _repo_with_profiles_but_no_quantiles,
+            {"PRF000"},
+            {"PRF010"},
+            id="profiles-quantiles-absent",
         ),
     ],
 )
@@ -566,3 +663,193 @@ def test_a_false_scope_attribution_is_caught_on_the_branch_that_actually_runs(
 
     assert "SCP005" in {issue.code for issue in report.issues}
     assert report.ok is False
+
+
+def test_an_absent_quantile_mirror_is_an_error_not_a_lone_warning(tmp_path: Path) -> None:
+    """Absent is not unreadable, and only unreadable raises TBL000.
+
+    Profiles committed, quantiles not yet -- the ordinary state mid-curation.
+    Without a partner error PRF000 is a lone warning, `ok` ignores warnings,
+    the build publishes, and every gene loses its percentile band with nothing
+    on the site saying a figure is missing.
+    """
+    root = _repo_with_profiles_but_no_quantiles(tmp_path)
+    report = validate_repository(root)
+    codes = {issue.code for issue in report.issues}
+    assert "PRF000" in codes
+    assert "PRF010" in codes  # the partner error
+    assert not report.ok
+
+
+def test_no_profiles_means_no_skip_warning_at_all(tmp_path: Path) -> None:
+    """Emit a skip only when there was work to skip."""
+    report = validate_repository(_repo_with_no_profiles(tmp_path))
+    assert "PRF000" not in {issue.code for issue in report.issues}
+
+
+@pytest.mark.parametrize(
+    ("include_validity_mirrors", "expect_tbl012"),
+    [
+        pytest.param(True, False, id="mirrors-readable"),
+        pytest.param(False, True, id="mirrors-missing"),
+    ],
+)
+def test_prf_references_run_on_both_scope_branches(
+    tmp_path: Path, include_validity_mirrors: bool, expect_tbl012: bool
+) -> None:
+    """`validate_profile_references` has one call site, and both branches of
+    the `mirrored` if/else below it must still reach it.
+
+    Section 4.34: a validator called on two branches is tested on the branch
+    you were thinking about. `validate_scope_attribution` is called once on
+    each side of this exact if/else, and only the mirror-unreadable side had a
+    test -- deleting the mirror-readable call passed all 789 tests (see
+    `test_a_false_scope_attribution_is_caught_on_the_branch_that_actually_runs`
+    above). `validate_profile_references`'s inputs (`datasets`, `known_genes`,
+    `phases`) do not depend on `mirrored` at all, so this module places one
+    call site *before* that split rather than duplicating it inside both
+    branches -- but "one call site, unconditional" is a claim about the
+    source, and this is the measurement: a profiles row citing an
+    unregistered gene must still report PRF007 whichever way the split
+    resolves, proving a future refactor that "helpfully" moves the call inside
+    just one branch -- the shape of the #30 bug -- would be caught.
+    """
+    (tmp_path / "curation").mkdir()
+    (tmp_path / "mirrors" / "profiles").mkdir(parents=True)
+    (tmp_path / "mirrors" / "profiles" / "GSE999999.tsv").write_text(
+        _PROFILES_TSV_HEADER
+        + "\t".join(["GSE999999", "HGNC:99999", "Heart", "7wpc", "10.0", "tpm", "", "", "5"])
+        + "\n"
+    )
+    (tmp_path / "mirrors" / "genes.tsv").write_text(_GENES_TSV_HEADER)
+    if include_validity_mirrors:
+        (tmp_path / "mirrors" / "clingen_gene_validity.tsv").write_text(_EMPTY_CLINGEN_TSV)
+        (tmp_path / "mirrors" / "gencc_submissions.tsv").write_text(_EMPTY_GENCC_TSV)
+
+    report = validate_repository(tmp_path)
+
+    codes = {issue.code for issue in report.issues}
+    assert ("TBL012" in codes) is expect_tbl012, "fixture landed on the wrong scope branch"
+    assert "PRF007" in codes, "validate_profile_references did not run on this branch"
+
+
+def test_validate_profiles_internal_consistency_runs_through_the_repository(
+    tmp_path: Path,
+) -> None:
+    """`validate_profiles`'s own checks (PRF001/002/003/008) are unit-tested
+    directly in `test_validate_profiles.py`; this proves the *wiring* reaches
+    them too, the same distinction `test_scope_checks_run_against_the_real_
+    repository` draws for the scope validators.
+
+    Called unconditionally, right beside `validate_burden`'s own unconditional
+    call -- deleting either is a defect of the same shape, and PRF008 is the
+    cheapest of the four to provoke: one dataset's `profiles` rows reporting
+    two different units needs no `profile_quantiles` shard at all.
+    """
+    (tmp_path / "mirrors" / "profiles").mkdir(parents=True)
+    (tmp_path / "mirrors" / "profiles" / "GSE999999.tsv").write_text(
+        _PROFILES_TSV_HEADER
+        + "\t".join(["GSE999999", "HGNC:11604", "Heart", "7wpc", "10.0", "tpm", "", "", "5"])
+        + "\n"
+        + "\t".join(["GSE999999", "HGNC:11604", "Liver", "7wpc", "10.0", "rpkm", "", "", "5"])
+        + "\n"
+    )
+
+    report = validate_repository(tmp_path)
+
+    assert "PRF008" in {issue.code for issue in report.issues}
+
+
+def test_prf009_fires_against_a_real_published_gene_population(tmp_path: Path) -> None:
+    """`_gate_published_genes` computes an actual population, not a permanent no-op.
+
+    PRF009 (a published gene missing a `profiles` row in a cell that was
+    assayed) can only ever fire when `published_genes` is non-empty -- an
+    implementation that always handed `validate_profile_references` an empty
+    set would make this check permanently dead, and every other test in this
+    file is deliberately built so PRF009 never fires, which would hide exactly
+    that. This builds the smallest repository where `build.validity.
+    published_genes` admits a real gene -- one ClinGen `Definitive` record for
+    a disease `chd_scope.yaml` places in scope -- and proves that population
+    reaches `validate_profile_references` through `validate_repository`, not
+    merely through the private helper in isolation.
+    """
+    root = tmp_path
+    (root / "curation").mkdir()
+    (root / "curation" / "chd_scope.yaml").write_text(
+        "diseases:\n"
+        "  - id: MONDO:0007732\n"
+        "    label: Holt-Oram syndrome\n"
+        "    reason: ClinGen classifies this gene-disease pair as CHD.\n"
+        "    admitted_by: clingen_chd_panel\n"
+        "    attributed_to: Congenital Heart Disease\n"
+        "    admitted_on: 2026-01-01\n"
+    )
+    (root / "mirrors").mkdir()
+    (root / "mirrors" / "genes.tsv").write_text(
+        _GENES_TSV_HEADER
+        + "\t".join(["HGNC:11604", "TBX5", "T-box transcription factor 5", "", "", "", "", "", ""])
+        + "\n"
+    )
+    (root / "mirrors" / "clingen_gene_validity.tsv").write_text(
+        "gene\tgene_symbol\tdisease\tdisease_label\tmoi\tsop\tclassification\t"
+        "classification_date\tgcep\treport_url\n"
+        "HGNC:11604\tTBX5\tMONDO:0007732\tHolt-Oram syndrome\tAD\tSOP9\tDefinitive\t"
+        "2023-01-01\tCongenital Heart Disease\thttps://x\n"
+    )
+    (root / "mirrors" / "gencc_submissions.tsv").write_text(_EMPTY_GENCC_TSV)
+    (root / "mirrors" / "profile_quantiles").mkdir(parents=True)
+    (root / "mirrors" / "profile_quantiles" / "GSE999999.tsv").write_text(
+        "dataset\ttissue\tstage\tpercentile\tvalue\tunit\tn_genes\n"
+        "GSE999999\tHeart\t7wpc\t50\t10.0\ttpm\t20000\n"
+    )
+
+    report = validate_repository(root)
+
+    issue = next(i for i in report.issues if i.code == "PRF009")
+    assert "HGNC:11604" in issue.message
+
+
+def test_an_unmapped_classification_does_not_crash_validate_repository(tmp_path: Path) -> None:
+    """`_gate_published_genes` must never let `build.validity.gene_validity` raise
+    out of `validate_repository`.
+
+    `gene_validity` is written for post-gate data and raises `ValueError` by
+    design when a mirror carries a classification term the atlas vocabulary
+    has not mapped yet -- reproduced directly against a synthetic frame while
+    writing `_gate_published_genes` (see its docstring). That is the right
+    behaviour for `build_site`, which must refuse rather than publish a
+    confidence nobody vetted, but this call sits inside `validate_repository`
+    to compute one WARNING-level check's population, and "validators report,
+    they do not raise" (CLAUDE.md section 1) must hold regardless of what a
+    third-party mirror contains -- including mid-curation, before
+    `validate_table` has even finished reporting the same value as TBL004.
+    """
+    root = tmp_path
+    (root / "curation").mkdir()
+    (root / "curation" / "chd_scope.yaml").write_text(
+        "diseases:\n"
+        "  - id: MONDO:0007732\n"
+        "    label: Holt-Oram syndrome\n"
+        "    reason: ClinGen classifies this gene-disease pair as CHD.\n"
+        "    admitted_by: clingen_chd_panel\n"
+        "    attributed_to: Congenital Heart Disease\n"
+        "    admitted_on: 2026-01-01\n"
+    )
+    (root / "mirrors").mkdir()
+    (root / "mirrors" / "genes.tsv").write_text(_GENES_TSV_HEADER)
+    (root / "mirrors" / "clingen_gene_validity.tsv").write_text(
+        "gene\tgene_symbol\tdisease\tdisease_label\tmoi\tsop\tclassification\t"
+        "classification_date\tgcep\treport_url\n"
+        "HGNC:11604\tTBX5\tMONDO:0007732\tHolt-Oram syndrome\tAD\tSOP9\t"
+        "Not A Real Classification\t2023-01-01\tCongenital Heart Disease\thttps://x\n"
+    )
+    (root / "mirrors" / "gencc_submissions.tsv").write_text(_EMPTY_GENCC_TSV)
+
+    report = validate_repository(root)  # must return, never raise
+
+    assert isinstance(report, ValidationReport)
+    # The malformed value is still visible in the report, via the schema
+    # check that runs independently of `_gate_published_genes` -- proving the
+    # defensive fallback silences the crash, not the evidence of the defect.
+    assert any(issue.code == "TBL004" for issue in report.issues)

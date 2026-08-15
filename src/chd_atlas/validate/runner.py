@@ -7,11 +7,15 @@ import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from chd_atlas.corpus import load_curation, unexpected_curation_entries
+from chd_atlas.build.validity import gene_validity, published_genes
+from chd_atlas.corpus import Corpus, load_curation, unexpected_curation_entries
 from chd_atlas.genes import GeneRegistry
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import (
+    PROFILE_QUANTILES,
+    PROFILES,
     TABLE_SCHEMAS,
+    TableSchema,
     mirror_paths,
     read_table,
     unexpected_mirror_entries,
@@ -25,6 +29,7 @@ from chd_atlas.validate.ontology import (
     validate_labels,
     validate_terms,
 )
+from chd_atlas.validate.profiles import validate_profile_references, validate_profiles
 from chd_atlas.validate.referential import (
     validate_mirror_references,
     validate_ptm_evidence_is_reachable,
@@ -268,6 +273,100 @@ def _mirrored_validity(
     )
 
 
+def _mirror_has_rows(root: Path, schema_name: str, schema: TableSchema) -> bool:
+    """True when some shard registered under `schema_name` has a readable row.
+
+    Shared by the PRF010/PRF000 check below for both `profiles` and
+    `profile_quantiles`. Three inputs all read as "no rows" here, deliberately
+    conflated the way `validate_profiles`'s own `quantile_available` flag
+    conflates them (see that module's docstring): a directory that was never
+    created (`mirror_paths` yields a shard only when `path.is_file()`, per
+    `tables.py`), a shard that exists but fails to parse (`read_table` returns
+    `None` — already reported once, as TBL000, by the unconditional
+    `mirror_paths` loop in `validate_repository`), and a shard that parses
+    cleanly but is header-only (`frame.height == 0`). All three leave nothing
+    for a `profiles` row's percentile to be read against, which is the one
+    fact PRF010 exists to name — the finer question of *why* is TBL000/TBL001's
+    to answer, not this function's.
+    """
+    for path, name in mirror_paths(root):
+        if name != schema_name:
+            continue
+        frame, _ = read_table(path, schema)
+        if frame is not None and frame.height > 0:
+            return True
+    return False
+
+
+def _gate_published_genes(root: Path, corpus: Corpus) -> set[str]:
+    """The D21 population `PRF009` checks `profiles` rows against.
+
+    `validate_profile_references` needs the *published* gene set, never the
+    whole registry `_known_genes` returns — profiles.py's own docstring is
+    explicit the two must not be conflated, since most of the registry is not
+    published at all. The only correct source for that population is
+    `build.validity.published_genes`, the same function `build_site` calls to
+    decide what to publish. Reimplementing the gate's rules a second time here
+    (which submitters count, the agreement floor, ClinGen's veto) would risk
+    the two copies drifting apart the next time the gate widens — the same
+    class of defect CLAUDE.md section 9 keeps `headline_confidence` and
+    `has_conflicting_evidence` written together in one place to prevent.
+
+    `validate/burden.py`'s BUR009-011 docstring declined to add the equivalent
+    check for burden rows, because deriving the published set inside
+    `validate/` "needs build.validity.published_genes and inverts the
+    layering: the validator would depend on the builder it exists to gate."
+    That general concern does not reproduce as an import cycle here:
+    `chd_atlas.build.validity` imports only `chd_atlas.build.emit` and
+    `chd_atlas.vocab`, and neither imports anything under `chd_atlas.validate`
+    — `build.runner` already imports both `validate.runner` and
+    `build.validity` today, in that order, with no cycle, and this module
+    still imports cleanly on its own with the new import added. The choice
+    actually being made here is between reusing the one correct
+    implementation and duplicating a classification this involved; for a
+    project this dependent on a single source of truth, duplication is the
+    larger risk.
+
+    **Never lets `gene_validity`/`published_genes` raise out of this
+    function.** They are written for post-gate data — `build_site` calls them
+    only after `validate_repository` has already reported 0 errors — and they
+    are not defensive the way this module's own mirror readers are.
+    Reproduced directly against synthetic frames: a column an upstream rename
+    dropped (the same shape Copilot found in `_mirrored_validity`) raises
+    `KeyError`, and a classification term the atlas vocabulary has not mapped
+    yet raises `ValueError` by design (`gene_validity`'s own docstring: "a
+    term either mirror adds in a later release must reach a human"). Both are
+    the right behaviour for `build_site`, which must refuse rather than
+    publish a confidence nobody vetted, and neither is acceptable here: this
+    call computes one WARNING-level check's population, not a
+    correctness-critical result, so degrading to "nothing published, this
+    attempt" is the safe failure, and a raised traceback out of `chd-atlas
+    validate` is not. `build_site`'s own call is untouched by this and still
+    raises exactly as before.
+
+    Returns an empty set, never `None`, when either validity mirror cannot be
+    read or the computation above fails. `published_genes` has no optional
+    form the way `known_genes` does — it must always be a `set[str]` — so an
+    empty set is the fail-safe equivalent of the `None`-means-skip convention
+    used elsewhere in this module: PRF009 only ever subtracts published genes
+    *from* what a cell already has rows for, so an empty left-hand side can
+    under-report a gap but can never invent a false one.
+    """
+    clingen, _ = read_table(
+        root / "mirrors" / "clingen_gene_validity.tsv", TABLE_SCHEMAS["clingen_validity"]
+    )
+    gencc, _ = read_table(
+        root / "mirrors" / "gencc_submissions.tsv", TABLE_SCHEMAS["gencc_submissions"]
+    )
+    if clingen is None or gencc is None:
+        return set()
+    scope_terms = {str(entry.id) for entry in corpus.chd_scope}
+    try:
+        return published_genes(gene_validity(clingen, gencc, in_scope=scope_terms))
+    except Exception:
+        return set()
+
+
 def _relative_to_root(issues: list[ValidationIssue], root: Path) -> list[ValidationIssue]:
     """Rewrite absolute locations as repo-relative.
 
@@ -307,6 +406,50 @@ def validate_repository(root: Path) -> ValidationReport:
     # burden table's cross-column rules read nothing but the table itself, so a
     # corpus that failed to load must not silently take these checks with it.
     issues.extend(validate_burden(root))
+    # Same reasoning again: `profiles`/`profile_quantiles` internal consistency
+    # reads nothing but the two mirrors themselves.
+    issues.extend(validate_profiles(root))
+    # PRF010/PRF000 -- the skip machinery `validate_profiles` deliberately does
+    # not provide itself (see its module docstring): comparing `profiles`
+    # against a `profile_quantiles` mirror that is missing or entirely
+    # unreadable would otherwise cascade the way an unread `genes.tsv` or
+    # validity mirror does elsewhere in this function -- every
+    # (dataset, tissue, stage) in `profiles` would report PRF002 and every
+    # dataset's unit would report PRF001, naming a hundred symptoms of one gap
+    # rather than the gap itself.
+    #
+    # `mirror_paths` yields a table only when `path.is_file()` (`tables.py`),
+    # so an ABSENT `mirrors/profile_quantiles/` directory raises no TBL000 at
+    # all -- and that absence is the *ordinary* state mid-curation (profiles
+    # committed, quantiles not yet), not a rare failure. Without a partner
+    # error here, PRF000 would be a lone warning; `ValidationReport.ok` ignores
+    # warnings, so the build would publish every gene with its percentile band
+    # silently missing. Precedents: the hand-written TBL008 below (missing
+    # gene registry) and TBL012 (missing validity mirrors).
+    #
+    # Conditioned on `profiles_have_rows`, per section 4.41: emit a skip only
+    # when there was work to skip. A repository with no `profiles` data at all
+    # -- true of the committed corpus today -- must fire neither code, exactly
+    # like GEN000's own guard.
+    profiles_have_rows = _mirror_has_rows(root, "profiles", PROFILES)
+    if profiles_have_rows and not _mirror_has_rows(root, "profile_quantiles", PROFILE_QUANTILES):
+        issues.append(
+            ValidationIssue(
+                "PRF010",
+                Severity.ERROR,
+                str(root / "mirrors" / "profile_quantiles"),
+                "profiles rows are present but mirrors/profile_quantiles/ holds "
+                "no shard with any row; every percentile would be silently absent",
+            )
+        )
+        issues.append(
+            ValidationIssue(
+                "PRF000",
+                Severity.WARNING,
+                str(root / "mirrors" / "profile_quantiles"),
+                "skipped percentile checks: profiles rows exist but no profile_quantiles data does",
+            )
+        )
     # Same reasoning for the interpretive tree, which holds the curator
     # judgement the atlas exists to record.
     issues.extend(unexpected_curation_entries(root))
@@ -418,6 +561,30 @@ def validate_repository(root: Path) -> ValidationReport:
         # reads the gene registry, so on a corpus that failed to load it would
         # report a missing accession for every gene at once.
         issues.extend(validate_ptm_evidence_is_reachable(root, corpus))
+
+        # Same branch, same reasoning again: `corpus.datasets` and
+        # `corpus.cardiac_phases` would both be empty on a corpus that failed
+        # to load, making every declared cardiac tissue and stage look
+        # unbacked by data and vice versa.
+        #
+        # Called once here rather than duplicated inside the `mirrored`
+        # if/else immediately below -- unlike the scope validators there,
+        # `datasets`, `known_genes` and `phases` do not come from either
+        # validity mirror, so the same call answers both branches. Deliberate,
+        # not an oversight (CLAUDE.md section 4.34: a validator called on two
+        # branches is tested on the branch you were thinking about) --
+        # `test_prf_references_run_on_both_scope_branches` pins that this
+        # single call site is in fact reached on both the mirror-readable and
+        # mirrors-missing (TBL012) branches.
+        issues.extend(
+            validate_profile_references(
+                root,
+                datasets=corpus.datasets,
+                known_genes=known_genes,
+                published_genes=_gate_published_genes(root, corpus),
+                phases=corpus.cardiac_phases,
+            )
+        )
 
         # Same branch, same reasoning again: a corpus that failed to load empties
         # `corpus.chd_scope`, and every scope term would then look absent.
