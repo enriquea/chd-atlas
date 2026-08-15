@@ -351,6 +351,28 @@ def _gate_published_genes(root: Path, corpus: Corpus) -> set[str]:
     used elsewhere in this module: PRF009 only ever subtracts published genes
     *from* what a cell already has rows for, so an empty left-hand side can
     under-report a gap but can never invent a false one.
+
+    **And the degradation cannot happen silently, which is what makes it
+    acceptable without a skip code of its own.** Every way this returns empty
+    is already an ERROR somewhere else in the same report, so the rule that a
+    skip must arrive with the error that caused it holds structurally rather
+    than by a paired warning. Measured 2026-08-15:
+
+    - an unreadable mirror is TBL000, and `_mirrored_validity` pairs TBL012
+      with it;
+    - a dropped column is TBL001;
+    - an unmapped classification term — the one case where the mirrors are
+      readable *and* schema-valid — cannot reach `gene_validity` at all,
+      because both `classification` columns carry `allowed=` sets that
+      `tests/unit/test_vocab.py::test_every_mirrored_classification_maps_and_
+      an_unknown_one_raises` pins equal to the vocab maps this function's
+      callee dispatches on. Measured: 7/7 and 8/8 terms, no drift either way.
+
+    That last one is the load-bearing link and the only one that is not
+    self-evident from this file. If that test is ever deleted, the two
+    hand-written literals can drift, a term valid to the schema but unmapped
+    by the vocab reaches `gene_validity`, this `except` swallows it, and
+    PRF009 silently checks nothing in an otherwise green report.
     """
     clingen, _ = read_table(
         root / "mirrors" / "clingen_gene_validity.tsv", TABLE_SCHEMAS["clingen_validity"]
