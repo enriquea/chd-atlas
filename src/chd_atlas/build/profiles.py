@@ -151,12 +151,16 @@ TAU_SCALE: Final = "log2(x+1)"
 
 # D39(a): named beside every tau so a consumer can re-derive the number from
 # `medians` without reading this module's source. The dataset's own detection
-# floor is not repeated here -- same one-level guarantee `LOOKUP_RULE`
-# documents for the percentile side (see the module docstring).
+# floor is deliberately absent from this description -- it gates whether tau
+# is published at all (see `specificity`), but no longer changes what any
+# organ contributes once it is, so re-deriving tau needs nothing but
+# `medians` itself. Same one-level guarantee `LOOKUP_RULE` documents for the
+# percentile side (see the module docstring).
 TAU_METHOD: Final = (
     "tau (Yanai et al. 2005): mean over organs of (1 - x_i/x_max), "
-    "x = log2(median+1); organs below the dataset's detection floor "
-    "contribute x=0"
+    "x = log2(median+1); a negative median is clamped to 0 before the "
+    "transform, and every organ's raw median is used even below the "
+    "dataset's detection floor"
 )
 
 
@@ -183,7 +187,10 @@ class Specificity(TypedDict):
       at the peak, where "highest in X" would be an arbitrary choice.
     - `medians` -- tau's actual inputs (D39(b)), because the bundle's own
       slice of a gene's organs is truncated elsewhere (`omics.select_top`).
-      Published as measured, never floored -- see `specificity`'s docstring.
+      Published exactly as measured, and tau's own arithmetic uses these
+      same raw values -- no internal flooring -- so recomputing tau from
+      `medians` alone reproduces `tau` exactly. See `specificity`'s
+      docstring for why an earlier version of this function broke that.
     """
 
     tau: float
@@ -210,8 +217,8 @@ def specificity(medians: Mapping[str, float], floor: float) -> Specificity | Non
     - fewer than two organs were sampled at this stage (the denominator is
       `n - 1`), or
     - the gene's peak across every sampled organ is below `floor` (the
-      normaliser is `x_max`, and a percentile-style floor gate on an
-      unreliable peak would otherwise divide by noise).
+      normaliser is `x_max`, and computing one from an unreliable peak would
+      publish a ratio measured against noise).
 
     A genuinely ubiquitous gene -- every organ equal -- measures *exactly*
     0.000, so a guard that defaults an undefined tau to `0.0` (`n < 2`, or
@@ -225,15 +232,49 @@ def specificity(medians: Mapping[str, float], floor: float) -> Specificity | Non
     value; pinned at the boundary by `test_the_floor_gate_on_tau_is_strict_
     less_than`, matching Task 9's own boundary test.
 
-    A *non-peak* organ below the floor is not dropped: it is retained in
-    `tissues`/`n_tissues` (so those keep meaning "organs sampled", not
-    "organs detected" -- dropping is self-defeating, since the most
-    heart-exclusive gene in the atlas, detected in heart alone, would fall to
-    n=1 and lose tau entirely) and its contribution to the sum is floored to
-    `x=0` rather than computed from its raw, sub-floor (and so unreliable)
-    value. `medians` still publishes that organ's true measured value,
-    unfloored -- D39(b) requires tau's actual inputs, not the value tau
-    computed with.
+    **The floor gates whether tau is published at all. It does not change
+    what any organ contributes once tau is computed.** A non-peak organ
+    below the floor is retained in `tissues`/`n_tissues` (so those keep
+    meaning "organs sampled", not "organs detected" -- dropping is
+    self-defeating, since the most heart-exclusive gene in the atlas,
+    detected in heart alone, would fall to n=1 and lose tau entirely), *and
+    its raw median is used in the sum exactly as measured* -- not floored to
+    zero. An earlier version of this function floored it, reasoning that a
+    sub-floor value is unreliable noise. Reverted on review, for two reasons:
+
+    1. D39(b) requires tau to be re-derivable from the `medians` this same
+       payload publishes, and `medians` is (and was always) published raw.
+       Flooring internally while publishing raw inputs makes those two
+       requirements contradict each other: a consumer who recomputes tau
+       from the published `medians` gets a different number than the one
+       published beside them (measured: 0.696 re-derived vs. 0.740
+       published, same fixture). `test_tau_is_re_derivable_from_its_own_
+       published_medians` makes this a checked invariant rather than a claim
+       nobody watches.
+    2. Flooring is not a neutral rounding choice: it measurably *raises*
+       tau (0.740 vs. 0.696 on that same fixture -- `test_a_below_floor_
+       nonzero_value_uses_its_raw_median_not_a_floored_zero`), pushing
+       toward a stronger specificity claim than the data supports, in the
+       same direction tau's own single-organ normaliser is already biased
+       toward. Where two readings of an under-specified rule differ, this
+       atlas takes the one that claims less.
+
+    "Below the detection floor" means the source does not vouch for the
+    value as a detection -- it does not mean the source measured zero, and
+    substituting zero for it is this atlas authoring a number the source did
+    not report (the act D12/D39 exist to forbid). Gating *publication* on
+    the floor and *rewriting a value* because of it are different acts; this
+    function does the first and, deliberately, not the second.
+
+    The one rewrite tau's arithmetic does make is a negative median, clamped
+    to zero before the log transform: a negative abundance is not a value,
+    and `log2` of one is not a number. `test_a_negative_median_is_clamped_
+    to_zero_before_log2` pins this, including that it does not raise.
+
+    `medians` is published alongside because the bundle's own slice of a
+    gene's organs is truncated elsewhere (`omics.select_top`), and D39(b)
+    requires tau's actual inputs to be reachable from the same payload that
+    carries tau.
     """
     tissues = tuple(sorted(medians))
     if len(tissues) < 2:
@@ -243,11 +284,15 @@ def specificity(medians: Mapping[str, float], floor: float) -> Specificity | Non
     if peak_raw < floor:
         return None
 
-    logged = {
-        tissue: math.log2((value if value >= floor else 0.0) + 1.0)
-        for tissue, value in medians.items()
-    }
-    x_max = math.log2(peak_raw + 1.0)
+    def _log2p1(value: float) -> float:
+        # The only rewrite applied to any organ's raw median: a negative
+        # abundance is not a value, and log2 of one is not a number. A
+        # value below the detection floor is NOT rewritten here -- see the
+        # docstring's "gate publication, don't rewrite the value" argument.
+        return math.log2(max(value, 0.0) + 1.0)
+
+    logged = {tissue: _log2p1(value) for tissue, value in medians.items()}
+    x_max = _log2p1(peak_raw)
     if x_max <= 0:
         return None
 

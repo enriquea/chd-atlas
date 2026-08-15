@@ -17,6 +17,8 @@ genuinely different code paths, not one value asserted twice.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from chd_atlas.build.profiles import (
@@ -277,27 +279,74 @@ def test_a_below_floor_organ_is_retained_as_zero_not_dropped() -> None:
     assert result["tau"] > 0.9
 
 
-def test_a_below_floor_nonzero_value_is_floored_to_zero_not_passed_through() -> None:
-    """The test above cannot distinguish "floored to zero" from "left as
-    measured", because its below-floor organs are already raw 0.0 either way.
-    Liver here is 0.5 -- below floor=1.0, but not itself zero.
+def test_a_below_floor_nonzero_value_uses_its_raw_median_not_a_floored_zero() -> None:
+    """The test above cannot distinguish "raw" from "floored to zero",
+    because its below-floor organs are already raw 0.0 either way. Liver
+    here is 0.5 -- below floor=1.0, but not itself zero, so the two readings
+    diverge and this is the only test in this file that can tell them apart.
+
+    An earlier version of this function floored a below-floor organ to zero
+    before the log transform, reasoning that a sub-floor value is noise.
+    That broke D39(b): `medians` is published raw, so a consumer recomputing
+    tau from the published inputs got a *different* number than the one
+    published beside them. Reverted; see `specificity`'s docstring.
 
     Verified independently (`math.log2`, not this module): log2(101) =
-    6.658211, log2(11) = 3.459432, and a *floored* Liver contributes
-    log2(0+1) = 0 to the sum:
+    6.658211, log2(11) = 3.459432, log2(1.5) = 0.584963 (Liver's raw
+    contribution, UNFLOORED):
 
-        tau = ((1 - 6.658211/6.658211) + (1 - 3.459432/6.658211) + (1 - 0/6.658211)) / 2
-            = (0 + 0.480401 + 1) / 2 = 0.740213
+        tau = ((1 - 6.658211/6.658211) + (1 - 3.459432/6.658211) + (1 - 0.584963/6.658211)) / 2
+            = (0 + 0.480401 + 0.912142) / 2 = 0.696285
 
-    against 0.696285 if the raw 0.5 (log2(1.5) = 0.584963) had been used
-    unfloored instead -- a real difference, not a cosmetic one.
+    against 0.740213 if Liver had been floored to zero instead (its log2(1)
+    = 0 contributes the full 1.0 term rather than 0.912142) -- a real
+    difference, not a cosmetic one, and floored is the *wrong* answer here.
     """
     result = specificity({"Liver": 0.5, "Heart": 100.0, "Kidney": 10.0}, floor=1.0)
     assert result is not None
-    assert round(result["tau"], 3) == 0.740
-    # `medians` still names the true measured value: D39(b) requires tau's
-    # actual inputs, and 0.5 is what was measured, not what tau computed with.
+    assert round(result["tau"], 3) == 0.696  # NOT 0.740 -- that was the bug
+    # `medians` names the true measured value, and tau's own arithmetic used
+    # that same raw value -- D39(b) needs both halves of this to agree.
     assert result["medians"] == {"Liver": 0.5, "Heart": 100.0, "Kidney": 10.0}
+
+
+def test_a_negative_median_is_clamped_to_zero_before_log2() -> None:
+    """The one rewrite tau's arithmetic makes to any organ's raw median: a
+    negative abundance is not a value, and `log2` of one is not a number.
+    Unlike a below-floor value, this is not a judgement call about noise --
+    without the clamp, `math.log2(-5.0 + 1.0)` raises `ValueError: math
+    domain error`, so the fixture also proves the guard doesn't crash.
+
+    Verified independently: log2(101) = 6.658211, and a clamped Liver
+    contributes log2(0+1) = 0, the same as the fully-concentrated case:
+    tau = ((1 - 6.658211/6.658211) + (1 - 0/6.658211)) / 1 = 1.0.
+    """
+    result = specificity({"Heart": 100.0, "Liver": -5.0}, floor=1.0)
+    assert result is not None
+    assert result["tau"] == 1.0
+
+
+def test_tau_is_re_derivable_from_its_own_published_medians() -> None:
+    """D39(b)'s whole point, made a checked invariant rather than a claim in
+    a docstring: a consumer re-derives tau from what the payload publishes,
+    not from this module's internals. This is the test that would have
+    caught the floor-vs-raw mismatch directly -- publish raw medians while
+    computing on floored ones, and recomputing tau from the published
+    medians (independently, by hand, using only the published `scale`'s
+    formula) disagrees with the published `tau`.
+
+    Deliberately reuses the fixture above, where floored-vs-raw actually
+    diverge (0.740 vs 0.696) -- re-deriving from a fixture where they
+    coincide would not have caught the original bug either.
+    """
+    medians = {"Liver": 0.5, "Heart": 100.0, "Kidney": 10.0}
+    result = specificity(medians, floor=1.0)
+    assert result is not None
+
+    values = [math.log2(v + 1.0) for v in result["medians"].values()]
+    x_max = max(values)
+    rederived = sum(1.0 - v / x_max for v in values) / (len(values) - 1)
+    assert rederived == pytest.approx(result["tau"])
 
 
 @pytest.mark.parametrize(
