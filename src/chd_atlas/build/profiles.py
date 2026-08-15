@@ -13,8 +13,10 @@ re-derivable from its median and the published breakpoints; the breakpoints
 are not, because D32 forbids publishing the matrix they came from. Stated as a
 trade rather than claimed as a proof.
 
-This module carries the percentile band (Task 9) and tau (Task 10). Task 11
-adds phase assignment; Task 12 quantile shard emission.
+This module carries the percentile band (Task 9) and tau (Task 10), plus
+phase assignment (Task 11). Task 12 adds quantile shard emission -- the other
+half of D39(b)'s bargain, since Task 9's percentile is re-derivable only if
+the breakpoints it was read against are themselves fetchable.
 """
 
 from __future__ import annotations
@@ -22,7 +24,12 @@ from __future__ import annotations
 import bisect
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Final, TypedDict
+
+from chd_atlas.models.dataset import Stage
+from chd_atlas.models.phases import CardiacPhaseFile
 
 # D39(a): the method travels with the number. Published beside every
 # percentile so a consumer can re-derive it without reading this module's
@@ -308,3 +315,121 @@ def specificity(medians: Mapping[str, float], floor: float) -> Specificity | Non
         highest_in=leaders[0] if len(leaders) == 1 else None,
         medians=dict(medians),
     )
+
+
+class PhaseOutcome(StrEnum):
+    """Why `assign_phase` returned the `phase_id` (or lack of one) that it did.
+
+    Four outcomes, never a bare `None`: a page that only checked
+    `phase_id is None` would render one sentence for a post-natal stage, a
+    stage past the curated window, and a stage the dataset's own record never
+    declared -- three different facts, and `UNDECLARED` is not a biological
+    statement at all, it is a curation gap PRF005 also reports from the other
+    direction. `Resolution` in `chd_atlas/genes.py` is the precedent: a
+    caller branches on the named outcome, never on which fields happen to be
+    `None` or on matching the display text in `reason`.
+    """
+
+    MATCHED = "matched"
+    """`wpc` falls inside a declared cardiac phase; `phase_id` names it."""
+
+    OUTSIDE_WINDOW = "outside_window"
+    """A real `wpc` exists, but no curated phase covers it -- before the
+    first, after the last, or in an interior gap between two (PRF006 flags
+    the gap shape as a probable transcription slip; this is the runtime fact
+    a page renders regardless of *why* the gap exists). The committed
+    `curation/cardiac_phases.yaml` declares zero phases today -- the
+    boundaries have not yet been transcribed from a verified source -- so on
+    the real corpus every stage with a real `wpc` resolves here. That is
+    correct, not a bug and not a blank: Task 4's placeholder file exists
+    precisely so this reads as "outside the curated window" rather than as
+    silence."""
+
+    POST_NATAL = "post_natal"
+    """The stage's own `wpc` is null. Every `CardiacPhase` is prenatal by
+    construction (`start_wpc`/`end_wpc` are both `gt=0`), so this is a
+    different fact than OUTSIDE_WINDOW: there is no developmental age to
+    place at all, and a wider curated window could never change the
+    answer."""
+
+    UNDECLARED = "undeclared"
+    """`token` is not in the dataset's own `stages`, so there is no `Stage`
+    to read a `wpc` from in the first place. PRF005 reports the reverse
+    direction (a `profiles` row naming a stage the dataset record does not
+    declare); this is what a caller sees asking about a token with nothing
+    behind it, and `assign_phase` must not guess a biological placement for
+    a stage it was never told about."""
+
+
+@dataclass(frozen=True)
+class PhaseAssignment:
+    """Where one of a dataset's own stage tokens falls in the curated phase vocabulary.
+
+    `phase_id` is set only for `PhaseOutcome.MATCHED`. `reason` is a short,
+    renderable phrase explaining an absent `phase_id`, and is `None` exactly
+    when `phase_id` is not -- a page renders one field or the other, never
+    both, and never neither.
+    """
+
+    token: str
+    outcome: PhaseOutcome
+    phase_id: str | None = None
+    reason: str | None = None
+
+
+def assign_phase(
+    token: str, stages: Sequence[Stage], phases: CardiacPhaseFile | None
+) -> PhaseAssignment:
+    """Place one of a dataset's own stage tokens in the curated phase vocabulary.
+
+    Checked in this order, each a stronger claim than the last is absent:
+
+    1. `token` is not in `stages` at all -- `UNDECLARED`. Nothing about
+       development can be said for a token with no `Stage` behind it, so this
+       is decided before either of the wpc-based questions below are even
+       asked.
+    2. The matching `Stage.wpc` is `None` -- `POST_NATAL`. Every `CardiacPhase`
+       is prenatal by construction, so a null wpc can never match one
+       regardless of what `phases` declares.
+    3. `phases` is absent entirely, or declares zero phases -- `OUTSIDE_WINDOW`,
+       reason "outside the curated window". Checked before indexing into
+       `phases.phases` for the boundary comparison in step 4, which would
+       raise `IndexError` on an empty sequence otherwise -- and this is not a
+       hypothetical: it is the committed corpus's own state today.
+    4. Otherwise `phases.phase_for(wpc)` is tried. A hit is `MATCHED`. A miss
+       is `OUTSIDE_WINDOW` again, with a reason naming *where*: "before the
+       curated window" (earlier than every phase's `start_wpc`), "after the
+       curated window" (at or past the last phase's `end_wpc` -- the common
+       case, since a real developmental series runs well past any
+       morphogenetic window, not an edge case), or the same generic phrase as
+       step 3 for the rarer case of an interior gap between two declared
+       phases, which PRF006 already names as a probable transcription slip.
+    """
+    stage = next((candidate for candidate in stages if candidate.token == token), None)
+    if stage is None:
+        return PhaseAssignment(
+            token=token,
+            outcome=PhaseOutcome.UNDECLARED,
+            reason="stage not declared by this dataset",
+        )
+    if stage.wpc is None:
+        return PhaseAssignment(token=token, outcome=PhaseOutcome.POST_NATAL, reason="post-natal")
+    if phases is None or not phases.phases:
+        return PhaseAssignment(
+            token=token,
+            outcome=PhaseOutcome.OUTSIDE_WINDOW,
+            reason="outside the curated window",
+        )
+    found = phases.phase_for(stage.wpc)
+    if found is not None:
+        return PhaseAssignment(token=token, outcome=PhaseOutcome.MATCHED, phase_id=found.id)
+
+    starts = [phase.start_wpc for phase in phases.phases]
+    ends = [phase.end_wpc for phase in phases.phases]
+    if stage.wpc < min(starts):
+        reason = "before the curated window"
+    elif stage.wpc >= max(ends):
+        reason = "after the curated window"
+    else:
+        reason = "outside the curated window"
+    return PhaseAssignment(token=token, outcome=PhaseOutcome.OUTSIDE_WINDOW, reason=reason)

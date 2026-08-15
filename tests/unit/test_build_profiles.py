@@ -1,5 +1,6 @@
 # tests/unit/test_build_profiles.py
-"""Tests for the percentile half of `build/profiles.py` (plan Task 9).
+"""Tests for `build/profiles.py`: the percentile band and tau (Tasks 9-10)
+and phase assignment (Task 11).
 
 `percentile_of` and `band` are pure lookups over a hand-built grid, so every
 expected value here is read off `GRID` by construction rather than computed by
@@ -24,11 +25,15 @@ import pytest
 from chd_atlas.build.profiles import (
     LOOKUP_RULE,
     TAU_METHOD,
+    PhaseOutcome,
+    assign_phase,
     band,
     percentile_of,
     placement,
     specificity,
 )
+from chd_atlas.models.dataset import Stage
+from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile
 
 # 101 breakpoints, percentile i at index i. Hand-built so the expected answers
 # below are read off the grid rather than computed by the code under test.
@@ -404,3 +409,150 @@ def test_a_degenerate_zero_floor_refuses_rather_than_dividing_by_zero() -> None:
     `x_max = log2(0+1) = 0` would otherwise divide every term by zero.
     """
     assert specificity({"Heart": 0.0, "Liver": 0.0}, floor=0.0) is None
+
+
+# --- phase assignment (Task 11) -------------------------------------------
+#
+# `_STAGES` deliberately spans all four `PhaseOutcome`s and both directions of
+# "outside": "2wpc" is before every declared phase, "7wpc" matches septation,
+# "20wpc" is past every declared phase (the common case per the source's own
+# series, not an edge case), and "senior" is post-natal. "unknown" is
+# deliberately absent from `_STAGES` so `assign_phase` is asked about a token
+# with no `Stage` behind it at all.
+_STAGES = (
+    Stage(token="2wpc", wpc=2.0),
+    Stage(token="7wpc", wpc=7.0),
+    Stage(token="20wpc", wpc=20.0),
+    Stage(token="senior", wpc=None),
+)
+_PHASES = CardiacPhaseFile(
+    attributed_to="O'Rahilly & Muller 1987",
+    citation="ISBN:0872796248",
+    phases=[
+        CardiacPhase(id="looping", label="Cardiac looping", start_wpc=3.0, end_wpc=5.0),
+        CardiacPhase(id="septation", label="Septation", start_wpc=5.0, end_wpc=8.0),
+    ],
+)
+
+
+def test_a_stage_outside_every_phase_publishes_a_reason_not_a_gap() -> None:
+    """A wpc in no phase, and a null wpc, must both reach the page.
+
+    PRF006 catches gaps *between* declared ranges; it cannot catch a stage
+    past the last one. The source's series runs well past the morphogenetic
+    window, so this is the common case, not an edge case.
+    """
+    assert assign_phase("7wpc", _STAGES, _PHASES).phase_id == "septation"
+    assert assign_phase("20wpc", _STAGES, _PHASES).phase_id is None
+    assert assign_phase("20wpc", _STAGES, _PHASES).reason == "after the curated window"
+    assert assign_phase("senior", _STAGES, _PHASES).reason == "post-natal"
+    assert assign_phase("unknown", _STAGES, _PHASES).reason == "stage not declared by this dataset"
+
+
+def test_a_matched_phase_carries_no_reason_the_page_would_have_to_suppress() -> None:
+    """`reason` explains an ABSENT `phase_id`, and is `None` exactly when
+    `phase_id` is not -- a caller must never face both populated at once.
+    """
+    result = assign_phase("7wpc", _STAGES, _PHASES)
+    assert result.outcome is PhaseOutcome.MATCHED
+    assert result.phase_id == "septation"
+    assert result.reason is None
+
+
+@pytest.mark.parametrize(
+    ("token", "expected_outcome"),
+    [
+        pytest.param("senior", PhaseOutcome.POST_NATAL, id="post-natal"),
+        pytest.param("unknown", PhaseOutcome.UNDECLARED, id="undeclared"),
+    ],
+)
+def test_post_natal_and_undeclared_carry_the_matching_outcome(
+    token: str, expected_outcome: PhaseOutcome
+) -> None:
+    """`reason` is display text; `outcome` is what a caller should branch on
+    (see `PhaseOutcome`'s docstring) -- pinned separately from the `reason`
+    strings above so a mutant swapping the enum value while leaving the text
+    intact is still caught.
+    """
+    result = assign_phase(token, _STAGES, _PHASES)
+    assert result.outcome is expected_outcome
+    assert result.phase_id is None
+
+
+def test_a_stage_before_the_curated_window_is_distinguished_from_one_after_it() -> None:
+    """Both are OUTSIDE_WINDOW with a real wpc and a populated vocabulary;
+    only the direction of the miss differs, and the pinned test above only
+    exercises the 'after' half. A mutant collapsing 'before' into 'after'
+    (or the reverse) survives that test and must fail here.
+    """
+    before = assign_phase("2wpc", _STAGES, _PHASES)
+    after = assign_phase("20wpc", _STAGES, _PHASES)
+    assert before.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert after.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert before.reason == "before the curated window"
+    assert after.reason == "after the curated window"
+
+
+def test_a_stage_exactly_at_the_last_phase_boundary_reads_as_after() -> None:
+    """Intervals are half-open, so a wpc exactly at the last phase's own
+    `end_wpc` is not inside it (`phase_for(8.0) is None` -- pinned by
+    `models/phases.py`'s own boundary test) -- but the fallback comparison
+    here must still be `>=`, not `>`, or this exact value falls through to
+    the generic "outside" text instead of the more specific "after" one. The
+    pinned test's own '20wpc' is far past this boundary and cannot
+    distinguish the two operators.
+    """
+    boundary = assign_phase("8wpc", (Stage(token="8wpc", wpc=8.0),), _PHASES)
+    assert boundary.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert boundary.reason == "after the curated window"
+
+
+@pytest.mark.parametrize(
+    "phases",
+    [
+        pytest.param(None, id="vocabulary-absent"),
+        pytest.param(
+            CardiacPhaseFile(attributed_to="x", citation="PMID:1", phases=[]),
+            id="vocabulary-empty",
+        ),
+    ],
+)
+def test_an_absent_or_empty_phase_vocabulary_reads_as_outside_the_window(
+    phases: CardiacPhaseFile | None,
+) -> None:
+    """The committed `curation/cardiac_phases.yaml` IS the second case today
+    -- ships with zero phases, deliberately, until a source is verified -- so
+    this is the real corpus's own state, not a hypothetical.
+
+    Both parametrisations must be exercised, not just one: a fix that special
+    -cases `phases is None` but forgets `not phases.phases` (or the reverse)
+    passes half of this and fails the other. Both would otherwise index into
+    `phases.phases` for the before/after boundary comparison, which raises
+    `IndexError` on an empty sequence -- so this also proves the guard
+    against that crash.
+    """
+    result = assign_phase("7wpc", _STAGES, phases)
+    assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert result.reason == "outside the curated window"
+    assert result.phase_id is None
+
+
+def test_an_interior_gap_is_outside_the_window_not_an_empty_vocabulary() -> None:
+    """Distinguishes 'nothing curated at all' from 'something is curated, and
+    this wpc simply is not in it' -- the two cases the test above and this one
+    must not share a fixture over, per the recorded fixture-size lesson: a
+    fixture whose values all share the quantity under test measures nothing.
+    `phases` here is genuinely populated, so a fix that only special-cases an
+    empty list must still find the right answer by searching it.
+    """
+    gapped = CardiacPhaseFile(
+        attributed_to="O'Rahilly & Muller 1987",
+        citation="ISBN:0872796248",
+        phases=[
+            CardiacPhase(id="looping", label="Cardiac looping", start_wpc=3.0, end_wpc=5.0),
+            CardiacPhase(id="septation", label="Septation", start_wpc=6.0, end_wpc=8.0),
+        ],
+    )
+    result = assign_phase("7wpc", (Stage(token="7wpc", wpc=5.5),), gapped)
+    assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert result.reason == "outside the curated window"
