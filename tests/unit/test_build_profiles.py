@@ -32,11 +32,12 @@ from chd_atlas.build.profiles import (
     assign_phase,
     band,
     build_profile_quantiles,
+    gene_expression_profiles,
     percentile_of,
     placement,
     specificity,
 )
-from chd_atlas.models.dataset import Stage
+from chd_atlas.models.dataset import Dataset, Stage
 from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile
 
 # 101 breakpoints, percentile i at index i. Hand-built so the expected answers
@@ -684,3 +685,592 @@ def test_an_unreadable_shard_does_not_stop_the_others(tmp_path: Path) -> None:
     assert list(shards) == ["E-MTAB-0000002"]
     assert (tmp_path / "omics" / "profile_quantiles" / "E-MTAB-0000002.json").is_file()
     assert not (tmp_path / "omics" / "profile_quantiles" / "E-MTAB-0000001.json").exists()
+
+
+# --- gene_expression_profiles: the per-gene assembly (Task 13) -------------
+#
+# Four recorded recurrences in this project of a fixture whose rows all share
+# the value under test, so the mutant it was meant to catch survives. This
+# section is built to distinguish, in the sense of separate, dedicated rows
+# rather than one fixture asserted on twice: a gene below the detection floor
+# from one above it; a gene sampled in one organ from one sampled in several;
+# a gene whose argmax is the heart from one whose argmax is not; n_tissues
+# from a hardcoded literal (two different panel sizes); a null-stage row from
+# a declared-stage row; a gene with no profile data at all.
+
+_ASCENDING_GRID = tuple(float(percentile) for percentile in range(101))
+
+
+def _profile_row(
+    gene: str = "HGNC:11604",
+    tissue: str = "Heart",
+    stage: str | None = "7wpc",
+    median: float = 50.0,
+    unit: str = "rpkm",
+    q25: float | None = 40.0,
+    q75: float | None = 60.0,
+    n_samples: int = 3,
+) -> dict[str, object]:
+    return {
+        "gene": gene,
+        "tissue": tissue,
+        "stage": stage,
+        "median_abundance": median,
+        "unit": unit,
+        "q25": q25,
+        "q75": q75,
+        "n_samples": n_samples,
+    }
+
+
+def _tsv_cell(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+def _write_profiles(
+    root: Path, dataset: str, rows: list[dict[str, object]], *, filename: str | None = None
+) -> None:
+    """Write one `profiles` shard, naming the file `{dataset}.tsv` by default.
+
+    `filename` decouples the shard's name from the `dataset` *column* value it
+    writes: `mirror_paths` sorts shards by filename, so a fixture that always
+    lets filename and column agree can never tell "sorted by dataset id" from
+    "left in the order `mirror_paths` read the files" -- the two coincide by
+    construction whenever the accession names the file that carries it, which
+    is the ordinary case this atlas curates but not one this test may lean on.
+    """
+    directory = root / "mirrors" / "profiles"
+    directory.mkdir(parents=True, exist_ok=True)
+    header = "dataset\tgene\ttissue\tstage\tmedian_abundance\tunit\tq25\tq75\tn_samples\n"
+    body = "".join(
+        "\t".join(
+            _tsv_cell(value)
+            for value in (
+                dataset,
+                row["gene"],
+                row["tissue"],
+                row["stage"],
+                row["median_abundance"],
+                row["unit"],
+                row["q25"],
+                row["q75"],
+                row["n_samples"],
+            )
+        )
+        + "\n"
+        for row in rows
+    )
+    (directory / f"{filename or dataset}.tsv").write_text(header + body)
+
+
+def _write_quantiles(
+    root: Path,
+    dataset: str,
+    grids: dict[tuple[str, str], tuple[float, ...]],
+    *,
+    unit: str = "rpkm",
+    n_genes: int = 100,
+    filename: str | None = None,
+) -> None:
+    """One shard holding every (tissue, stage) grid supplied, each 101 rows.
+
+    A single `.write_text` per dataset: `_write_quantiles` called twice for
+    one dataset would overwrite rather than accumulate, so every grid a test
+    needs for one dataset is passed in one call. `filename` -- see
+    `_write_profiles`'s docstring for why a fixture needs it decoupled.
+    """
+    directory = root / "mirrors" / "profile_quantiles"
+    directory.mkdir(parents=True, exist_ok=True)
+    header = "dataset\ttissue\tstage\tpercentile\tvalue\tunit\tn_genes\n"
+    body = "".join(
+        f"{dataset}\t{tissue}\t{stage}\t{percentile}\t{value}\t{unit}\t{n_genes}\n"
+        for (tissue, stage), values in grids.items()
+        for percentile, value in enumerate(values)
+    )
+    (directory / f"{filename or dataset}.tsv").write_text(header + body)
+
+
+def _dataset(
+    accession: str = "E-MTAB-6814",
+    *,
+    detection_floor: float = 1.0,
+    cardiac_tissues: tuple[str, ...] = ("Heart",),
+    stages: tuple[Stage, ...] = (Stage(token="7wpc", wpc=7.0),),
+) -> Dataset:
+    return Dataset(
+        id=accession,
+        archive="arrayexpress",
+        technology="bulk_rnaseq",
+        design="profile",
+        tissue="whole embryo",
+        developmental_stage="embryonic",
+        organism="NCBITaxon:9606",
+        n_samples=3,
+        licence="CC BY 4.0",
+        contrasts=[],
+        cardiac_tissues=cardiac_tissues,
+        detection_floor=detection_floor,
+        floor_source="source methods, section 4",
+        quantile_estimator="linear",
+        stages=stages,
+    )
+
+
+def _contrast_dataset(accession: str) -> Dataset:
+    """A registered dataset with no declared floor.
+
+    `a_profile_dataset_is_fully_declared` refuses to load a `design="profile"`
+    dataset with no floor, so the only way to construct a *registered*
+    dataset with `detection_floor is None` is one of a different design --
+    standing in for a curator's typo pointing a profiles row at the wrong
+    accession, which `validate_profile_references`'s own docstring names as
+    out of scope for that validator (`_prf004_issues`: "a profiles row naming
+    a dataset with no curated record at all is out of scope for this check").
+    """
+    return Dataset(
+        id=accession,
+        archive="geo",
+        technology="bulk_rnaseq",
+        design="contrast",
+        tissue="Heart",
+        developmental_stage="adult",
+        organism="NCBITaxon:9606",
+        n_samples=6,
+        licence="CC BY 4.0",
+        contrasts=[
+            {
+                "id": "c1",
+                "description": "d",
+                "case_group": "case",
+                "control_group": "control",
+                "statistical_method": "m",
+                "software": "s",
+            }
+        ],
+    )
+
+
+def test_a_gene_with_no_rows_in_any_mirror_has_no_entry(tmp_path: Path) -> None:
+    """The assembler reports what it read; `bundles.py` supplies the
+    always-present empty shape for a gene absent from this mapping.
+    """
+    _write_profiles(tmp_path, "E-MTAB-6814", [_profile_row(gene="HGNC:11604")])
+    _write_quantiles(tmp_path, "E-MTAB-6814", {("Heart", "7wpc"): _ASCENDING_GRID})
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    assert "HGNC:11604" in result
+    assert "HGNC:99999" not in result
+
+
+def test_a_gene_above_the_floor_is_placed_and_one_below_it_is_not(tmp_path: Path) -> None:
+    """D41's refusal must be reachable, which needs a fixture that separates
+    the two rather than asserting the same gene twice.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", median=50.0),  # well above floor=1.0
+            _profile_row(gene="HGNC:2", median=0.5),  # below floor=1.0, not zero
+        ],
+    )
+    _write_quantiles(tmp_path, "E-MTAB-6814", {("Heart", "7wpc"): _ASCENDING_GRID})
+
+    result = gene_expression_profiles(tmp_path, (_dataset(detection_floor=1.0),), None, {})
+
+    placed = result["HGNC:1"]["datasets"][0]["stages"][0]["tissues"][0]
+    unplaced = result["HGNC:2"]["datasets"][0]["stages"][0]["tissues"][0]
+    assert placed["placement"] is not None
+    assert placed["not_placed_reason"] is None
+    assert unplaced["placement"] is None
+    assert unplaced["not_placed_reason"] == "below_detection_floor"
+    # The raw measurement still publishes even when it is not placed -- an
+    # unplaced gene is not an absent one.
+    assert unplaced["median_abundance"] == 0.5
+    assert unplaced["unit"] == "rpkm"
+
+
+def test_a_gene_sampled_in_one_organ_gets_no_specificity_and_one_in_several_does(
+    tmp_path: Path,
+) -> None:
+    """Tau's `None` refusal at n<2 organs must be reachable, not just asserted."""
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [_profile_row(gene="HGNC:1", tissue="Heart", median=50.0)]
+        + [
+            _profile_row(gene="HGNC:2", tissue=tissue, median=value)
+            for tissue, value in (("Heart", 50.0), ("Liver", 5.0), ("Brain", 5.0))
+        ],
+    )
+    _write_quantiles(
+        tmp_path,
+        "E-MTAB-6814",
+        {(tissue, "7wpc"): _ASCENDING_GRID for tissue in ("Heart", "Liver", "Brain")},
+    )
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    one_organ = result["HGNC:1"]["datasets"][0]["stages"][0]
+    several = result["HGNC:2"]["datasets"][0]["stages"][0]
+    assert one_organ["specificity"] is None
+    assert one_organ["specificity_unavailable_reason"] == "one_organ_sampled"
+    assert several["specificity"] is not None
+    assert several["specificity_unavailable_reason"] is None
+
+
+def test_the_argmax_organ_is_published_whether_or_not_it_is_the_heart(tmp_path: Path) -> None:
+    """Keying a gloss on the wrong organ (or a hardcoded one) must be
+    reachable to be caught -- two genes, one peaking in Heart and one in
+    Liver, never the same gene asserted on twice.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", tissue=tissue, median=value)
+            for tissue, value in (("Heart", 100.0), ("Liver", 10.0), ("Brain", 10.0))
+        ]
+        + [
+            _profile_row(gene="HGNC:2", tissue=tissue, median=value)
+            for tissue, value in (("Heart", 10.0), ("Liver", 200.0), ("Brain", 5.0))
+        ],
+    )
+    _write_quantiles(
+        tmp_path,
+        "E-MTAB-6814",
+        {(tissue, "7wpc"): _ASCENDING_GRID for tissue in ("Heart", "Liver", "Brain")},
+    )
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    heart_peak = result["HGNC:1"]["datasets"][0]["stages"][0]["specificity"]
+    liver_peak = result["HGNC:2"]["datasets"][0]["stages"][0]["specificity"]
+    assert heart_peak is not None and heart_peak["highest_in"] == "Heart"
+    assert liver_peak is not None and liver_peak["highest_in"] == "Liver"
+
+
+def test_n_tissues_reflects_the_real_panel_size_not_a_hardcoded_literal(tmp_path: Path) -> None:
+    """Two different panel sizes, so a hardcoded `n_tissues` cannot survive both."""
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [_profile_row(gene="HGNC:1", tissue=tissue, median=10.0) for tissue in ("Heart", "Liver")]
+        + [
+            _profile_row(gene="HGNC:2", tissue=tissue, median=10.0)
+            for tissue in ("Heart", "Liver", "Brain", "Kidney", "Ovary")
+        ],
+    )
+    _write_quantiles(
+        tmp_path,
+        "E-MTAB-6814",
+        {
+            (tissue, "7wpc"): _ASCENDING_GRID
+            for tissue in ("Heart", "Liver", "Brain", "Kidney", "Ovary")
+        },
+    )
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    small = result["HGNC:1"]["datasets"][0]["stages"][0]["specificity"]
+    large = result["HGNC:2"]["datasets"][0]["stages"][0]["specificity"]
+    assert small is not None and small["n_tissues"] == 2
+    assert large is not None and large["n_tissues"] == 5
+
+
+def test_a_null_stage_row_publishes_with_a_stated_reason_not_a_dropped_row(
+    tmp_path: Path,
+) -> None:
+    """A null-stage row can have no quantile partner by construction
+    (`profile_quantiles.stage` is never null). The join keeps the row; only
+    the PRF002 curation check is what skips it -- this is that same design
+    fact, reached from the assembly side.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", tissue="Heart", stage=None, median=50.0),
+            _profile_row(gene="HGNC:1", tissue="Heart", stage="7wpc", median=50.0),
+        ],
+    )
+    _write_quantiles(tmp_path, "E-MTAB-6814", {("Heart", "7wpc"): _ASCENDING_GRID})
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    stages = {entry["stage"]: entry for entry in result["HGNC:1"]["datasets"][0]["stages"]}
+    assert set(stages) == {None, "7wpc"}  # the null-stage row is NOT dropped
+
+    null_stage_tissue = stages[None]["tissues"][0]
+    assert null_stage_tissue["placement"] is None
+    assert null_stage_tissue["not_placed_reason"] == "no_quantile_grid"
+    # The raw measurement is still published even with no percentile.
+    assert null_stage_tissue["median_abundance"] == 50.0
+
+    declared_stage_tissue = stages["7wpc"]["tissues"][0]
+    assert declared_stage_tissue["placement"] is not None
+
+    # A null stage has no token to place in the developmental window at all --
+    # distinct from `PhaseOutcome.UNDECLARED`, which means a real token the
+    # dataset simply never declared.
+    assert stages[None]["phase"] == {
+        "outcome": None,
+        "phase_id": None,
+        "reason": "no developmental stage recorded for this measurement",
+    }
+
+
+def test_a_dataset_absent_from_the_curated_registry_still_publishes_its_rows(
+    tmp_path: Path,
+) -> None:
+    """Must not crash, must not silently vanish -- `_prf004_issues`'s own
+    docstring says an unregistered dataset accession is out of scope for
+    `validate_profile_references`, so this is reachable on a validated
+    repository, not only on a bypassed gate.
+    """
+    _write_profiles(tmp_path, "E-MTAB-9999", [_profile_row(gene="HGNC:1", median=50.0)])
+    _write_quantiles(tmp_path, "E-MTAB-9999", {("Heart", "7wpc"): _ASCENDING_GRID})
+
+    result = gene_expression_profiles(tmp_path, (), None, {})  # no Dataset record at all
+
+    stage = result["HGNC:1"]["datasets"][0]["stages"][0]
+    tissue = stage["tissues"][0]
+    assert tissue["placement"] is None
+    assert tissue["not_placed_reason"] == "dataset_not_registered"
+    assert stage["specificity_unavailable_reason"] == "dataset_not_registered"
+    # The phase can still be asked about the token with no dataset record at
+    # all, and correctly finds nothing declared.
+    assert stage["phase"]["outcome"] == "undeclared"
+
+
+def test_a_registered_dataset_with_no_declared_floor_still_publishes_its_rows(
+    tmp_path: Path,
+) -> None:
+    """A `design="contrast"` dataset naturally has `detection_floor=None` --
+    pydantic refuses a `design="profile"` dataset with no floor, so this is
+    the only way to construct a *registered* dataset this gap can reach --
+    standing in for a curator's typo referencing the wrong accession.
+    """
+    _write_profiles(tmp_path, "GSE1000", [_profile_row(gene="HGNC:1", median=50.0)])
+    _write_quantiles(tmp_path, "GSE1000", {("Heart", "7wpc"): _ASCENDING_GRID})
+
+    result = gene_expression_profiles(tmp_path, (_contrast_dataset("GSE1000"),), None, {})
+
+    tissue = result["HGNC:1"]["datasets"][0]["stages"][0]["tissues"][0]
+    assert tissue["not_placed_reason"] == "detection_floor_undeclared"
+
+
+def test_an_incomplete_quantile_grid_is_treated_as_unavailable(tmp_path: Path) -> None:
+    """`percentile_of` assumes position i holds percentile i's own value
+    (Task 9's docstring); a grid missing even one index would silently
+    misplace a gene rather than merely cost one point of precision, and no
+    PRF check pins grid *completeness* today -- PRF001-009 check units, cell
+    presence and monotonicity, never the count of rows in one cell.
+    """
+    _write_profiles(tmp_path, "E-MTAB-6814", [_profile_row(gene="HGNC:1", median=50.0)])
+    directory = tmp_path / "mirrors" / "profile_quantiles"
+    directory.mkdir(parents=True)
+    header = "dataset\ttissue\tstage\tpercentile\tvalue\tunit\tn_genes\n"
+    # Percentile 50 is missing from an otherwise complete grid.
+    rows = "".join(
+        f"E-MTAB-6814\tHeart\t7wpc\t{percentile}\t{float(percentile)}\trpkm\t100\n"
+        for percentile in range(101)
+        if percentile != 50
+    )
+    (directory / "E-MTAB-6814.tsv").write_text(header + rows)
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    tissue = result["HGNC:1"]["datasets"][0]["stages"][0]["tissues"][0]
+    assert tissue["placement"] is None
+    assert tissue["not_placed_reason"] == "no_quantile_grid"
+
+
+def test_placement_carries_the_grids_own_n_genes(tmp_path: Path) -> None:
+    """`n_genes` must come from the grid actually read, not a hardcoded
+    literal shared with every other test in this file.
+    """
+    _write_profiles(tmp_path, "E-MTAB-6814", [_profile_row(gene="HGNC:1", median=50.0)])
+    _write_quantiles(tmp_path, "E-MTAB-6814", {("Heart", "7wpc"): _ASCENDING_GRID}, n_genes=19842)
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    placed = result["HGNC:1"]["datasets"][0]["stages"][0]["tissues"][0]["placement"]
+    assert placed is not None
+    assert placed["n_genes"] == 19842
+
+
+def test_the_dataset_entry_carries_its_own_quantile_shard_link(tmp_path: Path) -> None:
+    """`build_profile_quantiles`'s own return threads through unchanged, so a
+    consumer reaches the grid its percentile came from without a second call
+    to `slug` that could drift from the one that wrote the file.
+    """
+    _write_profiles(tmp_path, "E-MTAB-6814", [_profile_row(gene="HGNC:1")])
+    _write_quantiles(tmp_path, "E-MTAB-6814", {("Heart", "7wpc"): _ASCENDING_GRID})
+
+    linked = gene_expression_profiles(
+        tmp_path,
+        (_dataset(),),
+        None,
+        {"E-MTAB-6814": "omics/profile_quantiles/E-MTAB-6814.json"},
+    )
+    unlinked = gene_expression_profiles(tmp_path, (_dataset(),), None, {})
+
+    assert (
+        linked["HGNC:1"]["datasets"][0]["quantile_shard"]
+        == "omics/profile_quantiles/E-MTAB-6814.json"
+    )
+    assert unlinked["HGNC:1"]["datasets"][0]["quantile_shard"] is None
+
+
+def test_a_real_stage_resolves_its_phase_through_the_datasets_own_wpc_mapping(
+    tmp_path: Path,
+) -> None:
+    """Wires `assign_phase` against a populated vocabulary, not only the
+    placeholder empty one every other test in this section uses.
+    """
+    _write_profiles(tmp_path, "E-MTAB-6814", [_profile_row(gene="HGNC:1", stage="7wpc")])
+    _write_quantiles(tmp_path, "E-MTAB-6814", {("Heart", "7wpc"): _ASCENDING_GRID})
+    phases = CardiacPhaseFile(
+        attributed_to="O'Rahilly & Muller 1987",
+        citation="ISBN:0872796248",
+        phases=[CardiacPhase(id="septation", label="Septation", start_wpc=5.0, end_wpc=8.0)],
+    )
+
+    result = gene_expression_profiles(tmp_path, (_dataset(),), phases, {})
+
+    phase = result["HGNC:1"]["datasets"][0]["stages"][0]["phase"]
+    assert phase == {"outcome": "matched", "phase_id": "septation", "reason": None}
+
+
+def test_tau_is_computed_per_stage_not_merged_across_stages(tmp_path: Path) -> None:
+    """A mutation that grouped tau's inputs by tissue instead of by stage
+    would either collapse the two stages into one bucket per tissue name or
+    mix one stage's organs with another's -- either way, the two stages'
+    specificities could not independently reproduce what an outside call to
+    `specificity()` gives the same per-stage medians.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", tissue="Heart", stage="s1", median=100.0),
+            _profile_row(gene="HGNC:1", tissue="Liver", stage="s1", median=10.0),
+            _profile_row(gene="HGNC:1", tissue="Brain", stage="s1", median=10.0),
+            _profile_row(gene="HGNC:1", tissue="Heart", stage="s2", median=10.0),
+            _profile_row(gene="HGNC:1", tissue="Liver", stage="s2", median=10.0),
+            _profile_row(gene="HGNC:1", tissue="Brain", stage="s2", median=100.0),
+        ],
+    )
+    _write_quantiles(
+        tmp_path,
+        "E-MTAB-6814",
+        {
+            ("Heart", "s1"): _ASCENDING_GRID,
+            ("Liver", "s1"): _ASCENDING_GRID,
+            ("Brain", "s1"): _ASCENDING_GRID,
+            ("Heart", "s2"): _ASCENDING_GRID,
+            ("Liver", "s2"): _ASCENDING_GRID,
+            ("Brain", "s2"): _ASCENDING_GRID,
+        },
+    )
+    dataset = _dataset(
+        stages=(Stage(token="s1", wpc=1.0), Stage(token="s2", wpc=2.0)),
+    )
+
+    result = gene_expression_profiles(tmp_path, (dataset,), None, {})
+
+    stages = {entry["stage"]: entry for entry in result["HGNC:1"]["datasets"][0]["stages"]}
+    s1, s2 = stages["s1"]["specificity"], stages["s2"]["specificity"]
+    assert s1 is not None and s2 is not None
+    assert s1["highest_in"] == "Heart"
+    assert s2["highest_in"] == "Brain"
+    # Independently re-derived from the same per-stage medians, using the
+    # already-tested `specificity()` directly -- not a magic literal.
+    assert s1 == specificity({"Heart": 100.0, "Liver": 10.0, "Brain": 10.0}, floor=1.0)
+    assert s2 == specificity({"Heart": 10.0, "Liver": 10.0, "Brain": 100.0}, floor=1.0)
+
+
+def test_datasets_stages_and_tissues_are_all_sorted(tmp_path: Path) -> None:
+    """A dropped sort anywhere in the nesting must be visible.
+
+    Every dataset id, stage token and tissue name below is written to disk
+    out of its eventual sort order, matching this project's own precedent
+    (`_SHUFFLED_PERCENTILES` above) for why a pre-sorted fixture cannot catch
+    a builder that merely preserves encounter order.
+    """
+    # `E-ZZZZ-9`/`E-AAAA-1`, not literal "Z-LATER"/"A-EARLIER": `Dataset.id` is
+    # an `AccessionId`, pattern-checked against ArrayExpress's own grammar.
+    #
+    # The shard *filenames* are deliberately the reverse of the dataset ids'
+    # own alphabetical order: `mirror_paths` sorts shards by filename, so a
+    # fixture that lets a dataset's filename and its `dataset` column agree
+    # (the ordinary case, and every other fixture in this file) can never
+    # distinguish "sorted by dataset id" from "left in the order the mirror
+    # was read" -- the two always coincide when the id names the file. Naming
+    # the file that carries "E-ZZZZ-9" `aaa-reads-first.tsv` and the file
+    # carrying "E-AAAA-1" `zzz-reads-second.tsv` makes read order and sorted
+    # order disagree, so a dropped `sorted(by_dataset)` publishes
+    # ["E-ZZZZ-9", "E-AAAA-1"] instead of the correct
+    # ["E-AAAA-1", "E-ZZZZ-9"].
+    _write_profiles(
+        tmp_path,
+        "E-ZZZZ-9",
+        [_profile_row(gene="HGNC:1", tissue="Zebra", stage="s1")],
+        filename="aaa-reads-first",
+    )
+    _write_profiles(
+        tmp_path,
+        "E-AAAA-1",
+        [
+            _profile_row(gene="HGNC:1", tissue="Zebra", stage="s3"),
+            _profile_row(gene="HGNC:1", tissue="Alpha", stage="s3"),
+            _profile_row(gene="HGNC:1", tissue="Zebra", stage="s1"),
+            _profile_row(gene="HGNC:1", tissue="Zebra", stage="s2"),
+        ],
+        filename="zzz-reads-second",
+    )
+    _write_quantiles(
+        tmp_path,
+        "E-ZZZZ-9",
+        {("Zebra", "s1"): _ASCENDING_GRID},
+        filename="aaa-reads-first",
+    )
+    _write_quantiles(
+        tmp_path,
+        "E-AAAA-1",
+        {
+            ("Zebra", "s3"): _ASCENDING_GRID,
+            ("Alpha", "s3"): _ASCENDING_GRID,
+            ("Zebra", "s1"): _ASCENDING_GRID,
+            ("Zebra", "s2"): _ASCENDING_GRID,
+        },
+        filename="zzz-reads-second",
+    )
+
+    result = gene_expression_profiles(
+        tmp_path,
+        (
+            _dataset("E-ZZZZ-9", stages=(Stage(token="s1", wpc=1.0),)),
+            _dataset(
+                "E-AAAA-1",
+                stages=(
+                    Stage(token="s3", wpc=3.0),
+                    Stage(token="s1", wpc=1.0),
+                    Stage(token="s2", wpc=2.0),
+                ),
+            ),
+        ),
+        None,
+        {},
+    )
+
+    datasets = result["HGNC:1"]["datasets"]
+    assert [entry["dataset"] for entry in datasets] == ["E-AAAA-1", "E-ZZZZ-9"]
+
+    stages = datasets[0]["stages"]
+    assert [entry["stage"] for entry in stages] == ["s1", "s2", "s3"]
+
+    tissues = next(entry for entry in stages if entry["stage"] == "s3")["tissues"]
+    assert [entry["tissue"] for entry in tissues] == ["Alpha", "Zebra"]

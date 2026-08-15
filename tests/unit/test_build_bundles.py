@@ -146,6 +146,75 @@ def _no_burden() -> dict[str, Json]:
     return {gene: dict(_EMPTY_CONCORDANCE) for gene in SYMBOLS}
 
 
+def _placement(**overrides: object) -> dict[str, Any]:
+    """A `build.profiles.Placement`, hand-built the way `_summary` stands in
+    for a `ModalitySummary` -- `build_genes` treats `profiles` as an
+    already-assembled input, the same dependency-injection precedent `omics`
+    already follows in this file, so the assembly itself
+    (`build.profiles.gene_expression_profiles`) is exercised in
+    `test_build_profiles.py`, not here.
+    """
+    payload: dict[str, Any] = {
+        "q25_percentile": 40,
+        "median_percentile": 50,
+        "q75_percentile": 60,
+        "median_abundance": 12.5,
+        "unit": "rpkm",
+        "n_samples": 3,
+        "n_genes": 19842,
+        "method": "lowest percentile of a tied breakpoint (bisect_left)",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _specificity_payload(**overrides: object) -> dict[str, Any]:
+    """A `build.profiles.Specificity`, hand-built -- see `_placement`."""
+    payload: dict[str, Any] = {
+        "tau": 0.48,
+        "scale": "log2(x+1)",
+        "method": "tau (Yanai et al. 2005)",
+        "tissues": ["Brain", "Heart", "Liver"],
+        "n_tissues": 3,
+        "highest_in": "Heart",
+        "medians": {"Brain": 10.0, "Heart": 100.0, "Liver": 10.0},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _profile_payload(**overrides: object) -> dict[str, Any]:
+    """A `build.profiles.ExpressionProfile`, hand-built -- see `_placement`."""
+    payload: dict[str, Any] = {
+        "datasets": [
+            {
+                "dataset": "E-MTAB-6814",
+                "quantile_shard": "omics/profile_quantiles/E-MTAB-6814.json",
+                "stages": [
+                    {
+                        "stage": "7wpc",
+                        "phase": {"outcome": "matched", "phase_id": "septation", "reason": None},
+                        "specificity": _specificity_payload(),
+                        "specificity_unavailable_reason": None,
+                        "tissues": [
+                            {
+                                "tissue": "Heart",
+                                "median_abundance": 100.0,
+                                "unit": "rpkm",
+                                "n_samples": 3,
+                                "placement": _placement(median_abundance=100.0),
+                                "not_placed_reason": None,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _read(root: Path, relative: str) -> dict[str, Any]:
     """One emitted artifact, read back from the file that was written."""
     payload: dict[str, Any] = json.loads((root / relative).read_text())
@@ -190,6 +259,7 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert _entries(tmp_path) == [
@@ -266,6 +336,7 @@ def test_a_published_gene_the_atlas_has_not_curated_gets_a_row_and_a_bundle(
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     rows = _by_gene(tmp_path)
@@ -306,6 +377,7 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert set(_read(tmp_path, "genes/HGNC_11604.json")) == {
@@ -329,6 +401,7 @@ def test_a_bundle_carries_the_whole_gene_page_and_nothing_more(tmp_path: Path) -
         "variants",
         "omics",
         "burden",
+        "expression_profile",
     }
 
 
@@ -354,6 +427,7 @@ def test_a_gene_with_no_mirrored_validity_publishes_the_uncurated_shape(
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["validity"] == {
@@ -400,6 +474,7 @@ def test_every_validity_record_carries_the_same_key_set_regardless_of_source(
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
@@ -443,6 +518,7 @@ def test_the_bundle_does_not_resort_the_records_validity_py_already_ordered(
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     records = _read(tmp_path, "genes/HGNC_11604.json")["validity"]["records"]
@@ -476,6 +552,7 @@ def test_every_bundle_path_the_index_advertises_was_written(tmp_path: Path) -> N
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     advertised = [str(entry["bundle"]) for entry in _entries(tmp_path)]
@@ -538,6 +615,7 @@ def test_a_contested_gene_is_flagged_in_both_the_index_and_the_bundle(
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     entries = _by_gene(tmp_path)
@@ -595,6 +673,7 @@ def test_confidence_is_broken_down_by_lesion_group(tmp_path: Path) -> None:
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     entry = _entries(tmp_path)[0]
@@ -636,6 +715,7 @@ def test_evidence_counts_are_carried_per_evidence_class(tmp_path: Path) -> None:
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert _entries(tmp_path)[0]["evidence_counts"] == {"functional_model": 1, "genetic_case": 2}
@@ -677,6 +757,7 @@ def test_the_browse_counts_match_the_bundle_they_link_to(tmp_path: Path) -> None
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     counted = {
@@ -724,6 +805,7 @@ def test_a_gene_absent_from_the_registry_keeps_its_hgnc_id_as_its_label(
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     entries = _by_gene(tmp_path)
@@ -746,6 +828,7 @@ def test_a_bundle_carries_its_assertions_in_full(tmp_path: Path) -> None:
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -793,6 +876,7 @@ def test_a_bundle_carries_every_functional_record_about_the_gene(tmp_path: Path)
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -827,6 +911,7 @@ def test_a_bundle_carries_the_omics_summaries_verbatim(tmp_path: Path) -> None:
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["omics"] == {
@@ -858,6 +943,7 @@ def test_a_bundle_embeds_its_variants_rather_than_linking_them(tmp_path: Path) -
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -879,11 +965,100 @@ def test_a_gene_with_no_omics_or_variants_gets_empty_containers(tmp_path: Path) 
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
     assert bundle["omics"] == {}
     assert bundle["variants"] == []
+
+
+def test_a_gene_with_no_profile_data_still_carries_the_key(tmp_path: Path) -> None:
+    """The rule `bundles.py` already states for `omics` and `burden`.
+
+    An absent key would make "no study reported this" indistinguishable from
+    "the build dropped it".
+    """
+    emitter = Emitter(root=tmp_path)
+
+    build_genes(
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
+        concordance=_no_burden(),
+        profiles={},
+    )
+
+    bundle = _read(tmp_path, "genes/HGNC_11604.json")
+    assert "expression_profile" in bundle
+    assert bundle["expression_profile"] == {"datasets": []}
+
+
+def test_the_bundle_carries_the_medians_tau_was_computed_from(tmp_path: Path) -> None:
+    """D39(b): tau's inputs must be reachable from the payload publishing tau.
+
+    The omics slice is truncated (`omics.select_top`), so the per-organ
+    values cannot be recovered from `top` in general.
+    """
+    emitter = Emitter(root=tmp_path)
+    profile = _profile_payload()
+
+    build_genes(
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},
+        burden={},
+        concordance=_no_burden(),
+        profiles={TBX5: profile},
+    )
+
+    bundle = _read(tmp_path, "genes/HGNC_11604.json")
+    specificity = bundle["expression_profile"]["datasets"][0]["stages"][0]["specificity"]
+    assert set(specificity["medians"]) == set(specificity["tissues"])
+    assert specificity["n_tissues"] == len(specificity["medians"])
+    # The whole payload is carried verbatim, not rebuilt field by field --
+    # the same guarantee `test_a_bundle_carries_the_omics_summaries_verbatim`
+    # pins for `omics`, and for the same reason: a rebuild drops a field
+    # silently, while a passthrough fails loudly the moment the shapes stop
+    # matching.
+    assert bundle["expression_profile"] == profile
+
+
+def test_a_merely_registered_genes_profile_facts_never_reach_a_bundle(tmp_path: Path) -> None:
+    """`profiles` may carry more genes than `published` -- the same
+    registry-vs-published asymmetry `mirrors/genes.tsv` already has (154
+    registered, 92 published). `gene_expression_profiles` takes no
+    `published` argument at all, so filtering happens exactly once, here, by
+    the same iteration over `published` that already restricts `omics` and
+    `variants`.
+    """
+    emitter = Emitter(root=tmp_path)
+    profile = _profile_payload()
+
+    build_genes(
+        _corpus(),
+        emitter,
+        symbols=SYMBOLS,
+        omics={},
+        variants={},
+        validity={},
+        published={TBX5},  # GATA4 is in `profiles` below but NOT published
+        burden={},
+        concordance=_no_burden(),
+        profiles={TBX5: profile, GATA4: _profile_payload()},
+    )
+
+    assert not (tmp_path / "genes" / "HGNC_4173.json").exists()
+    assert _read(tmp_path, "genes/HGNC_11604.json")["expression_profile"] == profile
 
 
 def test_a_bundle_holds_only_its_own_genes_evidence(tmp_path: Path) -> None:
@@ -917,6 +1092,7 @@ def test_a_bundle_holds_only_its_own_genes_evidence(tmp_path: Path) -> None:
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_4173.json")
@@ -960,6 +1136,7 @@ def test_the_index_is_ordered_by_hgnc_id_rather_than_by_symbol(tmp_path: Path) -
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5, GATA4]
@@ -998,6 +1175,7 @@ def test_bundle_assertions_and_functional_records_are_ordered_by_id(tmp_path: Pa
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -1048,6 +1226,7 @@ def test_a_bundle_lists_the_publications_its_evidence_cites(tmp_path: Path) -> N
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert _read(tmp_path, "genes/HGNC_11604.json")["publications"] == [
@@ -1105,6 +1284,7 @@ def test_a_gene_with_evidence_but_outside_the_published_set_is_not_published(
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert [entry["gene"] for entry in _entries(tmp_path)] == [TBX5]
@@ -1141,6 +1321,7 @@ def test_a_bundle_that_cannot_be_written_leaves_no_index_at_all(tmp_path: Path) 
             published={TBX5},
             burden={},
             concordance=_no_burden(),
+            profiles={},
         )
 
     assert not (tmp_path / "genes" / "index.json").exists()
@@ -1166,6 +1347,7 @@ def test_the_index_is_emitted_for_an_empty_corpus(tmp_path: Path) -> None:
         published=set(),
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     assert _read(tmp_path, "genes/index.json") == {"genes": []}
@@ -1227,6 +1409,7 @@ def test_a_contested_gene_names_every_declared_lesion_group_as_conflicting(
         published={TBX5},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     entry = _entries(tmp_path)[0]
@@ -1285,6 +1468,7 @@ def test_the_conflicting_groups_are_a_subset_of_the_groups_that_carry_confidence
         published={TBX5, GATA4},
         burden={},
         concordance=_no_burden(),
+        profiles={},
     )
 
     for entry in _entries(tmp_path):
@@ -1360,6 +1544,7 @@ def test_the_bundle_carries_a_genes_burden_rows_and_the_browse_row_counts_them(
             **_no_burden(),
             TBX5: gene_concordance(rows, cohort_families(rows)),
         },
+        profiles={},
     )
 
     bundle = _read(tmp_path, "genes/HGNC_11604.json")
@@ -1408,4 +1593,5 @@ def test_a_published_gene_with_no_concordance_derived_fails_loudly(tmp_path: Pat
             published={TBX5},
             burden={},
             concordance={},
+            profiles={},
         )

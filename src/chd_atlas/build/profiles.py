@@ -14,11 +14,24 @@ are not, because D32 forbids publishing the matrix they came from. Stated as a
 trade rather than claimed as a proof.
 
 This module carries the percentile band (Task 9), tau (Task 10), phase
-assignment (Task 11) and quantile shard emission (Task 12). Task 12 is the
-other half of D39(b)'s bargain: Task 9's percentile is re-derivable only if
-the breakpoints it was read against are themselves fetchable, and
-`build_omics` never emits this table -- it skips every schema absent from its
-own `_GENE_COLUMN`, and a quantile grid has no gene column at all.
+assignment (Task 11), quantile shard emission (Task 12) and the per-gene
+assembly that reads both mirrors and turns them into one `ExpressionProfile`
+per gene (Task 13). Task 12 is the other half of D39(b)'s bargain: Task 9's
+percentile is re-derivable only if the breakpoints it was read against are
+themselves fetchable, and `build_omics` never emits this table -- it skips
+every schema absent from its own `_GENE_COLUMN`, and a quantile grid has no
+gene column at all.
+
+Task 13's join is deliberately a LEFT join on (dataset, tissue, stage), never
+an inner one. `profiles.stage` is nullable and `profile_quantiles.stage` is
+not (see `tables.py`'s own comment on that column), so a null-stage row can
+never have a quantile partner *by construction* -- an inner join drops it
+silently (measured: two rows in, one out, no error), while a left join keeps
+it and states why it carries no percentile. `ProfileGap` is that stated
+reason, published as a slug rather than a rendered sentence: the exact wording
+a reader sees is `build/pages.py`'s job (a later task), and baking English
+prose into this payload would make the atlas author phrasing here that a page
+might need to phrase two different ways.
 """
 
 from __future__ import annotations
@@ -29,11 +42,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, TypedDict
+from typing import Any, Final, TypedDict
 
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import slug
-from chd_atlas.models.dataset import Stage
+from chd_atlas.models.dataset import Dataset, Stage
 from chd_atlas.models.phases import CardiacPhaseFile
 from chd_atlas.tables import TABLE_SCHEMAS, mirror_paths, read_table
 
@@ -488,14 +501,15 @@ def build_profile_quantiles(root: Path, emitter: Emitter) -> dict[str, str]:
     order, though (unlike row order within one file) that has no bearing on
     any file's *content*.
 
-    Returns `{dataset accession: relative shard path}`. Not yet read by any
-    caller: Task 13 is what threads a gene's `expression_profile` bundle key
-    to the grid its percentile came from, the way `ModalitySummary.shards`
-    lets a gene bundle reach an omics shard today. Returning the exact path
-    this function wrote -- rather than leaving Task 13 to reconstruct it via
-    a second call to `slug` -- is what keeps that link from becoming a second
-    computation that could drift from the first, the same discipline
-    `omics.py`'s own module docstring states for `count`.
+    Returns `{dataset accession: relative shard path}`. Read by
+    `gene_expression_profiles` below, which threads a gene's
+    `expression_profile` bundle key to the grid its percentile came from, the
+    way `ModalitySummary.shards` lets a gene bundle reach an omics shard
+    today. Returning the exact path this function wrote -- rather than
+    leaving the caller to reconstruct it via a second call to `slug` -- is
+    what keeps that link from becoming a second computation that could drift
+    from the first, the same discipline `omics.py`'s own module docstring
+    states for `count`.
     """
     shards: dict[str, str] = {}
     for path, schema_name in mirror_paths(root):
@@ -516,3 +530,478 @@ def build_profile_quantiles(root: Path, emitter: Emitter) -> dict[str, str]:
         emitter.write_json(relative, {"table": schema_name, "rows": rows})
         shards[accession] = relative
     return shards
+
+
+class ProfileGap(StrEnum):
+    """Why a derived expression figure (a percentile placement or tau) is absent.
+
+    One vocabulary shared between `TissueProfileEntry.not_placed_reason` and
+    `StageProfileEntry.specificity_unavailable_reason`, rather than two,
+    because the first two members mean exactly the same fact in both places
+    -- the dataset itself carries no floor to gate on -- and a reader
+    comparing the two fields on one page should not have to learn two
+    spellings of one fact. Published as a slug rather than a sentence; see
+    the module docstring for why the wording itself is not this module's job.
+    """
+
+    DATASET_NOT_REGISTERED = "dataset_not_registered"
+    """The `profiles.tsv` row names a dataset accession with no `Dataset`
+    record in `corpus.datasets` at all. Reachable on a validated repository,
+    not only a bypassed gate: `validate_profile_references`'s own
+    `_prf004_issues` docstring states this is "out of scope for this check"
+    -- there is no PRF code for it."""
+
+    FLOOR_UNDECLARED = "detection_floor_undeclared"
+    """The dataset record exists but `detection_floor` is `None`. Unreachable
+    for a `design="profile"` dataset in a corpus that passed pydantic
+    validation (`Dataset.a_profile_dataset_is_fully_declared` refuses to load
+    one with no floor) -- reachable for a `design="contrast"` record, whose
+    floor is optional and defaults to `None`, referenced by a `profiles.tsv`
+    row naming the wrong accession. Guarded anyway, per this project's stance
+    against trusting "the gate already checked this" to stay true forever."""
+
+    NO_QUANTILE_GRID = "no_quantile_grid"
+    """No complete 101-point breakpoint grid exists for this
+    (dataset, tissue, stage) cell -- includes every null-stage row, which can
+    never have one by construction, and a grid PRF003 would have flagged as
+    non-monotone had validation run over one that is merely incomplete
+    (PRF003 checks direction, not completeness). Not to be confused with
+    `BELOW_DETECTION_FLOOR` below, which requires a grid to exist at all."""
+
+    BELOW_DETECTION_FLOOR = "below_detection_floor"
+    """A grid and a floor both exist; `placement()` itself refused (D41):
+    the median is below the dataset's own detection floor."""
+
+    ONE_ORGAN_SAMPLED = "one_organ_sampled"
+    """Tau is undefined at n<2 organs (the denominator is n-1)."""
+
+    PEAK_BELOW_DETECTION_FLOOR = "peak_below_detection_floor"
+    """Tau is undefined when every sampled organ's median is below the floor
+    (the normaliser is the peak)."""
+
+    UNDEFINED = "undefined"
+    """`specificity()` refused for a reason neither of the two checks above
+    predicts -- reachable only for a degenerate floor `<= 0` whose peak is
+    exactly `0.0` (`specificity`'s own docstring and
+    `test_a_degenerate_zero_floor_refuses_rather_than_dividing_by_zero`),
+    where `peak_raw < floor` does not fire but the internal log-transform
+    normaliser does. Kept as a residual rather than asserting a specific
+    cause this module has not actually distinguished."""
+
+
+# Reason text for a stage with no token at all -- distinct from
+# `PhaseOutcome.UNDECLARED`, which names a real token the dataset's own record
+# does not declare. `assign_phase` requires a `str` token; a null-stage row
+# has none to offer it, so this is stated directly rather than manufactured by
+# calling `assign_phase("")` and hoping no dataset ever declares that token.
+_NO_STAGE_PHASE_REASON: Final = "no developmental stage recorded for this measurement"
+
+
+class TissueProfileEntry(TypedDict):
+    """One gene's raw measurement in one (dataset, tissue, stage) cell, and its
+    derived placement if one could be computed.
+
+    `median_abundance`/`unit`/`n_samples` are published here even though
+    `Placement` (when present) repeats them -- so a consumer reads one shape
+    for "what was measured" whether or not a percentile could be derived from
+    it. `not_placed_reason` is `None` exactly when `placement` is not,
+    matching the discipline `PhaseAssignment.reason` already keeps.
+    """
+
+    tissue: str
+    median_abundance: float
+    unit: str
+    n_samples: int
+    placement: Placement | None
+    not_placed_reason: str | None
+
+
+class PhaseInfo(TypedDict):
+    """Where one stage falls in the curated phase vocabulary, or why not.
+
+    `outcome` carries `PhaseOutcome.value` for a real, non-null stage token;
+    `None` exactly for a stage with no token at all (a null `profiles.stage`),
+    which is not one of `PhaseOutcome`'s four members because no token means
+    there was nothing to ask `assign_phase` about in the first place.
+    """
+
+    outcome: str | None
+    phase_id: str | None
+    reason: str | None
+
+
+class StageProfileEntry(TypedDict):
+    """One (dataset, stage) cross-section: tau across organs, the phase, and
+    each organ's own placement.
+
+    `specificity` sits here, never inside a `TissueProfileEntry` -- tau is
+    per (gene, dataset, stage) across every organ sampled there, not a
+    per-organ figure. `specificity_unavailable_reason` is `None` exactly when
+    `specificity` is not, the same pairing `not_placed_reason` keeps for
+    `placement`.
+    """
+
+    stage: str | None
+    phase: PhaseInfo
+    specificity: Specificity | None
+    specificity_unavailable_reason: str | None
+    tissues: list[TissueProfileEntry]
+
+
+class DatasetProfileEntry(TypedDict):
+    """One dataset's whole contribution to one gene: every stage it covers,
+    and the shard a consumer re-derives its percentiles against.
+
+    `quantile_shard` is `None` when `quantile_shards` (this dataset's own
+    `profiles.dataset` column value) has no entry -- a corpus mid-curation,
+    the gate bypassed, or `build_profile_quantiles`'s returned key naming a
+    shard's *filename* rather than the accession inside it, if the two ever
+    disagree (nothing validates that they must) -- and never omitted,
+    matching every other "always present" key in this atlas. The percentile
+    itself is unaffected either way: `_read_grids` below keys on the `dataset`
+    *column*, not the filename, so a mismatched shard name costs only this
+    link, never the figure it would have linked to.
+    """
+
+    dataset: str
+    quantile_shard: str | None
+    stages: list[StageProfileEntry]
+
+
+class ExpressionProfile(TypedDict):
+    """One gene's whole developmental expression profile.
+
+    `datasets` is empty for a gene no profile dataset's mirror covers -- the
+    always-present shape `bundles.py` publishes for exactly that gene,
+    `EMPTY_EXPRESSION_PROFILE` below.
+    """
+
+    datasets: list[DatasetProfileEntry]
+
+
+EMPTY_EXPRESSION_PROFILE: Final[ExpressionProfile] = ExpressionProfile(datasets=[])
+
+# One cell's key throughout this module. `str | None` for `stage` because a
+# lookup may legitimately ask about a null-stage row; a real grid never has
+# one (`profile_quantiles.stage` is not nullable), so no key ever gets
+# *inserted* with a `None` third element, but the type has to admit the
+# lookup side too.
+_Cell = tuple[str, str, str | None]
+
+
+@dataclass(frozen=True)
+class _ProfileRow:
+    """One `mirrors/profiles/*.tsv` row, cast out of polars' `Any`-typed dict."""
+
+    dataset: str
+    tissue: str
+    stage: str | None
+    median_abundance: float
+    unit: str
+    q25: float | None
+    q75: float | None
+    n_samples: int
+
+    @staticmethod
+    def from_record(record: Mapping[str, Any]) -> _ProfileRow:
+        return _ProfileRow(
+            dataset=str(record["dataset"]),
+            tissue=str(record["tissue"]),
+            stage=str(record["stage"]) if record["stage"] is not None else None,
+            median_abundance=float(record["median_abundance"]),
+            unit=str(record["unit"]),
+            q25=float(record["q25"]) if record["q25"] is not None else None,
+            q75=float(record["q75"]) if record["q75"] is not None else None,
+            n_samples=int(record["n_samples"]),
+        )
+
+
+def _read_grids(root: Path) -> dict[_Cell, dict[int, tuple[float, int]]]:
+    """Every complete-or-not breakpoint grid, keyed by (dataset, tissue, stage).
+
+    `{percentile: (value, n_genes)}` per cell, deliberately not yet reduced to
+    a 101-element list: `_breakpoints` below is what decides whether a cell's
+    grid is complete enough to place a gene against, and it needs the
+    percentile keys to check that, not just the values in whatever order this
+    function happened to see them in.
+    """
+    grids: dict[_Cell, dict[int, tuple[float, int]]] = {}
+    for path, schema_name in mirror_paths(root):
+        if schema_name != "profile_quantiles":
+            continue
+        frame, _ = read_table(path, TABLE_SCHEMAS[schema_name])
+        if frame is None:
+            # Unreadable is `validate_table`'s to report against this same
+            # path; see `build_profile_quantiles`'s identical guard.
+            continue
+        for record in frame.iter_rows(named=True):
+            dataset, tissue, stage = record["dataset"], record["tissue"], record["stage"]
+            percentile, value, n_genes = record["percentile"], record["value"], record["n_genes"]
+            if dataset is None or tissue is None or stage is None:
+                continue
+            if percentile is None or value is None or n_genes is None:
+                continue
+            cell: _Cell = (str(dataset), str(tissue), str(stage))
+            grids.setdefault(cell, {})[int(percentile)] = (float(value), int(n_genes))
+    return grids
+
+
+def _breakpoints(grid: Mapping[int, tuple[float, int]] | None) -> tuple[list[float], int] | None:
+    """The 101-point lookup table for one cell, or `None` if it is incomplete.
+
+    `percentile_of` (`bisect.bisect_left`) assumes position i holds
+    percentile i's own value -- this module's own docstring for `Placement`
+    says so -- so a grid missing even one of 0..100 would silently place a
+    gene against a *misaligned* array rather than merely cost one point of
+    precision. No PRF check pins grid completeness today (PRF001-009 check
+    units, cell presence and monotonicity, never the count of rows in one
+    cell), so this function refuses rather than build one.
+
+    `n_genes` is read from percentile 100's own row -- guaranteed present
+    once completeness is confirmed -- rather than an arbitrary row, so a
+    grid whose `n_genes` genuinely varies row to row (nothing enforces that it
+    does not) gives a reproducible answer rather than one that depends on
+    dict iteration order.
+    """
+    if grid is None or set(grid) != set(range(101)):
+        return None
+    return [grid[percentile][0] for percentile in range(101)], grid[100][1]
+
+
+def _dataset_gap(dataset: Dataset | None) -> ProfileGap | None:
+    """Why a dataset cannot gate a percentile or tau, or `None` when it can.
+
+    Two facts kept distinct rather than folded into one "no floor" catch-all
+    -- see `ProfileGap.DATASET_NOT_REGISTERED` and `.FLOOR_UNDECLARED` for why
+    each is independently reachable.
+    """
+    if dataset is None:
+        return ProfileGap.DATASET_NOT_REGISTERED
+    if dataset.detection_floor is None:
+        return ProfileGap.FLOOR_UNDECLARED
+    return None
+
+
+def _tissue_entry(
+    row: _ProfileRow,
+    floor: float | None,
+    dataset_gap: ProfileGap | None,
+    grid: Mapping[int, tuple[float, int]] | None,
+) -> TissueProfileEntry:
+    """One tissue's raw measurement, placed if a floor and a grid both exist.
+
+    `floor` and `dataset_gap` are threaded in rather than re-derived from a
+    `Dataset` here, because the caller already computed both once per
+    dataset; the `elif floor is None` branch below is therefore a guard on an
+    invariant the caller establishes, not a path this module's own tests
+    reach independently of it -- kept explicit (never `assert`, which `-O`
+    strips) rather than trusted to hold silently.
+    """
+    placed: Placement | None = None
+    reason: ProfileGap | None = None
+    if dataset_gap is not None:
+        reason = dataset_gap
+    elif floor is None:
+        reason = ProfileGap.FLOOR_UNDECLARED
+    else:
+        complete = _breakpoints(grid)
+        if complete is None:
+            reason = ProfileGap.NO_QUANTILE_GRID
+        else:
+            breakpoints, n_genes = complete
+            placed = placement(
+                median=row.median_abundance,
+                q25=row.q25,
+                q75=row.q75,
+                breakpoints=breakpoints,
+                floor=floor,
+                unit=row.unit,
+                n_samples=row.n_samples,
+                n_genes=n_genes,
+            )
+            if placed is None:
+                reason = ProfileGap.BELOW_DETECTION_FLOOR
+    return TissueProfileEntry(
+        tissue=row.tissue,
+        median_abundance=row.median_abundance,
+        unit=row.unit,
+        n_samples=row.n_samples,
+        placement=placed,
+        not_placed_reason=reason.value if reason is not None else None,
+    )
+
+
+def _specificity_entry(
+    medians: Mapping[str, float], floor: float | None, dataset_gap: ProfileGap | None
+) -> tuple[Specificity | None, str | None]:
+    """Tau over one stage's per-organ medians, or the reason it is absent.
+
+    Checked in the same order `specificity()` itself would refuse, so the
+    reason named is the first one that actually applies rather than a
+    generic catch-all: no floor, then too few organs, then a peak below the
+    floor, then (a residual this module cannot itself predict) whatever
+    `specificity()` still refused for.
+    """
+    if dataset_gap is not None:
+        return None, dataset_gap.value
+    if floor is None:
+        return None, ProfileGap.FLOOR_UNDECLARED.value
+    if len(medians) < 2:
+        return None, ProfileGap.ONE_ORGAN_SAMPLED.value
+    if max(medians.values()) < floor:
+        return None, ProfileGap.PEAK_BELOW_DETECTION_FLOOR.value
+    result = specificity(medians, floor)
+    if result is None:
+        return None, ProfileGap.UNDEFINED.value
+    return result, None
+
+
+def _phase_entry(
+    stage_token: str | None, dataset: Dataset | None, phases: CardiacPhaseFile | None
+) -> PhaseInfo:
+    """Where one stage token falls in the curated phase vocabulary.
+
+    A null `stage_token` has nothing to hand `assign_phase` -- it requires a
+    `str` -- so this states the fact directly rather than manufacturing a
+    call with an empty string and hoping no dataset ever declares that as a
+    real token.
+    """
+    if stage_token is None:
+        return PhaseInfo(outcome=None, phase_id=None, reason=_NO_STAGE_PHASE_REASON)
+    stages = dataset.stages if dataset is not None else ()
+    assignment = assign_phase(stage_token, stages, phases)
+    return PhaseInfo(
+        outcome=assignment.outcome.value, phase_id=assignment.phase_id, reason=assignment.reason
+    )
+
+
+def _stage_entry(
+    dataset_id: str,
+    stage_token: str | None,
+    rows: Sequence[_ProfileRow],
+    dataset: Dataset | None,
+    dataset_gap: ProfileGap | None,
+    phases: CardiacPhaseFile | None,
+    grids: Mapping[_Cell, dict[int, tuple[float, int]]],
+) -> StageProfileEntry:
+    """One (dataset, stage) cross-section, tissues sorted for determinism."""
+    floor = dataset.detection_floor if dataset is not None else None
+    ordered = sorted(rows, key=lambda row: row.tissue)
+    tissues: list[TissueProfileEntry] = []
+    medians: dict[str, float] = {}
+    for row in ordered:
+        grid = grids.get((dataset_id, row.tissue, stage_token))
+        tissues.append(_tissue_entry(row, floor, dataset_gap, grid))
+        medians[row.tissue] = row.median_abundance
+    specificity_result, specificity_reason = _specificity_entry(medians, floor, dataset_gap)
+    return StageProfileEntry(
+        stage=stage_token,
+        phase=_phase_entry(stage_token, dataset, phases),
+        specificity=specificity_result,
+        specificity_unavailable_reason=specificity_reason,
+        tissues=tissues,
+    )
+
+
+def _stage_sort_key(token: str | None) -> tuple[bool, str]:
+    """Every real stage token, alphabetically, with the null-stage bucket last.
+
+    A `bool` first component rather than interleaving `None` with strings --
+    Python raises `TypeError` comparing `None` to `str` directly, so a plain
+    `key=lambda t: t` would crash the moment one dataset carries a null-stage
+    row alongside a declared one.
+    """
+    return (token is None, token or "")
+
+
+def _dataset_entry(
+    dataset_id: str,
+    rows: Sequence[_ProfileRow],
+    dataset_by_id: Mapping[str, Dataset],
+    phases: CardiacPhaseFile | None,
+    grids: Mapping[_Cell, dict[int, tuple[float, int]]],
+    quantile_shards: Mapping[str, str],
+) -> DatasetProfileEntry:
+    """One dataset's whole contribution to one gene, stages sorted for determinism."""
+    dataset = dataset_by_id.get(dataset_id)
+    dataset_gap = _dataset_gap(dataset)
+    by_stage: dict[str | None, list[_ProfileRow]] = {}
+    for row in rows:
+        by_stage.setdefault(row.stage, []).append(row)
+    stages = [
+        _stage_entry(dataset_id, token, by_stage[token], dataset, dataset_gap, phases, grids)
+        for token in sorted(by_stage, key=_stage_sort_key)
+    ]
+    return DatasetProfileEntry(
+        dataset=dataset_id,
+        quantile_shard=quantile_shards.get(dataset_id),
+        stages=stages,
+    )
+
+
+def gene_expression_profiles(
+    root: Path,
+    datasets: Sequence[Dataset],
+    phases: CardiacPhaseFile | None,
+    quantile_shards: Mapping[str, str],
+) -> dict[str, ExpressionProfile]:
+    """Read both profile mirrors and assemble one `ExpressionProfile` per gene.
+
+    Returns only the genes `mirrors/profiles/*.tsv` actually mentions -- a
+    gene absent from the return is a gene this function never saw, not a
+    published claim of "no data". `bundles.py` is what turns that absence
+    into the always-present empty shape a gene bundle publishes; deliberately
+    not done here, so this function's own contract stays "report what the
+    mirrors say" rather than "decide what a bundle looks like".
+
+    Not gated on gene publication (`build.validity.published_genes()`) at
+    all -- this function does not take that population as an argument. A
+    profiles row can name a gene that is registered but never published (the
+    same 154-vs-92 asymmetry `mirrors/genes.tsv` already has), and computing
+    its facts anyway is harmless: `build_genes` is the single place that
+    restricts what reaches a bundle, by iterating `published` alone, and
+    restricting *here* as well would risk the two gates disagreeing about
+    which genes exist.
+
+    `datasets` is `corpus.datasets`; a dataset id a `profiles.tsv` row names
+    with no matching record here is not an error this function raises over
+    -- see `ProfileGap.DATASET_NOT_REGISTERED`. `quantile_shards` is
+    `build_profile_quantiles`'s own return, reused rather than recomputed so
+    the two cannot name different files for one accession.
+    """
+    # `str(dataset.id)`, not the bare `AccessionId`: `profiles.dataset` is a
+    # plain string column, and `Mapping`'s key type is invariant, so a
+    # `dict[AccessionId, Dataset]` does not satisfy `Mapping[str, Dataset]`
+    # below even though every `AccessionId` is itself a `str` at runtime --
+    # the same normalisation `runner.py` already applies for `cardiac_tissues`.
+    dataset_by_id = {str(dataset.id): dataset for dataset in datasets}
+    grids = _read_grids(root)
+
+    rows_by_gene: dict[str, list[_ProfileRow]] = {}
+    for path, schema_name in mirror_paths(root):
+        if schema_name != "profiles":
+            continue
+        frame, _ = read_table(path, TABLE_SCHEMAS[schema_name])
+        if frame is None:
+            # Unreadable is `validate_table`'s to report against this same
+            # path; see `build_profile_quantiles`'s identical guard.
+            continue
+        for record in frame.iter_rows(named=True):
+            gene = record["gene"]
+            if gene is None:
+                continue
+            rows_by_gene.setdefault(str(gene), []).append(_ProfileRow.from_record(record))
+
+    result: dict[str, ExpressionProfile] = {}
+    for gene, rows in rows_by_gene.items():
+        by_dataset: dict[str, list[_ProfileRow]] = {}
+        for row in rows:
+            by_dataset.setdefault(row.dataset, []).append(row)
+        datasets_entries = [
+            _dataset_entry(
+                dataset_id, by_dataset[dataset_id], dataset_by_id, phases, grids, quantile_shards
+            )
+            for dataset_id in sorted(by_dataset)
+        ]
+        result[gene] = ExpressionProfile(datasets=datasets_entries)
+    return result

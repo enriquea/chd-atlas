@@ -36,7 +36,7 @@ from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
 from chd_atlas.build.pages import build_gene_index_page, build_gene_pages
-from chd_atlas.build.profiles import build_profile_quantiles
+from chd_atlas.build.profiles import build_profile_quantiles, gene_expression_profiles
 from chd_atlas.build.search import GeneLabels, build_search
 from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.build.variants import build_variants
@@ -253,14 +253,17 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         str(dataset.id): frozenset(dataset.cardiac_tissues) for dataset in corpus.datasets
     }
     # `select_top` ranks the cardiac series on a `percentile` the build itself
-    # derives -- but `build/profiles.py` (Task 9) does not exist yet, so
-    # nothing writes that key today. It degrades rather than breaks while that
-    # is true: a missing percentile sorts last (`_by_percentile_then_stage`),
-    # so the cardiac series still leads but is ordered by stage token instead
-    # of by rank -- exactly the kind of silent quality loss that survives a
-    # green build, since no check fails and no row goes missing. Once
-    # `build/profiles.py` exists it MUST annotate each profiles row with its
-    # derived percentile before this call runs, not after.
+    # derives. `build/profiles.py` exists now (Tasks 9-13), but nothing yet
+    # annotates a `profiles` row with its derived percentile before this call
+    # runs -- that wiring is still open, not this task's scope, and it
+    # degrades rather than breaks while it stays open: a missing percentile
+    # sorts last (`_by_percentile_then_stage`), so the cardiac series still
+    # leads but is ordered by stage token instead of by rank -- exactly the
+    # kind of silent quality loss that survives a green build, since no check
+    # fails and no row goes missing. Inert today regardless: the committed
+    # corpus mirrors no profiles data at all. Whoever closes it MUST annotate
+    # each profiles row with its derived percentile before this call runs,
+    # not after.
     omics = build_omics(root, emitter, cardiac=cardiac_tissues)
     # `build_omics` skips this table outright -- it is keyed on `_GENE_COLUMN`,
     # and a quantile grid has no gene column -- so without this call
@@ -271,13 +274,28 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # every other check reports clean. Must run before `write_manifest`,
     # which seals the emitter and would refuse a write placed after it.
     #
-    # Returns `{accession: shard path}`; not read here yet. Task 13 threads a
-    # gene's `expression_profile` bundle key to the grid its percentile came
-    # from, the same way `ModalitySummary.shards` links a gene bundle to an
-    # omics shard today, and should consume this mapping rather than
-    # reconstruct the path with a second call to `slug`.
-    build_profile_quantiles(root, emitter)
+    # Returns `{accession: shard path}`, consumed immediately below by
+    # `gene_expression_profiles` -- the same way `ModalitySummary.shards`
+    # links a gene bundle to an omics shard today. Reusing the exact path
+    # this call wrote, rather than reconstructing it with a second call to
+    # `slug`, is what keeps the two from drifting apart.
+    quantile_shards = build_profile_quantiles(root, emitter)
     variants = build_variants(root, emitter)
+    # Pure derivation, no `emitter`: reads `mirrors/profiles/*.tsv` and
+    # `mirrors/profile_quantiles/*.tsv` directly and returns one
+    # `ExpressionProfile` per gene those mirrors mention, published or not --
+    # `build_genes` is what restricts the result to `published` genes, the
+    # same restriction it already applies to `omics` and `variants`.
+    # `corpus.cardiac_phases` is `None` only when `curation/cardiac_phases.yaml`
+    # is absent or unparsable -- the committed corpus's own file loads to a
+    # real `CardiacPhaseFile` with zero phases *declared* instead (Task 4's
+    # placeholder, boundaries not yet transcribed from a verified source).
+    # `assign_phase`/`_phase_entry` treat both states identically, as "outside
+    # the curated window" rather than raising, so this call is correct either
+    # way without this function needing to tell the two apart.
+    expression_profiles = gene_expression_profiles(
+        root, corpus.datasets, corpus.cardiac_phases, quantile_shards
+    )
     # `facts` rather than a second `gene_facts` call below: the pages and the
     # bundles render from one derivation, so a page cannot state a confidence the
     # bundle it links to contradicts. See `build_genes`' docstring.
@@ -312,6 +330,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         published=published,
         burden=burden,
         concordance=concordance,
+        profiles=expression_profiles,
     )
     build_literature(corpus, emitter)
     # The resolution table for the bare cohort ids every burden row carries.
