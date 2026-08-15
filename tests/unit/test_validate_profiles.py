@@ -272,14 +272,37 @@ def test_multiple_datasets_flagged_by_prf001_are_reported_in_sorted_order() -> N
     `set(profile_units) & set(quantile_units)` is a plain `set` built fresh
     by the intersection; its iteration order can follow `PYTHONHASHSEED`
     regardless of file or insertion order, the same risk as PRF002's set
-    difference. **Measured**: with three datasets, a dropped `sorted()` around
-    this exact loop survived this test in 2 of 11 repeated runs, each a fresh
-    interpreter with its own random hash seed -- consistent with a roughly
-    1-in-6 chance of a 3-element set coincidentally iterating already
-    alphabetical. Five datasets (1-in-120), and all five known units on one of
-    them for the message check, measured 0 survivors in 10 further runs.
+    difference.
+
+    **The outer, dataset-name sort measured clean.** A fast probe
+    constructing `{"Alpha", "Bravo", "Middle", "Yankee", "Zebra"}` directly
+    under 300 explicit `PYTHONHASHSEED` values (not however many random ones
+    a CI run happens to sample) measured 0/300 coincidentally-sorted
+    iterations, and a slow pytest-based run of the equivalent mutation
+    (dropping this exact `sorted()`) measured 20/20 killed across two
+    fresh-process batches.
+
+    **The inner, message-content sort could not be fixture-widened the same
+    way, because the real abundance-unit vocabulary has exactly five
+    members** (`tpm`, `nx`, `cpm`, `lfq`, `rpkm` -- `tables.py`'s
+    `_ABUNDANCE_UNITS`), and this docstring's previous claim that five
+    elements were "1-in-120," a small enough risk to trust, was never
+    checked past 10 runs and does not hold: the same probe method measured
+    4/500 (0.8%) for that exact five-member set. There is no sixth real unit
+    to widen into. `_prf001_issues` treats `unit` as an opaque string for
+    this comparison and never checks it against `_ABUNDANCE_UNITS` (that is
+    TBL004's job, a different validator, exercised in `test_tables.py`), so
+    Zebra's eight quantile rows below use eight *synthetic* unit tokens
+    instead of real ones. The synthetic set measured 0/500 in the same probe
+    and 20/20 killed in the slow pytest-based check.
     """
     datasets = ["Alpha", "Bravo", "Middle", "Yankee", "Zebra"]
+    synthetic_units = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+    organs = ["Heart", "Liver", "Brain", "Kidney", "Lung", "Spleen", "Pancreas", "Thymus"]
+    zebra_quantiles: list[dict[str, str]] = []
+    for organ, unit in zip(organs, synthetic_units, strict=True):
+        zebra_quantiles += _grid(dataset="Zebra", tissue=organ, unit=unit)
+
     root = _root_with(
         profiles=[_p(dataset=dataset, tissue="Heart", unit="rpkm") for dataset in datasets],
         quantiles=(
@@ -288,13 +311,9 @@ def test_multiple_datasets_flagged_by_prf001_are_reported_in_sorted_order() -> N
             + _grid(dataset="Bravo", tissue="Heart", unit="tpm")
             + _grid(dataset="Middle", tissue="Heart", unit="tpm")
             + _grid(dataset="Yankee", tissue="Heart", unit="tpm")
-            # Zebra: all five known units, over five tissues, for the
+            # Zebra: eight distinct (synthetic) units, for the
             # message-content sort check.
-            + _grid(dataset="Zebra", tissue="Heart", unit="tpm")
-            + _grid(dataset="Zebra", tissue="Liver", unit="nx")
-            + _grid(dataset="Zebra", tissue="Brain", unit="cpm")
-            + _grid(dataset="Zebra", tissue="Kidney", unit="lfq")
-            + _grid(dataset="Zebra", tissue="Lung", unit="rpkm")
+            + zebra_quantiles
         ),
     )
 
@@ -305,30 +324,43 @@ def test_multiple_datasets_flagged_by_prf001_are_reported_in_sorted_order() -> N
     assert "Middle" in issues[2].message
     assert "Yankee" in issues[3].message
     assert "Zebra" in issues[4].message
-    assert "['cpm', 'lfq', 'nx', 'rpkm', 'tpm']" in issues[4].message
+    assert (
+        "['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']"
+        in issues[4].message
+    )
 
 
 def test_prf008_message_lists_every_offending_unit_in_sorted_order() -> None:
     """PRF008's unit list is sorted, not whatever order a `set` iterates in.
 
-    All five known units land on one dataset, deliberately more than two or
-    three: with a smaller set, an unsorted `set` has a non-negligible chance
-    of iterating in alphabetical order by pure luck on any given interpreter,
-    which would let a dropped `sorted()` pass undetected on an unlucky run.
-    Five elements have a 1-in-120 chance of a coincidentally-sorted iteration,
-    a small enough risk to trust the literal below.
+    **Measured, and the real vocabulary is too small to fixture safely.** The
+    abundance-unit vocabulary has exactly five members (`tpm`, `nx`, `cpm`,
+    `lfq`, `rpkm`). This docstring previously claimed five elements have "a
+    1-in-120 chance of a coincidentally-sorted iteration, a small enough risk
+    to trust" -- reasoned from permutation counting, never measured. A fast
+    probe constructing that exact five-member `set` under 500 explicit
+    `PYTHONHASHSEED` values measured 4/500 (0.8%) coincidentally-sorted
+    iterations: real, and about 100x the claimed rate. There is no sixth real
+    unit to widen into. `_prf008_issues` treats `unit` as an opaque string --
+    membership in the real vocabulary is TBL004's check, not this one's -- so
+    the eight rows below use eight synthetic unit tokens instead, matching
+    `test_multiple_datasets_flagged_by_prf001_are_reported_in_sorted_order`'s
+    fix for the same constraint. The synthetic set measured 0/500 in the same
+    probe and 20/20 killed in a slow pytest-based fresh-process check. See
+    `test_multiple_missing_triples_are_reported_in_sorted_order` for the
+    fuller correction of the permutation-counting reasoning itself.
     """
+    organs = ["Heart", "Liver", "Brain", "Kidney", "Lung", "Spleen", "Pancreas", "Thymus"]
+    synthetic_units = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
     profiles = [
-        _p(tissue=tissue, unit=unit)
-        for tissue, unit in zip(
-            ["Heart", "Liver", "Brain", "Kidney", "Lung"],
-            ["tpm", "rpkm", "nx", "cpm", "lfq"],
-            strict=True,
-        )
+        _p(tissue=tissue, unit=unit) for tissue, unit in zip(organs, synthetic_units, strict=True)
     ]
     issues = validate_profiles(_root_with(profiles=profiles))
     assert [issue.code for issue in issues] == ["PRF008"]
-    assert "['cpm', 'lfq', 'nx', 'rpkm', 'tpm']" in issues[0].message
+    assert (
+        "['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']"
+        in issues[0].message
+    )
 
 
 def test_multiple_missing_triples_are_reported_in_sorted_order() -> None:
@@ -337,27 +369,46 @@ def test_multiple_missing_triples_are_reported_in_sorted_order() -> None:
     `profile_triples - quantile_triples` is a freshly built `set`; iterating
     it unsorted would let the report's order follow `PYTHONHASHSEED`, so two
     validate runs over one identical repository could disagree on which issue
-    comes first. **Measured**: with three tissues, a dropped `sorted()` around
-    this exact loop survived this test in 1 of 11 repeated runs (each a fresh
-    interpreter, its own random hash seed) -- consistent with a roughly 1-in-6
-    chance of a 3-element set coincidentally iterating already alphabetical.
-    Five tissues (1-in-120 by the same reasoning) measured 0 survivors in 10
-    further runs.
+    comes first.
+
+    **This docstring previously reasoned from permutation counting -- "five
+    tissues (1-in-120 by the same reasoning) measured 0 survivors in 10
+    further runs" -- and that reasoning does not hold. It described a
+    fixture that was never independently checked past those 10 samples.**
+    Measured directly instead: constructing the actual object this function
+    sorts -- a `set` of `("GSE999999", tissue, "7wpc")` triples, not a bare
+    tissue string -- under 500 explicit `PYTHONHASHSEED` values (not 10
+    random ones), the original five words (`Alpha, Bravo, Middle, Yankee,
+    Zebra`) measured **9/500 (1.8%)** coincidentally-sorted iterations once
+    wrapped in that triple. That is consistent with the original 10-run
+    measurement's 0 survivors -- at a true rate of 1.8%, seeing 0 survivors
+    in 10 runs happens roughly 84% of the time -- but the 0 was never proof
+    of safety, only a plausible outcome of an underpowered sample; a
+    slow pytest-based re-run of the equivalent mutation measured the real
+    exposure directly: 1/10 fresh-process survivors.
+
+    The same five words as *bare strings*, with no triple, had separately
+    measured 0/300 in an earlier probe -- so the coincidence is a property of
+    the **container shape** as much as the string content: wrapping a value
+    in a tuple changes which hash-table slot it lands in relative to the
+    others. Permutation counting (1-in-N! for N elements) never modelled
+    either shape; it counts orderings, not hash-table layouts.
+
+    Eight qualitatively distinct words (`Alpha`..`Hotel`, the NATO alphabet)
+    measured 0/500 in the same tuple-wrapped probe, and 20/20 killed in a
+    slow pytest-based fresh-process re-run. That is the fixture below.
     """
-    tissues = ["Alpha", "Bravo", "Middle", "Yankee", "Zebra"]
+    tissues = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel"]
     profiles = [_p(tissue=tissue, stage="7wpc") for tissue in tissues]
     # A grid for a tissue none of the profiles rows use, so profile_quantiles
     # is present (PRF002 is not skipped wholesale) without satisfying any of
-    # the five triples above.
+    # the eight triples above.
     quantiles = _grid(tissue="Nowhere", stage="7wpc")
     issues = validate_profiles(_root_with(profiles=profiles, quantiles=quantiles))
 
-    assert [issue.code for issue in issues] == ["PRF002"] * 5
-    assert "Alpha" in issues[0].message
-    assert "Bravo" in issues[1].message
-    assert "Middle" in issues[2].message
-    assert "Yankee" in issues[3].message
-    assert "Zebra" in issues[4].message
+    assert [issue.code for issue in issues] == ["PRF002"] * len(tissues)
+    for index, tissue in enumerate(tissues):
+        assert tissue in issues[index].message
 
 
 def test_multiple_datasets_flagged_by_prf008_are_reported_in_sorted_order() -> None:
