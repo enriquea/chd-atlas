@@ -26,7 +26,9 @@ from typing import Any
 
 import pytest
 
+from chd_atlas.build.profiles import LOOKUP_RULE, TAU_METHOD, TAU_SCALE
 from chd_atlas.build.runner import build_site
+from chd_atlas.models.dataset import Dataset
 
 REPO = Path(__file__).parent.parent
 DOC = REPO / "docs" / "data-api.md"
@@ -441,3 +443,127 @@ def test_the_independent_datasets_section_states_the_shape_the_build_publishes(
     assert "never be rendered as one" in section
     assert "never `len(families)`" in section
     assert "KDM6A causes Kabuki syndrome" in section
+
+
+def test_the_omics_section_documents_profiles_stratified_top_not_ranked_by_significance() -> None:
+    """16a: `top` was documented as "ranked by significance" with no
+    qualification, which Task 8 made false for `profiles` -- that table has
+    no significance column at all, so its slice is stratified: the cardiac
+    series leads on derived percentile, with at least one row of every other
+    tissue reserved so a gene's own τ stays auditable from the same payload
+    that publishes it. A consumer reading the old, unscoped sentence expects
+    the 25 highest-ranked rows for every modality and gets something
+    deliberately different for this one.
+    """
+    doc = DOC.read_text()
+    start = doc.index("## `omics/<modality>/<accession>.json`")
+    section = re.sub(r"\s+", " ", doc[start : doc.index("\n## ", start)])
+
+    # Scoped to the three modalities it is actually true of, not stated as a
+    # blanket rule every modality's `top` follows.
+    assert "For `expression`, `proteomics` and `phospho`" in section
+    assert "ranked by significance" in section
+    assert "profiles` ranks `top` differently" in section
+    assert "stratified" in section
+    assert "median_percentile" in section
+    assert "at least one row of every other tissue" in section
+    assert "reserved" in section
+    assert "D39(b)" in section
+    assert "ranking bug" in section
+
+
+def test_the_datasets_field_list_names_every_field_the_model_declares() -> None:
+    """16b: the field list for `datasets.json` must name every field `Dataset`
+    publishes, so a field added to the model and not to this sentence fails a
+    test instead of aging into a false sentence the way Task 3's six fields
+    already did once, silently, before this guard existed (CLAUDE.md section
+    4.24 -- true when written, false by the next release, and internally
+    consistent throughout, so re-reading it finds nothing).
+
+    Read from `Dataset.model_fields`, never from a real corpus record: no
+    dataset has ever been committed, so a real build's `datasets.json` is
+    always `{"datasets": []}` and there is no record on disk whose keys this
+    test could read instead. `build/literature.py::_dump` calls
+    `model_dump(mode="json")` with no field filtering, so the model's own
+    declared fields are exactly what a future record will publish -- reading
+    them here is not an approximation of the build, it is what the build
+    does, which is what makes this pin survive a field being *added* rather
+    than only catching one being *removed from the doc*.
+    """
+    doc = DOC.read_text()
+    start = doc.index("## `datasets.json`")
+    section = doc[start : doc.index("\n## ", start)]
+
+    for field in Dataset.model_fields:
+        assert f"`{field}`" in section, (
+            f"Dataset.{field} is not named in the datasets.json field list"
+        )
+
+
+def test_the_expression_profile_layer_is_documented_end_to_end() -> None:
+    """16c: the two mirror tables, the `profile_quantiles` payload and the
+    `expression_profile` bundle key were entirely undocumented before this.
+    Checks the load-bearing claims a consumer needs, sharing one fixture
+    because they are all facts about one new section:
+
+    - the method travels with the number -- `LOOKUP_RULE`, `TAU_SCALE` and
+      `TAU_METHOD` quoted from the constants that actually ship, not retyped,
+      so a wording change to either constant must be echoed here or this
+      fails;
+    - why the quantile grid is published at all -- a one-level trade, stated
+      as one, never as a proof;
+    - percentiles are not comparable across organs, and -- more importantly,
+      because the layer's headline question rides on it -- not comparable
+      across developmental stages;
+    - τ carries no adjective and no band (D39(c));
+    - τ is blind to where a gene peaks. Verified directly against
+      `profiles.specificity` before writing the doc, not reasoned from a
+      number handed down: `specificity({"heart": 20.0, "liver": 200.0, "o1":
+      5.0, "o2": 5.0, "o3": 5.0, "o4": 5.0, "o5": 5.0}, floor=0.0)` returns
+      `tau == 0.6227723406454512` and `highest_in == "liver"`; the same inputs
+      score `0.9625` computed by hand on the raw values with no log transform.
+      Both round to the figures asserted below.
+    """
+    doc = DOC.read_text()
+
+    assert "## `omics/profile_quantiles/<accession>.json`" in doc
+
+    start = doc.index("### The bundle's `expression_profile` object")
+    section = re.sub(r"\s+", " ", doc[start : doc.index("\n## ", start)])
+
+    assert LOOKUP_RULE in section
+    assert TAU_SCALE in section
+    assert TAU_METHOD in section
+
+    assert "one-level guarantee" in section
+    assert "not an unbounded one" in section
+    assert "re-derivable" in section
+
+    assert "not comparable across organs" in section
+    assert "not comparable across developmental stages" in section
+    assert "matters more" in section
+
+    assert "no adjective, no band" in section
+
+    assert "0.963" in section
+    assert "0.623" in section
+    assert "liver" in section
+    assert "highest_in" in section
+
+
+def test_the_api_doc_states_the_expression_census_the_build_produces(site: Path) -> None:
+    """Section 4.24: when a release adds a data source, every count in every
+    prose artifact is suspect by default. Grep the numbers and re-derive them
+    from a real build; do not re-read the sentences. Eight false claims
+    survived multiple readings last time because they still agreed with each
+    other.
+
+    Both figures are 0 on the committed corpus -- there is no `profiles`
+    mirror -- and the doc has to say so in exactly those terms, not merely in
+    a rounded-off "none yet".
+    """
+    manifest = json.loads((site / "manifest.json").read_text())
+    doc = DOC.read_text()
+
+    assert f"{manifest['counts']['profile_genes']} genes" in doc
+    assert f"{manifest['counts']['profile_datasets']} datasets" in doc
