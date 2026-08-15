@@ -19,7 +19,14 @@ from __future__ import annotations
 
 import pytest
 
-from chd_atlas.build.profiles import LOOKUP_RULE, band, percentile_of, placement
+from chd_atlas.build.profiles import (
+    LOOKUP_RULE,
+    TAU_METHOD,
+    band,
+    percentile_of,
+    placement,
+    specificity,
+)
 
 # 101 breakpoints, percentile i at index i. Hand-built so the expected answers
 # below are read off the grid rather than computed by the code under test.
@@ -167,3 +174,184 @@ def test_a_single_sample_still_publishes_with_its_count_named() -> None:
     assert result["q25_percentile"] is None
     assert result["q75_percentile"] is None
     assert result["median_percentile"] == 65  # bisect_left(GRID, 2.0), verified by hand
+
+
+# --- tau (Yanai et al. 2005), plan Task 10 --------------------------------
+#
+# Every literal below was checked by independent arithmetic (`.venv/bin/
+# python`, `math.log2`, a scratch script that does not import this module)
+# before being pinned here:
+#
+#   heart 100, six organs at 10 (10-fold)  linear tau 0.900   log2 tau 0.480426
+#   heart 100, six organs at 25 (4-fold)   linear tau 0.750   log2 tau 0.294039
+#   heart  50, six organs at  2 (25-fold)  linear tau 0.960   log2 tau 0.720585
+#
+# The argmax fixture (heart 20 / liver 200 / five organs at 5) measures tau
+# 0.9625 on LINEAR and 0.622772 on log2 -- "tau 0.963" is the linear figure,
+# not this module's. No test below asserts a tau value for that fixture,
+# because the point it makes is scale-*independent*: log2 is a strictly
+# increasing transform, so it can move tau's magnitude but never its argmax.
+# Recorded here so the 0.963-vs-0.623 gap is not rediscovered as a bug.
+
+
+def test_tau_is_computed_on_log2_and_the_scale_is_published() -> None:
+    """Measured: the scale decides the verdict, so it is part of the method.
+
+    A 10-fold enriched gene (heart 100, six organs at 10) reads
+    "tissue-specific" on linear RPKM (tau 0.900) and "broadly expressed" on
+    log2 (tau 0.480). Yanai and the Kryuchkova-Mostacci & Robinson-Rechavi
+    benchmark both compute tau on log expression -- computing on linear would
+    call ordinary genes heart-preferential across the board.
+    """
+    medians = {"Heart": 100.0} | {
+        organ: 10.0 for organ in ("Brain", "Cerebellum", "Kidney", "Liver", "Ovary", "Testis")
+    }
+    result = specificity(medians, floor=1.0)
+    assert result is not None
+    assert result["scale"] == "log2(x+1)"
+    assert round(result["tau"], 3) == 0.480  # NOT 0.900
+
+
+def test_tau_names_the_organ_it_peaked_in_because_tau_alone_cannot() -> None:
+    """Tau measures concentration, not location, so a "heart-preferential"
+    gloss keyed on tau alone would state the opposite of the truth here: the
+    gene peaks in liver. Argmax does not depend on the scale -- log2 is
+    monotonic -- so this fixture makes the point on whichever scale is used.
+    """
+    medians = {
+        "Heart": 20.0,
+        "Liver": 200.0,
+        "Brain": 5.0,
+        "Cerebellum": 5.0,
+        "Kidney": 5.0,
+        "Ovary": 5.0,
+        "Testis": 5.0,
+    }
+    result = specificity(medians, floor=1.0)
+    assert result is not None
+    assert result["highest_in"] == "Liver"
+    assert result["highest_in"] not in {"Heart"}
+
+
+@pytest.mark.parametrize(
+    ("medians", "why"),
+    [
+        ({"Heart": 10.0}, "one organ sampled: tau divides by n-1"),
+        ({"Heart": 0.0, "Liver": 0.0, "Brain": 0.0}, "peak below floor: tau divides by max"),
+    ],
+)
+def test_tau_is_null_never_zero_when_it_is_undefined(medians: dict[str, float], why: str) -> None:
+    """Measured: a genuinely ubiquitous gene scores exactly 0.000, so a guard
+    returning 0.0 for an undefined tau publishes the opposite claim -- and it
+    would do so on the earliest stages, where the organ panel is smallest.
+    """
+    assert specificity(medians, floor=1.0) is None, why
+
+    ubiquitous = {organ: 10.0 for organ in ("Heart", "Brain", "Liver")}
+    result = specificity(ubiquitous, floor=1.0)
+    assert result is not None and result["tau"] == 0.0
+
+
+def test_tau_publishes_the_tissue_list_not_only_the_count() -> None:
+    """A count cannot distinguish two different four-organ panels, and the
+    real panel contains a correlated pair (cerebrum and cerebellum are both
+    CNS). Insertion order here (Heart, Brain, Liver) is deliberately not
+    alphabetical, so a mutant dropping `sorted()` would return a different
+    tuple than the one asserted.
+    """
+    result = specificity({"Heart": 100.0, "Brain": 10.0, "Liver": 5.0}, floor=1.0)
+    assert result is not None
+    assert result["tissues"] == ("Brain", "Heart", "Liver")  # sorted, published
+    assert result["n_tissues"] == 3
+
+
+def test_a_below_floor_organ_is_retained_as_zero_not_dropped() -> None:
+    """Dropping silently redefines n_tissues from "sampled" to "detected" --
+    and it is self-defeating: the most heart-exclusive gene in the atlas,
+    detected in heart alone, would fall to n=1 and get no tau at all.
+    """
+    result = specificity({"Heart": 100.0, "Liver": 0.0, "Brain": 0.0}, floor=1.0)
+    assert result is not None
+    assert result["n_tissues"] == 3
+    assert result["tissues"] == ("Brain", "Heart", "Liver")
+    assert result["tau"] > 0.9
+
+
+def test_a_below_floor_nonzero_value_is_floored_to_zero_not_passed_through() -> None:
+    """The test above cannot distinguish "floored to zero" from "left as
+    measured", because its below-floor organs are already raw 0.0 either way.
+    Liver here is 0.5 -- below floor=1.0, but not itself zero.
+
+    Verified independently (`math.log2`, not this module): log2(101) =
+    6.658211, log2(11) = 3.459432, and a *floored* Liver contributes
+    log2(0+1) = 0 to the sum:
+
+        tau = ((1 - 6.658211/6.658211) + (1 - 3.459432/6.658211) + (1 - 0/6.658211)) / 2
+            = (0 + 0.480401 + 1) / 2 = 0.740213
+
+    against 0.696285 if the raw 0.5 (log2(1.5) = 0.584963) had been used
+    unfloored instead -- a real difference, not a cosmetic one.
+    """
+    result = specificity({"Liver": 0.5, "Heart": 100.0, "Kidney": 10.0}, floor=1.0)
+    assert result is not None
+    assert round(result["tau"], 3) == 0.740
+    # `medians` still names the true measured value: D39(b) requires tau's
+    # actual inputs, and 0.5 is what was measured, not what tau computed with.
+    assert result["medians"] == {"Liver": 0.5, "Heart": 100.0, "Kidney": 10.0}
+
+
+@pytest.mark.parametrize(
+    ("peak", "floor", "expect_computed"),
+    [
+        (0.999, 1.0, False),  # just below the floor
+        (1.0, 1.0, True),  # exactly at the floor: the pinned boundary
+        (2.0, 1.0, True),  # clearly above
+    ],
+)
+def test_the_floor_gate_on_tau_is_strict_less_than(
+    peak: float, floor: float, expect_computed: bool
+) -> None:
+    """Task 9 pins `median < floor` for `placement`
+    (`test_the_floor_gate_is_strict_less_than`); `specificity` gates its peak
+    with the same comparison, so one gene cannot read "detected" under one
+    figure and "below the floor" under the other from the same value.
+    """
+    result = specificity({"Heart": peak, "Liver": 0.1}, floor=floor)
+    assert (result is not None) == expect_computed
+
+
+def test_a_tie_at_the_peak_publishes_no_argmax() -> None:
+    """ "Highest in X" would be an arbitrary choice between tied organs, so a
+    tie publishes `None` instead. n_tissues is 4 here, deliberately different
+    from the 3 used by several tests above, so a mutant hardcoding
+    `n_tissues = 3` cannot survive both. The tie is between Heart and Liver,
+    not the alphabetically-first organ (Brain), so a mutant that fell back to
+    `leaders[0]` would return "Heart", not `None` -- still a wrong,
+    detectable answer.
+    """
+    medians = {"Heart": 50.0, "Liver": 50.0, "Brain": 5.0, "Kidney": 5.0}
+    result = specificity(medians, floor=1.0)
+    assert result is not None
+    assert result["highest_in"] is None
+    assert result["n_tissues"] == 4
+    assert round(result["tau"], 3) == 0.363
+
+
+def test_tau_names_its_method() -> None:
+    """D39(a): the formula travels with the number, the same discipline
+    `LOOKUP_RULE` enforces for the percentile side.
+    """
+    result = specificity({"Heart": 100.0, "Liver": 10.0}, floor=1.0)
+    assert result is not None
+    assert result["method"] == TAU_METHOD
+
+
+def test_a_degenerate_zero_floor_refuses_rather_than_dividing_by_zero() -> None:
+    """floor=0.0 is not a realistic detection floor -- every real one is a
+    positive RPKM/TPM threshold -- but a curated value of exactly 0 must
+    still refuse cleanly rather than crash the build over one gene: with
+    peak_raw=0.0, `peak_raw < floor` is `0.0 < 0.0`, False under the strict
+    boundary convention, so the peak-below-floor gate does not fire, and
+    `x_max = log2(0+1) = 0` would otherwise divide every term by zero.
+    """
+    assert specificity({"Heart": 0.0, "Liver": 0.0}, floor=0.0) is None

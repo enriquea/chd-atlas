@@ -13,15 +13,15 @@ re-derivable from its median and the published breakpoints; the breakpoints
 are not, because D32 forbids publishing the matrix they came from. Stated as a
 trade rather than claimed as a proof.
 
-This module carries the percentile band only (plan Task 9). Task 10 adds tau
-to this same module; Task 11 phase assignment; Task 12 quantile shard
-emission.
+This module carries the percentile band (Task 9) and tau (Task 10). Task 11
+adds phase assignment; Task 12 quantile shard emission.
 """
 
 from __future__ import annotations
 
 import bisect
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping, Sequence
 from typing import Final, TypedDict
 
 # D39(a): the method travels with the number. Published beside every
@@ -140,4 +140,126 @@ def placement(
         n_samples=n_samples,
         n_genes=n_genes,
         method=LOOKUP_RULE,
+    )
+
+
+# D39(a): the scale is part of the method, not an implementation detail --
+# see `specificity`'s docstring for the measurement that makes this load-
+# bearing (a 10-fold enriched gene reads tissue-specific on linear and broad
+# on log2).
+TAU_SCALE: Final = "log2(x+1)"
+
+# D39(a): named beside every tau so a consumer can re-derive the number from
+# `medians` without reading this module's source. The dataset's own detection
+# floor is not repeated here -- same one-level guarantee `LOOKUP_RULE`
+# documents for the percentile side (see the module docstring).
+TAU_METHOD: Final = (
+    "tau (Yanai et al. 2005): mean over organs of (1 - x_i/x_max), "
+    "x = log2(median+1); organs below the dataset's detection floor "
+    "contribute x=0"
+)
+
+
+class Specificity(TypedDict):
+    """Tau with everything needed to read it, and nothing that reads as a verdict.
+
+    No adjective and no band: tau 0.71 is "intermediate" under the common
+    banding (<=0.5 broad, >=0.8-0.9 specific), and choosing a threshold is a
+    classification the atlas would author, which D39(c) forbids. `highest_in`
+    is what makes a page's wording safe -- tau measures concentration, not
+    location, so a "heart-preferential" gloss keyed on tau alone can state
+    the opposite of the truth for a gene concentrated elsewhere.
+
+    - `scale` -- names the transform (D39(a)); the same input reads
+      tissue-specific on linear and broad on log2, so this is not decoration.
+    - `method` -- the formula and citation (D39(a)), `LOOKUP_RULE`'s
+      counterpart for tau.
+    - `tissues` -- the ordered organ panel tau was computed over. A count
+      cannot say *which* organs contributed; a real panel can contain a
+      correlated pair (cerebrum/cerebellum), so this matters.
+    - `n_tissues` -- organs *sampled*, not organs *detected*: an organ below
+      the detection floor is retained here, never dropped.
+    - `highest_in` -- the argmax organ, or `None` when two or more organs tie
+      at the peak, where "highest in X" would be an arbitrary choice.
+    - `medians` -- tau's actual inputs (D39(b)), because the bundle's own
+      slice of a gene's organs is truncated elsewhere (`omics.select_top`).
+      Published as measured, never floored -- see `specificity`'s docstring.
+    """
+
+    tau: float
+    scale: str
+    method: str
+    tissues: tuple[str, ...]
+    n_tissues: int
+    highest_in: str | None
+    medians: dict[str, float]
+
+
+def specificity(medians: Mapping[str, float], floor: float) -> Specificity | None:
+    """Yanai tau for one gene's per-organ medians at one developmental stage.
+
+    tau = sum(1 - x_i/x_max) / (n - 1), computed on `x = log2(median + 1)`.
+    Measured: a 10-fold enriched gene (heart 100, six organs at 10) scores
+    0.900 on linear RPKM -- "tissue-specific" -- and 0.480 on log2 --
+    "broadly expressed". Yanai et al. 2005 and the Kryuchkova-Mostacci &
+    Robinson-Rechavi benchmark both compute tau on log expression; computing
+    on linear would call ordinary genes heart-preferential across the board.
+
+    Returns `None`, never `0.0`, when tau is undefined:
+
+    - fewer than two organs were sampled at this stage (the denominator is
+      `n - 1`), or
+    - the gene's peak across every sampled organ is below `floor` (the
+      normaliser is `x_max`, and a percentile-style floor gate on an
+      unreliable peak would otherwise divide by noise).
+
+    A genuinely ubiquitous gene -- every organ equal -- measures *exactly*
+    0.000, so a guard that defaults an undefined tau to `0.0` (`n < 2`, or
+    `except ZeroDivisionError`) publishes "expressed identically everywhere"
+    for a gene measured in a single organ -- the opposite claim, and it lands
+    on the earliest stages, where the organ panel is smallest.
+
+    The peak's floor comparison is `peak_raw < floor`, strictly -- the same
+    comparison `placement` uses (D41), so one gene cannot read "detected"
+    under one figure and "below the floor" under the other from the same
+    value; pinned at the boundary by `test_the_floor_gate_on_tau_is_strict_
+    less_than`, matching Task 9's own boundary test.
+
+    A *non-peak* organ below the floor is not dropped: it is retained in
+    `tissues`/`n_tissues` (so those keep meaning "organs sampled", not
+    "organs detected" -- dropping is self-defeating, since the most
+    heart-exclusive gene in the atlas, detected in heart alone, would fall to
+    n=1 and lose tau entirely) and its contribution to the sum is floored to
+    `x=0` rather than computed from its raw, sub-floor (and so unreliable)
+    value. `medians` still publishes that organ's true measured value,
+    unfloored -- D39(b) requires tau's actual inputs, not the value tau
+    computed with.
+    """
+    tissues = tuple(sorted(medians))
+    if len(tissues) < 2:
+        return None
+
+    peak_raw = max(medians[tissue] for tissue in tissues)
+    if peak_raw < floor:
+        return None
+
+    logged = {
+        tissue: math.log2((value if value >= floor else 0.0) + 1.0)
+        for tissue, value in medians.items()
+    }
+    x_max = math.log2(peak_raw + 1.0)
+    if x_max <= 0:
+        return None
+
+    tau = sum(1.0 - value / x_max for value in logged.values()) / (len(tissues) - 1)
+
+    leaders = [tissue for tissue in tissues if medians[tissue] == peak_raw]
+    return Specificity(
+        tau=tau,
+        scale=TAU_SCALE,
+        method=TAU_METHOD,
+        tissues=tissues,
+        n_tissues=len(tissues),
+        highest_in=leaders[0] if len(leaders) == 1 else None,
+        medians=dict(medians),
     )
