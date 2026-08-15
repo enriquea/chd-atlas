@@ -1,0 +1,11 @@
+# curation/cardiac_phases.yaml
+# PLACEHOLDER -- boundaries NOT yet transcribed from a verified source.
+# The phase list must come from a source a developmental biologist would
+# accept. Candidates to verify: O'Rahilly & Muller Carnegie staging for
+# stage<->wpc, with a standard cardiac morphogenesis reference for the
+# boundaries. Until then this file declares no phases, and every stage
+# reports "outside the curated window" -- which is true, and is not a
+# silent default.
+attributed_to: "PLACEHOLDER - not yet transcribed"
+citation: "PLACEHOLDER - not yet verified"
+phases: []
