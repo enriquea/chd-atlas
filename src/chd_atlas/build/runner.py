@@ -36,6 +36,7 @@ from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
 from chd_atlas.build.pages import build_gene_index_page, build_gene_pages
+from chd_atlas.build.profiles import build_profile_quantiles
 from chd_atlas.build.search import GeneLabels, build_search
 from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.build.variants import build_variants
@@ -261,6 +262,21 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     # `build/profiles.py` exists it MUST annotate each profiles row with its
     # derived percentile before this call runs, not after.
     omics = build_omics(root, emitter, cardiac=cardiac_tissues)
+    # `build_omics` skips this table outright -- it is keyed on `_GENE_COLUMN`,
+    # and a quantile grid has no gene column -- so without this call
+    # `mirrors/profile_quantiles/` is mirrored, schema-validated, sort-checked
+    # and sha256'd, and reaches no published byte. That is the one file whose
+    # entire purpose is letting a consumer check a published percentile
+    # (D39(b)), so it would be the one thing nothing could fetch, on a build
+    # every other check reports clean. Must run before `write_manifest`,
+    # which seals the emitter and would refuse a write placed after it.
+    #
+    # Returns `{accession: shard path}`; not read here yet. Task 13 threads a
+    # gene's `expression_profile` bundle key to the grid its percentile came
+    # from, the same way `ModalitySummary.shards` links a gene bundle to an
+    # omics shard today, and should consume this mapping rather than
+    # reconstruct the path with a second call to `slug`.
+    build_profile_quantiles(root, emitter)
     variants = build_variants(root, emitter)
     # `facts` rather than a second `gene_facts` call below: the pages and the
     # bundles render from one derivation, so a page cannot state a confidence the

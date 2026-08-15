@@ -1,6 +1,6 @@
 # tests/unit/test_build_profiles.py
-"""Tests for `build/profiles.py`: the percentile band and tau (Tasks 9-10)
-and phase assignment (Task 11).
+"""Tests for `build/profiles.py`: the percentile band and tau (Tasks 9-10),
+phase assignment (Task 11) and quantile shard emission (Task 12).
 
 `percentile_of` and `band` are pure lookups over a hand-built grid, so every
 expected value here is read off `GRID` by construction rather than computed by
@@ -18,16 +18,20 @@ genuinely different code paths, not one value asserted twice.
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import pytest
 
+from chd_atlas.build.emit import Emitter
 from chd_atlas.build.profiles import (
     LOOKUP_RULE,
     TAU_METHOD,
     PhaseOutcome,
     assign_phase,
     band,
+    build_profile_quantiles,
     percentile_of,
     placement,
     specificity,
@@ -556,3 +560,127 @@ def test_an_interior_gap_is_outside_the_window_not_an_empty_vocabulary() -> None
     result = assign_phase("7wpc", (Stage(token="7wpc", wpc=5.5),), gapped)
     assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert result.reason == "outside the curated window"
+
+
+# --- quantile shard emission (Task 12) -------------------------------------
+
+
+def _emitter(tmp_path: Path) -> Emitter:
+    return Emitter(root=tmp_path)
+
+
+# Deliberately NOT already in percentile order on disk. `read_table` preserves
+# a TSV's row order verbatim (`pl.read_csv`, no grouping or sort of its own),
+# so if this fixture were pre-sorted, a builder that forgot to sort at all
+# would still pass -- the "row sort removed" mutation named in the self-review
+# would be invisible. Reversed is the simplest permutation that is
+# unambiguously not ascending.
+_SHUFFLED_PERCENTILES = tuple(reversed(range(101)))
+
+
+def _root_with_quantiles(tmp_path: Path, *, dataset: str = "E-MTAB-6814") -> Path:
+    """One shard, one (tissue, stage) grid, 101 rows written out of order."""
+    directory = tmp_path / "mirrors" / "profile_quantiles"
+    directory.mkdir(parents=True, exist_ok=True)
+    header = "dataset\ttissue\tstage\tpercentile\tvalue\tunit\tn_genes\n"
+    rows = "".join(
+        f"{dataset}\tHeart\t7wpc\t{percentile}\t{float(percentile)}\trpkm\t19842\n"
+        for percentile in _SHUFFLED_PERCENTILES
+    )
+    (directory / f"{dataset}.tsv").write_text(header + rows)
+    return tmp_path
+
+
+def test_the_quantile_grid_is_published_so_the_percentile_can_be_checked(tmp_path: Path) -> None:
+    """D39(b) is unmet unless this file is fetchable.
+
+    `build_omics` emits a shard only for tables in `_GENE_COLUMN`, and a
+    quantile table has no gene column -- so without this the grid is
+    mirrored, schema-validated, sorted and checksummed, and reaches no
+    published byte. The table whose entire purpose is making the headline
+    number auditable would be the one thing a consumer could not fetch, and
+    nothing would catch it: the validators check the mirror against itself,
+    the arithmetic tests pass on unpublished input, and a `diff -rq` between
+    two builds shows a file that appears, never one that should have.
+    """
+    emitter = _emitter(tmp_path)
+    build_profile_quantiles(_root_with_quantiles(tmp_path), emitter)
+    payload = json.loads((tmp_path / "omics/profile_quantiles/E-MTAB-6814.json").read_bytes())
+    assert payload["table"] == "profile_quantiles"
+    assert len(payload["rows"]) == 101
+    assert [row["percentile"] for row in payload["rows"]] == list(range(101))
+
+
+def test_a_shard_with_two_grids_keeps_each_ones_percentiles_contiguous(tmp_path: Path) -> None:
+    """A single-grid fixture cannot distinguish 'sort by percentile alone'
+    from 'sort by the table's own (dataset, tissue, stage, percentile) key' --
+    the two rules agree whenever there is only one (tissue, stage) pair, which
+    is the shape of the fixture above and NOT the shape of a real shard (many
+    organs, many stages per dataset). Two three-row grids here, interleaved
+    and each individually out of order, make the two rules disagree: sorting
+    by percentile alone would interleave Heart's and Liver's rows by
+    breakpoint value; sorting by the full key keeps each tissue's own rows
+    together and internally ascending.
+    """
+    directory = tmp_path / "mirrors" / "profile_quantiles"
+    directory.mkdir(parents=True)
+    header = "dataset\ttissue\tstage\tpercentile\tvalue\tunit\tn_genes\n"
+    rows = (
+        "E-MTAB-6814\tLiver\t7wpc\t2\t9.0\trpkm\t19842\n"
+        "E-MTAB-6814\tHeart\t7wpc\t1\t8.0\trpkm\t19842\n"
+        "E-MTAB-6814\tLiver\t7wpc\t0\t7.0\trpkm\t19842\n"
+        "E-MTAB-6814\tHeart\t7wpc\t2\t6.0\trpkm\t19842\n"
+        "E-MTAB-6814\tLiver\t7wpc\t1\t5.0\trpkm\t19842\n"
+        "E-MTAB-6814\tHeart\t7wpc\t0\t4.0\trpkm\t19842\n"
+    )
+    (directory / "E-MTAB-6814.tsv").write_text(header + rows)
+
+    build_profile_quantiles(tmp_path, _emitter(tmp_path))
+
+    payload = json.loads((tmp_path / "omics/profile_quantiles/E-MTAB-6814.json").read_bytes())
+    assert [row["tissue"] for row in payload["rows"]] == ["Heart"] * 3 + ["Liver"] * 3
+    assert [row["percentile"] for row in payload["rows"]] == [0, 1, 2, 0, 1, 2]
+
+
+def test_a_shard_filename_needing_escape_is_slugged_before_use(tmp_path: Path) -> None:
+    """The stem becomes a URL; `build_omics` slugs its own shard stems for the
+    same reason (`paths.slug`'s docstring). Without the `slug` call this would
+    publish `omics/profile_quantiles/bad name.json` -- a space that a browser
+    or a bare `curl` invocation would need to escape before it could fetch it.
+
+    Also pins the returned mapping's shape: keyed on the raw accession (what a
+    caller already has from `profiles.dataset`/`Dataset.id`), valued with the
+    exact slugged path this function wrote -- so a future caller reaches the
+    file by reading this return rather than by reconstructing the path with
+    a second call to `slug` that could drift from this one.
+    """
+    directory = tmp_path / "mirrors" / "profile_quantiles"
+    directory.mkdir(parents=True)
+    header = "dataset\ttissue\tstage\tpercentile\tvalue\tunit\tn_genes\n"
+    (directory / "bad name.tsv").write_text(header + "bad name\tHeart\t7wpc\t0\t1.0\trpkm\t100\n")
+
+    shards = build_profile_quantiles(tmp_path, _emitter(tmp_path))
+
+    assert (tmp_path / "omics" / "profile_quantiles" / "bad_name.json").is_file()
+    assert not (tmp_path / "omics" / "profile_quantiles" / "bad name.json").exists()
+    assert shards == {"bad name": "omics/profile_quantiles/bad_name.json"}
+
+
+def test_an_unreadable_shard_does_not_stop_the_others(tmp_path: Path) -> None:
+    """A zero-length shard makes polars raise, and one bad file is not the build.
+
+    `validate_table` reports the same file against the same path; raising
+    here would report it twice and abort every shard behind it -- the same
+    reasoning as `build_omics`'s own
+    `test_an_unreadable_mirror_does_not_stop_the_others`.
+    """
+    directory = tmp_path / "mirrors" / "profile_quantiles"
+    directory.mkdir(parents=True)
+    (directory / "E-MTAB-0000001.tsv").write_text("")
+    _root_with_quantiles(tmp_path, dataset="E-MTAB-0000002")
+
+    shards = build_profile_quantiles(tmp_path, _emitter(tmp_path))
+
+    assert list(shards) == ["E-MTAB-0000002"]
+    assert (tmp_path / "omics" / "profile_quantiles" / "E-MTAB-0000002.json").is_file()
+    assert not (tmp_path / "omics" / "profile_quantiles" / "E-MTAB-0000001.json").exists()

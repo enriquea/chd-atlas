@@ -13,10 +13,12 @@ re-derivable from its median and the published breakpoints; the breakpoints
 are not, because D32 forbids publishing the matrix they came from. Stated as a
 trade rather than claimed as a proof.
 
-This module carries the percentile band (Task 9) and tau (Task 10), plus
-phase assignment (Task 11). Task 12 adds quantile shard emission -- the other
-half of D39(b)'s bargain, since Task 9's percentile is re-derivable only if
-the breakpoints it was read against are themselves fetchable.
+This module carries the percentile band (Task 9), tau (Task 10), phase
+assignment (Task 11) and quantile shard emission (Task 12). Task 12 is the
+other half of D39(b)'s bargain: Task 9's percentile is re-derivable only if
+the breakpoints it was read against are themselves fetchable, and
+`build_omics` never emits this table -- it skips every schema absent from its
+own `_GENE_COLUMN`, and a quantile grid has no gene column at all.
 """
 
 from __future__ import annotations
@@ -26,10 +28,14 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Final, TypedDict
 
+from chd_atlas.build.emit import Emitter
+from chd_atlas.build.paths import slug
 from chd_atlas.models.dataset import Stage
 from chd_atlas.models.phases import CardiacPhaseFile
+from chd_atlas.tables import TABLE_SCHEMAS, mirror_paths, read_table
 
 # D39(a): the method travels with the number. Published beside every
 # percentile so a consumer can re-derive it without reading this module's
@@ -433,3 +439,80 @@ def assign_phase(
     else:
         reason = "outside the curated window"
     return PhaseAssignment(token=token, outcome=PhaseOutcome.OUTSIDE_WINDOW, reason=reason)
+
+
+def build_profile_quantiles(root: Path, emitter: Emitter) -> dict[str, str]:
+    """Publish every quantile grid, so a percentile this atlas derives can be checked.
+
+    D39(b) is unmet without this. A gene page states a percentile whose input
+    is the whole source transcriptome (tens of thousands of genes), and D32
+    forbids re-hosting that matrix -- so `mirrors/profile_quantiles/<accession>.tsv`
+    exists solely to publish the 101 breakpoints a consumer needs to place any
+    abundance and reproduce the number themselves. `build_omics` never emits
+    it: that function skips every schema absent from its own `_GENE_COLUMN`
+    (`omics.py`'s `if schema_name not in _GENE_COLUMN: continue`), and a
+    quantile grid has no gene column -- there is no gene to attribute a
+    breakpoint row to. Without this function the table is mirrored,
+    schema-validated, sort-checked and sha256'd, and reaches no published
+    byte: the one file whose entire purpose is auditability would be the one
+    thing a consumer could not fetch, and nothing would catch it -- the
+    validators check the mirror against itself, `percentile_of`'s arithmetic
+    is tested against unpublished input either way, and a `diff -rq` between
+    two builds shows a file that appears, never one that should have.
+
+    Emits `omics/profile_quantiles/<accession>.json` as
+    `{"table": "profile_quantiles", "rows": [...]}` -- the same envelope
+    `build_omics` writes for its own shards, so a consumer reads one shape
+    regardless of which table it fetched. The accession is the shard's own
+    filename stem, exactly as `build_omics` reads a dataset accession from a
+    `profiles`/`expression`/`proteomics`/`phospho` shard's name; it is put
+    through `paths.slug` for the same reason every shard stem is -- the stem
+    becomes a URL, and a space or a colon in one would need escaping before it
+    could be fetched.
+
+    Rows are sorted by the table's own canonical `sort_key`
+    (`dataset, tissue, stage, percentile`) before being written, never trusted
+    to already be in that order: `read_table` preserves a TSV's file order
+    verbatim (`pl.read_csv`, no grouping or sort of its own), so an unsorted
+    row order on disk would otherwise publish unsorted, silently, on a build
+    that never re-validates a mirror it has already read. Sorting on the full
+    key rather than on `percentile` alone matters the moment one shard holds
+    more than one `(tissue, stage)` grid, which is the ordinary shape for a
+    real dataset (many organs, many stages) rather than the single-grid shape
+    of the test fixture -- sorting on `percentile` alone would interleave
+    every grid in the shard by breakpoint value instead of keeping each one
+    contiguous and internally ordered.
+
+    Shards are emitted in `mirror_paths`' own order, which is sorted by
+    filename -- so two builds of one commit write these files in the same
+    order, though (unlike row order within one file) that has no bearing on
+    any file's *content*.
+
+    Returns `{dataset accession: relative shard path}`. Not yet read by any
+    caller: Task 13 is what threads a gene's `expression_profile` bundle key
+    to the grid its percentile came from, the way `ModalitySummary.shards`
+    lets a gene bundle reach an omics shard today. Returning the exact path
+    this function wrote -- rather than leaving Task 13 to reconstruct it via
+    a second call to `slug` -- is what keeps that link from becoming a second
+    computation that could drift from the first, the same discipline
+    `omics.py`'s own module docstring states for `count`.
+    """
+    shards: dict[str, str] = {}
+    for path, schema_name in mirror_paths(root):
+        if schema_name != "profile_quantiles":
+            continue
+        frame, _ = read_table(path, TABLE_SCHEMAS[schema_name])
+        if frame is None:
+            # Unreadable is `validate_table`'s to report against this same
+            # path; failing the build here would say it a second time with
+            # less context. Unreachable behind `build_site`'s validation
+            # gate in the same way `build_omics`'s equivalent branch is --
+            # kept as a guard on that bypassed gate rather than trusted to
+            # stay true as the two modules evolve apart.
+            continue
+        rows = frame.sort(list(TABLE_SCHEMAS[schema_name].sort_key)).to_dicts()
+        accession = path.stem
+        relative = f"omics/profile_quantiles/{slug(accession)}.json"
+        emitter.write_json(relative, {"table": schema_name, "rows": rows})
+        shards[accession] = relative
+    return shards
