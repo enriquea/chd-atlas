@@ -27,6 +27,12 @@ computed by `burden.burden_census`, which is where the reasoning lives. It is
 computed there rather than here because `manifest.json` states the same census;
 one derivation is what stops the page and the payload disagreeing.
 
+A fifth — the developmental-expression census — is computed the same way, by
+`profiles.profile_census`, for the same reason: added across Tasks 1-14
+without a word of it reaching this page, which is exactly how a burden layer
+once shipped for three releases with the word "burden" appearing here zero
+times (CLAUDE.md section 4.29).
+
 - **Genes published** is `len(published)`, D21's population: one gene per member
   of the set `build_genes` keys `genes/index.json` on, each of them a gene a
   external authority already treats as a congenital heart disease gene. 92 in
@@ -80,6 +86,7 @@ from typing import Final
 from chd_atlas.build.burden import BurdenCensus
 from chd_atlas.build.emit import Emitter
 from chd_atlas.build.paths import LANDING
+from chd_atlas.build.profiles import ProfileCensus
 from chd_atlas.build.render import EVIDENCE_POWER_CAVEAT, document, evidence_legend
 from chd_atlas.build.validity import GeneValidity, admitting_grade
 from chd_atlas.corpus import Corpus
@@ -195,6 +202,7 @@ def _render(
     validity: Mapping[str, GeneValidity],
     published: Collection[str],
     census: BurdenCensus,
+    profile_census: ProfileCensus,
 ) -> str:
     assertion_count = len(corpus.assertions)
     # The very set `gene_facts` keys `genes/index.json` on, not a recomputation
@@ -246,6 +254,18 @@ def _render(
             # `cohorts.json` is where the caveats on each live.
             _stat("Sample collections", _number(len(corpus.cohorts))),
             _stat("Genes with burden evidence", _number(census.genes)),
+            # Immediately after the burden figures, for the reason this pair
+            # exists at all: a whole developmental-expression layer landed
+            # across Tasks 1-14 with nothing on this page naming it, which is
+            # the same shape of omission that once left "burden" unmentioned
+            # here for three releases (CLAUDE.md section 4.29). Both restricted
+            # to `published` by `profiles.profile_census` -- never
+            # `len(corpus.datasets)`, which already counts every registered
+            # omics dataset of every design with no restriction at all, and
+            # never a bare `len(profiles)`, which counts a gene whether or not
+            # any authority has admitted it.
+            _stat("Developmental expression datasets", _number(profile_census["datasets"])),
+            _stat("Genes with developmental expression data", _number(profile_census["genes"])),
             _stat("Curated gene-disease assertions", _number(assertion_count)),
             _stat("Genes the atlas has curated", _number(len(curated_genes))),
             _stat("Functional evidence records", _number(len(corpus.functional))),
@@ -336,6 +356,7 @@ def build_landing(
     validity: Mapping[str, GeneValidity],
     published: Collection[str],
     census: BurdenCensus,
+    profile_census: ProfileCensus,
     emitter: Emitter,
 ) -> None:
     """Emit `index.html`.
@@ -362,5 +383,14 @@ def build_landing(
     future `build_site` forget to pass one and publish a front page reading
     `0 burden statistics` over a corpus holding 290, on a green build, which is
     this project's characteristic failure exactly.
+
+    `profile_census` is `profiles.profile_census`'s return, the same object
+    `write_manifest` publishes as `counts.profile_datasets`/`counts.profile_genes`
+    — for the identical reason `census` is threaded rather than recomputed, and
+    with no default for the identical reason: a whole evidence layer has landed
+    with this page never touched before (CLAUDE.md section 4.29's burden
+    precedent), and a silently-defaulted zero is exactly how that happens again.
     """
-    emitter.write_text(LANDING, _render(corpus, symbols, validity, published, census))
+    emitter.write_text(
+        LANDING, _render(corpus, symbols, validity, published, census, profile_census)
+    )

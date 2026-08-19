@@ -18,13 +18,25 @@ from chd_atlas.build.emit import Emitter
 from chd_atlas.build.pages import (
     _EM_DASH,
     _SCOPE_RULE,
+    _phase_sentence,
     build_gene_index_page,
     build_gene_pages,
 )
 from chd_atlas.build.paths import gene_page_path
+from chd_atlas.build.profiles import (
+    EMPTY_EXPRESSION_PROFILE,
+    DatasetProfileEntry,
+    ExpressionProfile,
+    PhaseInfo,
+    Placement,
+    Specificity,
+    StageProfileEntry,
+    TissueProfileEntry,
+)
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
+from chd_atlas.models.dataset import Dataset, Stage
 from chd_atlas.models.literature import Publication
 from chd_atlas.vocab import (
     AtlasCuration,
@@ -268,7 +280,14 @@ def test_a_curated_gene_page_carries_its_evidence_quote_and_pmid(
     assert 'href="https://pubmed.ncbi.nlm.nih.gov/8988165/"' in page
     assert "A nonsense TBX5 mutation was found in affected members." in page
     assert "Mutations in human TBX5 cause limb and cardiac malformation." in page
-    assert "not yet curated" not in page.lower()
+    # Scoped to the lesion-assertion axis, like line 399's own check, rather
+    # than the bare phrase: this gene carries no profiles data either (the
+    # call above passes no `profiles=`), so its page also carries the
+    # unrelated "not yet curated a developmental expression profile" notice
+    # -- a second, independent axis legitimately reusing the same template
+    # `_NOT_CURATED` established. A bare page-wide check cannot tell the two
+    # apart; CLAUDE.md section 4.19 is this exact failure shape.
+    assert "not yet curated</strong> a lesion assertion" not in page
     assert 'href="../genes/HGNC_11604.json"' in page
 
 
@@ -2484,3 +2503,665 @@ def test_both_page_kinds_gloss_every_grade_they_can_render(tmp_path: Path) -> No
         # for 5 published genes carrying an out-of-scope ClinGen `Disputed`.
         assert "disputed or refuted by an expert panel for a disease" in key
         assert "not published here at all" not in page
+
+
+# --- Developmental expression -----------------------------------------------
+#
+# Every fixture below builds `ExpressionProfile` TypedDicts directly, the same
+# choice `_burden_row` makes for `BurdenRow`: this is a rendering test, and
+# going through `build/profiles.py`'s real pipeline (a TSV on disk, a quantile
+# grid, `gene_expression_profiles` itself) would test that module a second
+# time rather than the English this one chooses for its output.
+
+
+def _tissue_entry(
+    tissue: str = "Heart",
+    median: float = 100.0,
+    unit: str = "rpkm",
+    n_samples: int = 3,
+    placement: Placement | None = None,
+    not_placed_reason: str | None = None,
+) -> TissueProfileEntry:
+    return TissueProfileEntry(
+        tissue=tissue,
+        median_abundance=median,
+        unit=unit,
+        n_samples=n_samples,
+        placement=placement,
+        not_placed_reason=not_placed_reason,
+    )
+
+
+def _placement(
+    median_percentile: int = 97,
+    q25_percentile: int | None = 92,
+    q75_percentile: int | None = 99,
+    n_genes: int = 19842,
+) -> Placement:
+    return Placement(
+        q25_percentile=q25_percentile,
+        median_percentile=median_percentile,
+        q75_percentile=q75_percentile,
+        median_abundance=100.0,
+        unit="rpkm",
+        n_samples=3,
+        n_genes=n_genes,
+        method="lowest percentile of a tied breakpoint (bisect_left)",
+    )
+
+
+def _specificity(
+    tau: float = 0.483,
+    tissues: tuple[str, ...] = ("Brain", "Heart", "Liver"),
+    highest_in: str | None = "Heart",
+) -> Specificity:
+    return Specificity(
+        tau=tau,
+        scale="log2(x+1)",
+        method="tau (Yanai et al. 2005)",
+        tissues=tissues,
+        n_tissues=len(tissues),
+        highest_in=highest_in,
+        medians=dict.fromkeys(tissues, 10.0),
+    )
+
+
+def _phase_info(
+    outcome: str | None = "matched",
+    phase_ids: tuple[str, ...] = ("septation",),
+    reason: str | None = None,
+) -> PhaseInfo:
+    return PhaseInfo(outcome=outcome, phase_ids=phase_ids, reason=reason)
+
+
+def _stage_entry(
+    stage: str | None = "7wpc",
+    phase: PhaseInfo | None = None,
+    specificity: Specificity | None = None,
+    specificity_unavailable_reason: str | None = None,
+    tissues: tuple[TissueProfileEntry, ...] = (),
+) -> StageProfileEntry:
+    return StageProfileEntry(
+        stage=stage,
+        phase=phase if phase is not None else _phase_info(),
+        specificity=specificity,
+        specificity_unavailable_reason=specificity_unavailable_reason,
+        tissues=list(tissues),
+    )
+
+
+def _dataset_profile_entry(
+    dataset: str = "E-MTAB-6814",
+    quantile_shard: str | None = "omics/profile_quantiles/E-MTAB-6814.json",
+    stages: tuple[StageProfileEntry, ...] = (),
+) -> DatasetProfileEntry:
+    return DatasetProfileEntry(dataset=dataset, quantile_shard=quantile_shard, stages=list(stages))
+
+
+def _expression_profile(datasets: tuple[DatasetProfileEntry, ...] = ()) -> ExpressionProfile:
+    return ExpressionProfile(datasets=list(datasets))
+
+
+def _profile_dataset(
+    accession: str = "E-MTAB-6814",
+    *,
+    cardiac_tissues: tuple[str, ...] = ("Heart",),
+    detection_floor: float = 1.0,
+) -> Dataset:
+    """A minimal, validly-constructed `Dataset`, mirroring `test_build_profiles.
+
+    py`'s own `_dataset()` factory field for field, so this fixture is proven
+    to satisfy `Dataset`'s `a_profile_dataset_is_fully_declared` validator
+    rather than guessed at independently.
+    """
+    return Dataset(
+        id=accession,
+        archive="arrayexpress",
+        technology="bulk_rnaseq",
+        design="profile",
+        tissue="whole embryo",
+        developmental_stage="embryonic",
+        organism="NCBITaxon:9606",
+        n_samples=3,
+        licence="CC BY 4.0",
+        contrasts=[],
+        cardiac_tissues=cardiac_tissues,
+        detection_floor=detection_floor,
+        floor_source="source methods, section 4",
+        quantile_estimator="linear",
+        stages=(Stage(token="7wpc", wpc=7.0),),
+    )
+
+
+def _expression_page(
+    tmp_path: Path,
+    profiles: dict[str, ExpressionProfile],
+    datasets: dict[str, Dataset] | None = None,
+    facts: dict[str, GeneFacts] | None = None,
+    name: str = "HGNC_4173.html",
+) -> str:
+    """One gene page, built only to exercise the expression section.
+
+    Every other input is the smallest fixture `build_gene_pages` accepts: no
+    burden, no curated assertions, one mirrored validity record. `facts`
+    defaults to a single uncurated GATA4 so a caller testing one gene need not
+    build a `GeneFacts` by hand.
+    """
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        facts or {GATA4: _facts(GATA4, AtlasCuration.NOT_YET_CURATED)},
+        emitter,
+        symbols={GATA4: "GATA4", TBX5: "TBX5"},
+        validity={GATA4: _validity(), TBX5: _validity()},
+        assertions={},
+        publications={},
+        burden={},
+        cohorts={},
+        profiles=profiles,
+        datasets=datasets or {},
+    )
+    return _page(tmp_path, name)
+
+
+def _slice_between(text: str, start_marker: str, end_markers: tuple[str, ...]) -> str:
+    """`text` after `start_marker`, up to the first of `end_markers` (or the end)."""
+    start = text.index(start_marker) + len(start_marker)
+    rest = text[start:]
+    positions = [rest.index(marker) for marker in end_markers if marker in rest]
+    return rest[: min(positions)] if positions else rest
+
+
+def _expression_section_text(page: str) -> str:
+    """The `Developmental expression` section alone, up to the next `<h2>`.
+
+    Sliced for the reason `_validity_table` is sliced: a page-wide assertion
+    cannot tell this section's own claim from an unrelated occurrence of the
+    same words elsewhere on the page (CLAUDE.md section 4.19) -- the research
+    notice, the scope rule and the burden section all sit on the same page.
+    """
+    return _slice_between(page, "<h2>Developmental expression</h2>", ("<h2>",))
+
+
+def test_a_gene_with_no_expression_data_says_the_atlas_has_not_curated_it(
+    tmp_path: Path,
+) -> None:
+    """`{"datasets": []}` -- `EMPTY_EXPRESSION_PROFILE` itself, not a look-alike
+    this test built by hand, so the page and `bundles.py`'s fallback are proven
+    to agree on what "empty" means.
+
+    **Chosen wording, and the rejected one.** "The atlas has not yet curated a
+    profile for this gene" is the true claim: no dataset mentions this gene at
+    all, so there is no specific dataset in view to say "does not cover it"
+    about, and that alternative would invent a check this atlas never ran. The
+    section still renders -- never an absent one, the `_not_curated` reason:
+    an absent section cannot be told apart from "the atlas looked and found
+    nothing".
+    """
+    page = _expression_page(tmp_path, {GATA4: EMPTY_EXPRESSION_PROFILE})
+    section = _expression_section_text(page)
+
+    assert "not yet curated" in section
+    assert "does not cover" not in section
+    assert "<h3>" not in section, "an empty profile must name no dataset"
+    assert "<table" not in section
+
+
+def test_the_gloss_never_calls_a_gene_heart_preferential_on_another_organs_peak(
+    tmp_path: Path,
+) -> None:
+    """Fixture: tau peaking in liver. A page-wide assertion cannot catch this.
+
+    Same shape as `_validity_table()` -- a page-wide check once passed with the
+    renderer mutated to print bare ids, because the same strings rendered in a
+    <details> block further down. Slice to the section before asserting.
+
+    Both genes share one dataset whose only declared `cardiac_tissues` entry is
+    Heart, so the two pages differ only in `highest_in` -- never in whether
+    Heart itself is cardiac -- which is what makes this a test of the gate and
+    not of the fixture.
+    """
+    dataset = _profile_dataset(cardiac_tissues=("Heart",))
+    heart_peak = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(_stage_entry(specificity=_specificity(highest_in="Heart")),)
+            ),
+        )
+    )
+    liver_peak = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(_stage_entry(specificity=_specificity(highest_in="Liver")),)
+            ),
+        )
+    )
+
+    emitter = Emitter(root=tmp_path)
+    build_gene_pages(
+        {
+            TBX5: _facts(TBX5, AtlasCuration.CURATED),
+            GATA4: _facts(GATA4, AtlasCuration.NOT_YET_CURATED),
+        },
+        emitter,
+        symbols={TBX5: "TBX5", GATA4: "GATA4"},
+        validity={TBX5: _validity(), GATA4: _validity()},
+        assertions={},
+        publications={},
+        burden={},
+        cohorts={},
+        profiles={TBX5: heart_peak, GATA4: liver_peak},
+        datasets={"E-MTAB-6814": dataset},
+    )
+
+    heart_section = _expression_section_text(_page(tmp_path, "HGNC_11604.html"))
+    liver_section = _expression_section_text(_page(tmp_path, "HGNC_4173.html"))
+
+    assert "heart-preferential" in heart_section
+    assert "peaks in Heart" in heart_section
+
+    assert "heart-preferential" not in liver_section
+    assert "peaks in Liver" in liver_section
+    assert "does not treat as a cardiac tissue" in liver_section
+
+
+def test_the_gloss_says_neither_organ_when_the_peak_is_tied(tmp_path: Path) -> None:
+    """`highest_in: null` -- organs tied at the peak. Neither wording applies.
+
+    Distinct from the cardiac/non-cardiac test above: this fixture's dataset
+    still declares Heart as cardiac, so a gate that fired on "any tissues at
+    all" rather than specifically on `highest_in is None` would pass the other
+    test and fail only this one.
+    """
+    profile = _expression_profile(
+        (_dataset_profile_entry(stages=(_stage_entry(specificity=_specificity(highest_in=None)),)),)
+    )
+    page = _expression_page(
+        tmp_path, {GATA4: profile}, {"E-MTAB-6814": _profile_dataset(cardiac_tissues=("Heart",))}
+    )
+    section = _expression_section_text(page)
+
+    assert "heart-preferential" not in section
+    assert "peaks in" not in section
+    assert "tied" in section
+    # Rule 3 still holds in the tied case: the number, its scale and its organ
+    # list are not conditioned on the peak being resolvable.
+    assert "τ = 0.483 (log2(x+1) scale) across Brain, Heart, Liver (3 organs sampled)." in section
+
+
+def test_tau_never_renders_without_its_scale_and_its_organ_list(tmp_path: Path) -> None:
+    """No branch omits the qualifier -- the `_effect`/`count_unit` precedent.
+
+    Pinned as one literal composed sentence rather than as three separate
+    membership checks, so dropping the scale, dropping a tissue, or reordering
+    the tissue list all fail this one assertion instead of needing three.
+    `test_both_page_kinds_state_the_rule_that_admits_a_gene_to_this_atlas`'s
+    own lesson: pin published wording against a literal, never against the
+    constant that produced it.
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        specificity=_specificity(
+                            tau=0.483, tissues=("Brain", "Heart", "Liver"), highest_in="Heart"
+                        )
+                    ),
+                )
+            ),
+        )
+    )
+    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}))
+
+    assert "τ = 0.483 (log2(x+1) scale) across Brain, Heart, Liver (3 organs sampled)." in section
+
+
+def test_a_below_floor_tissue_names_the_organ_and_the_floor_value_and_never_says_not_detected(
+    tmp_path: Path,
+) -> None:
+    """A negative assertion on published bytes, sharing a fixture with the
+    positive wording it replaced.
+
+    Grep the BUILT PAGE, never the source: `pages.py` builds copy from adjacent
+    string literals, so a banned phrase split across two source lines returns
+    nothing from a source grep while rendering verbatim on the page. That has
+    happened here, twice, and the negative assertion is what caught it.
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        tissues=(
+                            _tissue_entry(
+                                tissue="Liver",
+                                median=0.3,
+                                unit="rpkm",
+                                placement=None,
+                                not_placed_reason="below_detection_floor",
+                            ),
+                        )
+                    ),
+                )
+            ),
+        )
+    )
+    page = _expression_page(
+        tmp_path, {GATA4: profile}, {"E-MTAB-6814": _profile_dataset(detection_floor=1.0)}
+    )
+    section = _expression_section_text(page)
+
+    assert "below the detection floor in whole Liver at this stage" in section
+    assert "detection floor 1 rpkm" in section
+    assert "not detected" not in page.lower()
+
+
+def test_n_samples_travels_with_every_figure_and_distinguishes_a_single_observation(
+    tmp_path: Path,
+) -> None:
+    """The schema permits `n_samples` = 1, so "median" can be a single
+    observation, and the page must say so -- and say something different for
+    three.
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        tissues=(
+                            _tissue_entry(tissue="Heart", n_samples=3, placement=_placement()),
+                            _tissue_entry(
+                                tissue="Liver",
+                                n_samples=1,
+                                median=0.3,
+                                placement=None,
+                                not_placed_reason="below_detection_floor",
+                            ),
+                        )
+                    ),
+                )
+            ),
+        )
+    )
+    section = _expression_section_text(
+        _expression_page(
+            tmp_path, {GATA4: profile}, {"E-MTAB-6814": _profile_dataset(detection_floor=1.0)}
+        )
+    )
+
+    assert "n=3 samples" in section
+    assert "n=1 sample)" in section
+    assert "n=1 samples" not in section
+
+
+def test_tau_undefined_at_one_organ_says_so_rather_than_a_number(tmp_path: Path) -> None:
+    """`specificity: null` (one organ sampled) beside a stage with a real tau,
+    on the same gene page -- the fixture pair CLAUDE.md section 4.14 asks for.
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        stage="one_organ",
+                        specificity=None,
+                        specificity_unavailable_reason="one_organ_sampled",
+                    ),
+                    _stage_entry(
+                        stage="two_organs",
+                        specificity=_specificity(tissues=("Heart", "Liver"), highest_in="Heart"),
+                    ),
+                )
+            ),
+        )
+    )
+    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}))
+
+    one_organ = _slice_between(section, "<h4>one_organ</h4>", ("<h4>",))
+    two_organs = _slice_between(section, "<h4>two_organs</h4>", ("<h4>",))
+
+    assert "τ is not available: only one organ was sampled at this stage" in one_organ
+    assert "τ =" not in one_organ
+    assert "τ = 0.483" in two_organs
+
+
+def test_every_stage_outcome_reads_as_a_state_never_a_bug_or_blank(tmp_path: Path) -> None:
+    """Pins all four `PhaseOutcome` members, so a gene page is proven correct
+    for a stage in each state -- including MATCHED with only one phase, which
+    `test_a_matched_stage_with_several_phases_names_every_one` deliberately
+    does NOT also cover, per the fixture-diversity rule: a fixture where every
+    MATCHED stage carries the same number of phases could not distinguish
+    "renders the one phase" from "renders `phase_ids[0]` and drops the rest".
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        stage="s_matched",
+                        phase=_phase_info(
+                            outcome="matched", phase_ids=("outflow_tract_septation",)
+                        ),
+                    ),
+                    _stage_entry(
+                        stage="s_outside",
+                        phase=_phase_info(
+                            outcome="outside_window",
+                            phase_ids=(),
+                            reason="outside the curated window",
+                        ),
+                    ),
+                    _stage_entry(
+                        stage="s_postnatal",
+                        phase=_phase_info(outcome="post_natal", phase_ids=(), reason="post-natal"),
+                    ),
+                    _stage_entry(
+                        stage="s_undeclared",
+                        phase=_phase_info(
+                            outcome="undeclared",
+                            phase_ids=(),
+                            reason="stage not declared by this dataset",
+                        ),
+                    ),
+                )
+            ),
+        )
+    )
+    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}))
+
+    matched = _slice_between(section, "<h4>s_matched</h4>", ("<h4>",))
+    outside = _slice_between(section, "<h4>s_outside</h4>", ("<h4>",))
+    postnatal = _slice_between(section, "<h4>s_postnatal</h4>", ("<h4>",))
+    undeclared = _slice_between(section, "<h4>s_undeclared</h4>", ("<h4>",))
+
+    assert "Developmental phase: <strong>outflow tract septation</strong>." in matched
+    assert "Developmental phase: outside the curated window." in outside
+    assert "Developmental phase: post-natal." in postnatal
+    assert "Developmental phase: stage not declared by this dataset." in undeclared
+    for block in (matched, outside, postnatal, undeclared):
+        assert "Developmental phase: .</p>" not in block, "a blank reason is a rendering bug"
+
+
+def test_a_matched_stage_with_several_phases_names_every_one() -> None:
+    """A stage inside an overlap must name ALL of its phases, not just the
+    first -- the unique killer of a renderer that reads only `phase_ids[0]`.
+
+    Deliberately three phases, not two: with two, a truncating renderer that
+    always shows exactly one and a correct renderer that drops the last of
+    two could both pass a weaker assertion. Three phases makes "shows one",
+    "shows two of three" and "shows all three" three distinct, checkable
+    outcomes, and the singular/plural noun is checked on both sides so a
+    mutant hard-coding "phases" (plural) cannot pass the single-phase test
+    above either.
+    """
+    phase = _phase_info(
+        outcome="matched",
+        phase_ids=("atrial_septation", "outflow_tract_septation", "ventricular_septation"),
+    )
+    sentence = _phase_sentence(phase)
+    assert sentence == (
+        "Developmental phases: <strong>atrial septation</strong>, "
+        "<strong>outflow tract septation</strong>, "
+        "<strong>ventricular septation</strong>."
+    )
+
+
+def test_the_bulk_dilution_caveat_is_unconditional_not_only_beside_bad_news(
+    tmp_path: Path,
+) -> None:
+    """`_POOLING_NOTICE` is the recorded precedent: made conditional once, it
+    read false in the position that motivated the fix. A caveat present only
+    beside a below-floor tissue would read as an excuse for that gene's own
+    numbers rather than as the general fact it is.
+    """
+    all_detected = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(_stage_entry(tissues=(_tissue_entry(placement=_placement()),)),)
+            ),
+        )
+    )
+    caveat = "Every measurement below is from whole, bulk tissue, never a single cell type."
+
+    good_news_section = _expression_section_text(_expression_page(tmp_path, {GATA4: all_detected}))
+    assert caveat in good_news_section
+
+    below_floor = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        tissues=(
+                            _tissue_entry(
+                                median=0.3,
+                                placement=None,
+                                not_placed_reason="below_detection_floor",
+                            ),
+                        )
+                    ),
+                )
+            ),
+        )
+    )
+    bad_news_section = _expression_section_text(
+        _expression_page(
+            tmp_path,
+            {GATA4: below_floor},
+            {"E-MTAB-6814": _profile_dataset(detection_floor=1.0)},
+        )
+    )
+    assert caveat in bad_news_section
+
+
+def test_percentiles_are_captioned_as_not_comparable_only_when_more_than_one_is_shown(
+    tmp_path: Path,
+) -> None:
+    """Rule 8: not comparable across organs or stages -- and only said where
+    the page actually lays out more than one for a reader to compare.
+
+    Two placements, from two different organs, so the count this gate reads is
+    proven to sum across tissues rather than merely check "is there a
+    placement at all".
+    """
+    caveat = "not comparable across organs or across developmental stages"
+
+    one_placement = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(_stage_entry(tissues=(_tissue_entry(placement=_placement()),)),)
+            ),
+        )
+    )
+    lone_section = _expression_section_text(_expression_page(tmp_path, {GATA4: one_placement}))
+    assert caveat not in lone_section
+    # The denominator travels with the percentile even when the caveat does not.
+    assert "97 of 19,842 genes" in lone_section
+
+    two_placements = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        tissues=(
+                            _tissue_entry(tissue="Heart", placement=_placement()),
+                            _tissue_entry(
+                                tissue="Liver", placement=_placement(median_percentile=40)
+                            ),
+                        )
+                    ),
+                )
+            ),
+        )
+    )
+    busy_section = _expression_section_text(_expression_page(tmp_path, {GATA4: two_placements}))
+    assert caveat in busy_section
+
+
+def test_a_tissue_stage_and_dataset_token_carrying_markup_is_escaped(tmp_path: Path) -> None:
+    """Tissue and stage tokens are mirrored third-party strings, and this is the
+    one artifact kind where a `<` in an organ label is the difference between a
+    string and a script tag.
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                dataset="<i>E-MTAB-x</i>",
+                quantile_shard=None,
+                stages=(
+                    _stage_entry(
+                        stage="<b>7wpc</b>",
+                        tissues=(
+                            _tissue_entry(tissue="<script>xss</script>", placement=_placement()),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    page = _expression_page(tmp_path, {GATA4: profile})
+
+    assert "<script>xss</script>" not in page
+    assert "&lt;script&gt;xss&lt;/script&gt;" in page
+    assert "<b>7wpc</b>" not in page
+    assert "&lt;b&gt;7wpc&lt;/b&gt;" in page
+    assert "<i>E-MTAB-x</i>" not in page
+    assert "&lt;i&gt;E-MTAB-x&lt;/i&gt;" in page
+
+
+def test_the_dataset_heading_links_to_its_own_percentile_grid(tmp_path: Path) -> None:
+    """D39(b)'s auditability reaching a reader, not only a program: the same
+    relative-path convention `_rail`'s "this gene as JSON" link uses.
+    """
+    profile = _expression_profile((_dataset_profile_entry(),))
+    page = _expression_page(tmp_path, {GATA4: profile})
+
+    assert '<a href="../omics/profile_quantiles/E-MTAB-6814.json">' in page
+
+
+def test_the_section_never_renders_a_chart_only_text_and_tables(tmp_path: Path) -> None:
+    """D32: this atlas never re-plots what the source's own browser already
+    shows. If this section ever grows an `<svg>`, a `<canvas>` or an `<img>`,
+    it has failed its governing design rule.
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        specificity=_specificity(),
+                        tissues=(_tissue_entry(placement=_placement()),),
+                    ),
+                )
+            ),
+        )
+    )
+    section = _expression_section_text(
+        _expression_page(
+            tmp_path,
+            {GATA4: profile},
+            {"E-MTAB-6814": _profile_dataset(cardiac_tissues=("Heart",))},
+        )
+    )
+
+    for banned in ("<svg", "<canvas", "<img"):
+        assert banned not in section

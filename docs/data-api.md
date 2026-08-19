@@ -46,14 +46,15 @@ What the build produced, and a checksum for every file in it.
 {
   "counts": {
     "assertions": 1, "burden_rows": 915, "cohort_families": 3,
-    "cohorts": 13, "datasets": 0, "featured": 1, "functional": 0,
-    "genes": 92, "phenotypes": 3, "publications": 4
+    "cohorts": 13, "datasets": 1, "featured": 1, "functional": 0,
+    "genes": 92, "phenotypes": 3, "profile_datasets": 1, "profile_genes": 92,
+    "publications": 5
   },
   "files": {
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.10",
+  "schema_version": "2.11",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -154,6 +155,13 @@ wrong by the next one.
   since `2.3` — every burden row has named its sample collections by bare id
   since `burden` was published, and nothing resolved those ids to anything, so a
   consumer had the numbers and none of the caveats that qualify them.
+  `2.11` added `profile_datasets` and `profile_genes` to `counts`, restricted
+  to `published` for the same reason `genes` and `burden_rows` already are,
+  plus a "Developmental expression" pair of cards on `index.html`. Additive:
+  both keys are always present, and both are `0` in this example because no
+  `profiles` mirror has been committed yet. See
+  [`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
+  for the whole layer these two counts summarise.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -889,6 +897,201 @@ header names what it is for a reader. Both avoid a verdict word on purpose —
 showing 0 of 2 it reads as "not replicated", which is a claim the data do not
 make.
 
+### The bundle's `expression_profile` object: a developmental transcriptome, never a contrast
+
+On every gene bundle. Always present, and empty (`{"datasets": []}`) for a
+gene no profile dataset's mirror covers — the same rule `omics` and `burden`
+above already keep, so "no profile dataset says anything about this gene"
+cannot be confused with "the build dropped it".
+
+```json
+{ "expression_profile": { "datasets": [] } }
+```
+
+**That is still the real shape for a gene no profile dataset's rows mention.**
+`mirrors/profiles/E-MTAB-6814.tsv` is committed, and `manifest.json`'s
+`counts.profile_genes`/`counts.profile_datasets` say how far that reaches:
+92 genes carry a developmental expression profile, across 1 dataset. Most
+published genes carry the populated shape today, not the empty one above.
+The nested shape below is illustrative — restructured for
+readability (a real gene's `stages` runs to a dozen or more entries, one per
+token the dataset declares) rather than copied verbatim from one bundle — but
+every value in its `phase` block is real: it is `assign_phase`'s actual,
+reproducible answer for a 7-elapsed-week stage against the boundaries
+`curation/cardiac_phases.yaml` curates today.
+
+```json
+{
+  "expression_profile": {
+    "datasets": [
+      {
+        "dataset": "E-MTAB-6814",
+        "quantile_shard": "omics/profile_quantiles/E-MTAB-6814.json",
+        "stages": [
+          {
+            "stage": "7wpc",
+            "phase": { "outcome": "matched",
+                       "phase_ids": ["ventricular_septum_morphogenesis",
+                                     "heart_valve_morphogenesis"],
+                       "reason": null },
+            "specificity": { "tau": 0.62, "scale": "log2(x+1)", "method": "…",
+                              "tissues": ["heart", "kidney", "liver"],
+                              "n_tissues": 3, "highest_in": "heart",
+                              "medians": { "heart": 42.0, "kidney": 8.0, "liver": 6.0 } },
+            "specificity_unavailable_reason": null,
+            "tissues": [
+              { "tissue": "heart", "median_abundance": 42.0, "unit": "rpkm",
+                "n_samples": 3,
+                "placement": { "q25_percentile": 44, "median_percentile": 50,
+                                "q75_percentile": 56, "median_abundance": 42.0,
+                                "unit": "rpkm", "n_samples": 3, "n_genes": 19842,
+                                "method": "lowest percentile of a tied breakpoint (bisect_left)" },
+                "not_placed_reason": null }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Two mirror tables feed this, and each reaches a consumer a different way.**
+`mirrors/profiles/<accession>.tsv` (`dataset`, `gene`, `tissue`, `stage`,
+`median_abundance`, `unit`, `q25`, `q75`, `n_samples`) is one of the four
+tables [`omics/<modality>/<accession>.json`](#omicsmodalityaccessionjson)
+above shards like any other — `profiles` is one of that section's four
+modalities — so its raw rows reach `omics/profiles/<accession>.json`
+regardless of gene publication, and `median_abundance`/`unit`/`n_samples`
+below are read straight from it. `mirrors/profile_quantiles/<accession>.tsv`
+never goes through that mechanism at all: it has no gene column, so
+`build_omics` skips it outright, and it is published only as
+[`omics/profile_quantiles/<accession>.json`](#omicsprofile_quantilesaccessionjson)
+(below), one full shard per dataset.
+
+- `datasets` is one entry per profile dataset whose mirror mentions this
+  gene. `quantile_shard` names that accession's
+  `omics/profile_quantiles/<accession>.json` payload, or `null` if the build
+  wrote no shard for it.
+- `stages` is one entry per stage token the mirror's rows use for this
+  (gene, dataset) pair — `stage` is `null` for a measurement with no
+  developmental stage recorded at all.
+- `phase` places the stage in the curated cardiac morphogenetic window
+  (`curation/cardiac_phases.yaml`):
+
+  | `phase.outcome` | meaning |
+  | --- | --- |
+  | `matched` | the stage's own developmental age (`wpc`) falls inside one or more curated cardiac phases; `phase_ids` names all of them |
+  | `outside_window` | a real age exists, but no curated phase covers it |
+  | `post_natal` | the stage has no developmental age at all |
+  | `undeclared` | the dataset's own record does not declare this stage token |
+  | `null` | the row itself carries no stage token; `reason` says so |
+
+  **`phase_ids` may name more than one phase, and often does.** Human cardiac
+  morphogenesis runs several processes concurrently — at 6 elapsed weeks post
+  conception, atrial septation, ventricular septation and outflow tract
+  septation are all underway at once — so a stage legitimately matches every
+  phase whose window contains its `wpc`, never just the nearest or the first
+  declared. `curation/cardiac_phases.yaml` curates six phases transcribed from
+  Buijtendijk et al. 2020 (PMID:32048790), each carrying the Gene Ontology
+  term and the Carnegie stage(s)/HsapDv id(s) its boundaries were read from —
+  not published in this bundle field, only in the curation file itself, so a
+  consumer auditing a boundary starts there. `phase_ids` is empty exactly
+  when `outcome` is not `matched`.
+
+  **One of the six, `heart_looping`, never appears in `phase_ids` at all.**
+  The source states when it starts but never states when it ends, and this
+  atlas will not guess a cutoff nothing supports: `end_basis` on that phase
+  is `not_stated` rather than `stated`, and a phase in that state is excluded
+  from every stage's match, at every `wpc`, not merely "too far" past its own
+  start. It is still curated — with its real, sourced start — so a consumer
+  reading `curation/cardiac_phases.yaml` directly sees it; a consumer reading
+  only bundle JSON never does, because this atlas would rather publish
+  nothing for that phase than assert it is still running at a stage the
+  source gives no basis for.
+- `specificity` is Yanai's τ (tau) over every organ a dataset sampled at one
+  stage, or `null` with `specificity_unavailable_reason` naming why:
+
+  | `specificity_unavailable_reason` | meaning |
+  | --- | --- |
+  | `dataset_not_registered` | the mirror names a dataset accession with no curated record at all |
+  | `detection_floor_undeclared` | the dataset record exists but declares no detection floor |
+  | `one_organ_sampled` | fewer than two organs were sampled at this stage — τ's denominator is `n − 1` |
+  | `peak_below_detection_floor` | every sampled organ's median is below the dataset's own floor |
+  | `undefined` | a residual this atlas cannot itself further diagnose |
+
+  `tissue`-level entries carry a **related but not identical** vocabulary
+  through `not_placed_reason` — the two share `dataset_not_registered` and
+  `detection_floor_undeclared`, but a single tissue can never be short of
+  organs or undefined the way a whole stage's τ can, and gains two reasons of
+  its own instead: `no_quantile_grid` (no complete 101-point breakpoint grid
+  exists for this cell) and `below_detection_floor` (a grid and a floor both
+  exist; the median itself falls below it). Four possible values, never the
+  stage-level five.
+- **τ is published bare — no adjective, no band.** A value of 0.71 is not
+  glossed "intermediate" or "specific": choosing a threshold would be a
+  classification this atlas authors about how tissue-specific a gene is,
+  which its governing rule forbids for every derived figure in this layer, the
+  same way D12 forbids the atlas authoring a gene-disease validity call. If
+  you display τ, display the number.
+- **τ is blind to *where* a gene peaks — read `highest_in`, never the number
+  alone.** τ measures concentration, not location. Measured: a gene at heart
+  20, liver 200 and five other organs at 5 (rpkm; seven organs sampled) scores
+  τ = 0.963 computed on the raw values and 0.623 on the `log2(x+1)` scale this
+  atlas actually publishes — and in both, the peak organ is **liver**, not
+  heart. A consumer who reads a moderately high τ as "heart-preferential" for
+  a gene concentrated in liver states the opposite of the truth. `highest_in`
+  is `null` when two or more organs tie exactly at the peak, where naming one
+  of them would be arbitrary.
+- `scale` (`"log2(x+1)"`) and `method` travel beside every τ so a consumer can
+  re-derive it without reading this atlas's source rather than trusting a
+  paraphrase of it. `method` reads exactly: tau (Yanai et al. 2005): mean over
+  organs of (1 - x_i/x_max), x = log2(median+1); a negative median is clamped
+  to 0 before the transform, and every organ's raw median is used even below
+  the dataset's detection floor. `medians` is τ's own input, published exactly
+  as measured — including any organ a gene bundle's own `omics` preview may
+  have already dropped from `top` — so τ's inputs stay reachable from the one
+  payload that publishes τ (design decision D39(b)).
+- `placement` is one gene's percentile band in one (dataset, tissue, stage)
+  cell: `q25_percentile`/`median_percentile`/`q75_percentile`, the outer two
+  `null` below `n_samples = 3`, where a quartile of two points is not a
+  quartile. `method`
+  (`"lowest percentile of a tied breakpoint (bisect_left)"`) names the
+  tie-break — a value tied with a run of identical breakpoints reports the
+  *lowest* percentile in that run, so an unexpressed gene never reads above
+  the median it shares with every other unexpressed one. `n_genes` is the
+  size of the *source* transcriptome that cell's grid was built from — tens
+  of thousands of genes, never the 92 this atlas publishes — because "top 4%"
+  names no population without its denominator.
+
+**Percentiles are not comparable across organs, and — more importantly — not
+comparable across developmental stages.** Each organ transcribes a different
+fraction of the whole gene universe, so "top 10% in liver" and "top 10% in
+heart" describe two different reference distributions, not one ranking read
+two ways. And a reference distribution's own shape changes as the heart
+matures, so a gene with flat, unchanging absolute abundance across
+development can still show a *moving* percentile from one stage to the next,
+purely because everything else in the transcriptome is moving around it. The
+cross-stage caveat matters more here, because this layer's headline
+question — is this gene's cardiac expression distinctive, and does that
+change over development — is asked *within* one organ, across its own
+stages: reading a percentile trend without this caveat can report
+development where none occurred, or miss it where it did.
+
+**Why the quantile grid is published at all, and exactly how far that goes.**
+A percentile's input is the whole source transcriptome — tens of thousands of
+genes — and this atlas publishes 92 of them; design decision D32 forbids
+re-hosting the matrix a percentile was read against. Without a published grid,
+`median_percentile` would be a number nobody outside this atlas could check.
+[`omics/profile_quantiles/<accession>.json`](#omicsprofile_quantilesaccessionjson)
+(below) publishes exactly the 101 breakpoints instead — which is a
+**one-level guarantee, not an unbounded one**: a gene's percentile is
+re-derivable from its own `median_abundance` and the published breakpoints;
+the breakpoints themselves are not re-derivable, because they were read off
+the whole matrix D32 keeps unpublished. State it as the trade it is —
+auditable one level down, not provably correct all the way back to the source
+data.
+
 ## `genes/<slug>.html`
 
 One page per published gene, rendering that gene's bundle for a reader. A
@@ -975,9 +1178,39 @@ or `phospho` — to a summary of that gene's rows:
 - `shards` are the files holding them. Each shard is
   `{"table": "<modality>", "rows": [ … ]}` — the mirror rows, each with one field
   added by the build (see below).
-- **`top` is capped at 25 rows.** It is a preview, ranked by significance, not a
-  page of results. `count` is frequently larger, and the cap is not carried in
-  the payload, so do not infer completeness from `len(top)`.
+- **`top` is capped at 25 rows.** For `expression`, `proteomics` and `phospho`
+  it is a preview, ranked by significance (ascending FDR, ties broken by the
+  table's own sort order), not a page of results. `count` is frequently
+  larger, and the cap is not carried in the payload, so do not infer
+  completeness from `len(top)`.
+- **`profiles` ranks `top` differently, because that table has no
+  significance column at all** — it is an abundance table, not a contrast.
+  The slice is *stratified*: the cardiac series leads, ranked by the derived
+  `placement.median_percentile`
+  (see [`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
+  above), but slots are **reserved for the non-cardiac tissues**, up to half of `top`.
+
+  With `top` capped at 25 that reservation is at most 12, so every other
+  tissue present is represented only while there are 12 or fewer of them —
+  measured, and true of this dataset, which has six. Past that the cardiac
+  series can consume its budget and the remaining tissues share what is left,
+  so do not read the reservation as a guarantee that every tissue appears.
+
+  **The reservation exists because of τ.** A gene's `tau` figure (also
+  documented there) is computed over every organ a dataset sampled at one
+  developmental stage, and design decision D39(b) requires τ's own inputs to
+  stay reachable from the same payload that publishes τ. Without the
+  reservation, a bulk developmental atlas sampling many stages per organ
+  fills every one of the 25 rows with the cardiac series alone — measured:
+  ranking `profiles` the way the other three tables are ranked put 0 of 14
+  heart rows in a 25-row slice at 14 stages per organ (every row ties at "no
+  FDR", so the tie-break falls back to an alphabetical tissue order that
+  heart loses), and ranking cardiac-first with no reservation at all
+  over-corrected, leaving 0 of 6 comparison organs in a 25-row slice at 23
+  stages per organ. **A consumer who does not know this will read the
+  reserved rows as a ranking bug**: they are exactly the organs a gene's own
+  `tau` was computed over, shown so that figure is auditable from the same
+  payload that publishes it.
 
 **To get the rows a bundle counted, filter the shard on `genes`.**
 
@@ -1019,6 +1252,44 @@ accession or a cytogenetic band for a published gene must resolve `hgnc_id`
 against HGNC itself; there is no key to look for and no bundle field that will
 appear later without a `schema_version` bump. The atlas identifies a gene by its
 HGNC id and leaves the mapping to the authority that maintains it.
+
+## `omics/profile_quantiles/<accession>.json`
+
+The percentile grid a `placement`
+(see [`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
+above) was read against — the other half of the trade design decision D39(b)
+makes. This is **not** one of the four modalities in the section above: it has
+no gene column at all — there is no gene to attribute one breakpoint row to —
+so `build_omics` skips it outright (that function shards only the tables its
+own `_GENE_COLUMN` map names). A separate builder
+(`profiles.build_profile_quantiles`) emits it instead, to this separate,
+sibling path under `omics/`.
+
+```json
+{
+  "table": "profile_quantiles",
+  "rows": [
+    { "dataset": "E-MTAB-6814", "tissue": "heart", "stage": "7wpc",
+      "percentile": 50, "value": 0.9, "unit": "rpkm", "n_genes": 19842 }
+  ]
+}
+```
+
+Exactly the `mirrors/profile_quantiles/<accession>.tsv` rows for that dataset,
+republished verbatim — `dataset`, `tissue`, `stage`, `percentile`, `value`,
+`unit`, `n_genes` — sorted by `(dataset, tissue, stage, percentile)`. A
+complete grid is 101 rows for one (dataset, tissue, stage) cell, `percentile`
+running 0 through 100; `n_genes` is the size of the source transcriptome that
+grid was built from, the same figure a `placement` in that cell publishes
+under its own `n_genes`.
+
+A gene bundle reaches this file through
+`expression_profile.datasets[].quantile_shard`, never by constructing the path
+itself — the "never construct a path" rule this document opens with. Without
+this file, `median_percentile` would be an unauditable number: the whole point
+of publishing it is so a consumer can look up the median a gene reported and
+confirm which percentile it lands in, the same lookup this atlas's own build
+performed once.
 
 ## `variants/index.json` and `variants/<chrom>.json.gz`
 
@@ -1105,10 +1376,31 @@ the same guarantee every cardiac term gets.
 { "datasets": [] }
 ```
 
-One record per omics dataset: accession, archive, technology, tissue, stage,
-organism, sample count, licence and its contrasts. This is what an omics row's
-`dataset` column resolves against, the way `publications.json` resolves a PMID.
-Empty in the committed corpus today.
+One record per omics dataset, serialised generically from the curated model
+(`build/literature.py`'s `_dump`, the same function `publications.json`,
+`featured.json` and `phenotypes.json` use) — every field it declares reaches
+this file, with nothing filtered out: `id`, `archive`, `technology`, `tissue`,
+`developmental_stage`, `organism`, `n_samples`, `licence`, `contrasts`,
+`design`, `cardiac_tissues`, `stages`, `detection_floor`, `floor_source`,
+`quantile_estimator` and `publication`. This is what an omics row's `dataset`
+column resolves against, the way `publications.json` resolves a PMID.
+
+**The last six (`design` onward) are what distinguishes a bulk developmental
+expression dataset from every other kind mirrored here.** `design` is either
+`"contrast"` (a differential-expression comparison — `expression`,
+`proteomics`, `phospho`) or `"profile"` (a raw abundance series across
+development — `profiles`, see
+[`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
+above). `cardiac_tissues` and `stages` are `[]` and
+`detection_floor`/`floor_source`/`quantile_estimator` are `null` on a
+`"contrast"` record — never omitted — so every record has one shape whichever
+design it declares. `cardiac_tissues` names which of a profile dataset's own
+tissue tokens this atlas reads as "the heart" for that dataset; `stages` names
+its developmental-stage tokens together with each one's age in weeks
+post-conception (`wpc`), `null` for a post-natal stage.
+
+Empty in the committed corpus today: no dataset of either design has been
+mirrored yet.
 
 ## `cohorts.json`
 

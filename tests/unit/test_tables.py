@@ -11,7 +11,9 @@ from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.tables import (
     CHROMOSOMES,
     CLINGEN_VALIDITY,
+    FLAT_TABLES,
     GENCC_SUBMISSIONS,
+    SHARDED_TABLES,
     TABLE_SCHEMAS,
     Column,
     TableSchema,
@@ -113,6 +115,7 @@ def test_registry_covers_every_mirror_table() -> None:
         "variants",
         "expression",
         "profiles",
+        "profile_quantiles",
         "proteomics",
         "phospho",
         "clingen_validity",
@@ -321,6 +324,71 @@ def test_variants_chrom_rejects_a_chr_prefix() -> None:
     assert column.allowed is not None
     assert "1" in column.allowed
     assert "chr1" not in column.allowed
+
+
+def test_profiles_admits_rpkm_and_still_refuses_an_unknown_unit() -> None:
+    """`unit` admits `rpkm` so a source publishing it need not be converted.
+
+    **This layer does not publish RPKM, and the distinction matters.** The
+    paper (Cardoso-Moreira et al. 2019) reports RPKM; the mirror this atlas
+    actually carries is the EMBL-EBI Expression Atlas *reprocessing* of the
+    same experiment, which requantified everything and publishes TPM and FPKM.
+    `mirrors/profiles/E-MTAB-6814.tsv` is 100% `tpm` — measured, 18,326 of
+    18,326 rows — and `scripts/convert_cardoso_moreira.py` sets `UNIT = "tpm"`.
+    An earlier revision of this docstring said "the source publishes RPKM",
+    which was true of the paper and false of the mirror, on a test shipped in
+    the same PR as the TPM converter. Raised by review on PR #39.
+
+    `rpkm` stays in the vocabulary regardless: `unit` exists so two
+    incomparable quantities cannot merge, and the next source to publish RPKM
+    must be able to say so rather than be converted. The negative half is the
+    half that matters: a typo must still fail.
+    """
+    column = next(c for c in TABLE_SCHEMAS["profiles"].columns if c.name == "unit")
+    allowed = column.allowed
+    assert allowed is not None
+    assert "rpkm" in allowed
+    assert allowed == frozenset({"tpm", "nx", "cpm", "lfq", "rpkm"})
+    assert "rpkms" not in allowed
+
+
+def test_profile_quantiles_is_registered_and_sharded_per_dataset() -> None:
+    """The table that makes the percentile auditable must itself be reachable.
+
+    The two registries fail differently, not equivalently. Forget
+    `SHARDED_TABLES` and the file is both unread (`mirror_paths` only globs
+    directories it names) and reported as a stray (`unexpected_mirror_entries`
+    reports TBL009 for a directory no schema claims). Forget `TABLE_SCHEMAS`
+    instead and neither function notices -- both read `SHARDED_TABLES` only --
+    so the file is found and accepted, and validation crashes instead: the
+    first unguarded `TABLE_SCHEMAS[schema_name]` lookup downstream (the
+    per-mirror loop in `validate_repository` reaches one first) raises an
+    uncaught `KeyError` rather than reporting an issue.
+    """
+    schema = TABLE_SCHEMAS["profile_quantiles"]
+    assert schema.column_names == (
+        "dataset",
+        "tissue",
+        "stage",
+        "percentile",
+        "value",
+        "unit",
+        "n_genes",
+    )
+    assert schema.sort_key == ("dataset", "tissue", "stage", "percentile")
+    assert SHARDED_TABLES["profile_quantiles"] == "profile_quantiles"
+    assert "profile_quantiles" not in FLAT_TABLES
+
+    percentile = next(c for c in schema.columns if c.name == "percentile")
+    assert (percentile.minimum, percentile.maximum) == (0, 100)
+    # The unit vocabulary must match `profiles` exactly, or PRF001 is comparing
+    # two different alphabets rather than two values. Identity, not just
+    # equality: a fresh, value-equal frozenset literal would pass an `==`
+    # check today and still leave the two tables free to drift apart later.
+    unit = next(c for c in schema.columns if c.name == "unit")
+    profiles_unit = next(c for c in TABLE_SCHEMAS["profiles"].columns if c.name == "unit")
+    assert unit.allowed == profiles_unit.allowed
+    assert unit.allowed is profiles_unit.allowed
 
 
 def test_mirror_paths_finds_flat_and_sharded_tables(tmp_path: Path) -> None:
@@ -926,7 +994,14 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
     #
     # The burden figure has now risen twice: from 1,192 x 4 when PMID:34324492
     # added 103 rows, and again here.
-    assert total_compared == 104_654
+    #
+    # **104,654 -> 122,980 on 2026-08-19**, when the first profiles mirror
+    # landed: E-MTAB-6814 contributes 18,326 rows whose `gene` column is
+    # pattern-checked, plus 12,019 quantile rows whose `unit` column is. This
+    # figure is a census of the committed corpus, not a property of the code,
+    # so it moves whenever a mirror does -- which is the point of pinning it:
+    # a silent change in what gets pattern-checked is exactly what it catches.
+    assert total_compared == 122_980
 
     for pattern in patterns:
         compiled = re.compile(pattern)

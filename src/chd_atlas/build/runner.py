@@ -36,6 +36,12 @@ from chd_atlas.build.literature import build_literature, build_sources
 from chd_atlas.build.manifest import source_commit, write_manifest
 from chd_atlas.build.omics import build_omics
 from chd_atlas.build.pages import build_gene_index_page, build_gene_pages
+from chd_atlas.build.profiles import (
+    build_profile_quantiles,
+    gene_expression_profiles,
+    percentile_annotations,
+    profile_census,
+)
 from chd_atlas.build.search import GeneLabels, build_search
 from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.build.variants import build_variants
@@ -242,7 +248,91 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     burden = load_burden(root)
 
     emitter = Emitter(root=out)
-    omics = build_omics(root, emitter)
+    # `build_omics` skips this table outright -- it is keyed on `_GENE_COLUMN`,
+    # and a quantile grid has no gene column -- so without this call
+    # `mirrors/profile_quantiles/` is mirrored, schema-validated, sort-checked
+    # and sha256'd, and reaches no published byte. That is the one file whose
+    # entire purpose is letting a consumer check a published percentile
+    # (D39(b)), so it would be the one thing nothing could fetch, on a build
+    # every other check reports clean. Must run before `write_manifest`,
+    # which seals the emitter and would refuse a write placed after it.
+    #
+    # Moved ahead of `build_omics` (Task 8b, which closes what a comment here
+    # used to record as open wiring): `select_top` ranks a `profiles` row on
+    # the percentile `gene_expression_profiles` derives below, so that figure
+    # has to exist before `build_omics` runs, not be computed from the rows
+    # it has already ranked.
+    #
+    # Returns `{accession: shard path}`, consumed immediately below by
+    # `gene_expression_profiles` -- the same way `ModalitySummary.shards`
+    # links a gene bundle to an omics shard today. Reusing the exact path
+    # this call wrote, rather than reconstructing it with a second call to
+    # `slug`, is what keeps the two from drifting apart.
+    quantile_shards = build_profile_quantiles(root, emitter)
+    # Pure derivation, no `emitter`: reads `mirrors/profiles/*.tsv` and
+    # `mirrors/profile_quantiles/*.tsv` directly and returns one
+    # `ExpressionProfile` per gene those mirrors mention, published or not --
+    # `build_genes` is what restricts the result to `published` genes, the
+    # same restriction it already applies to `omics` and `variants`.
+    # `corpus.cardiac_phases` is `None` only when `curation/cardiac_phases.yaml`
+    # is absent or unparsable -- the committed corpus's own file loads to a
+    # real `CardiacPhaseFile` with zero phases *declared* instead (Task 4's
+    # placeholder, boundaries not yet transcribed from a verified source).
+    # `assign_phase`/`_phase_entry` treat both states identically, as "outside
+    # the curated window" rather than raising, so this call is correct either
+    # way without this function needing to tell the two apart.
+    expression_profiles = gene_expression_profiles(
+        root, corpus.datasets, corpus.cardiac_phases, quantile_shards
+    )
+    # One derivation, two consumers -- `build_landing`'s new card and
+    # `write_manifest`'s `counts` below -- the same discipline `census`
+    # (burden) already keeps: computed once here so the front page and the
+    # manifest cannot state two different censuses of one build. Restricted to
+    # `published`, not to what `mirrors/profiles/*.tsv` happens to mention --
+    # see `profile_census`'s own docstring for why neither figure has the
+    # `families`-style exception `burden_census` carries.
+    profile_stats = profile_census(expression_profiles, published)
+    # The one flat read of the `Placement`s just computed above -- never a
+    # second derivation of a percentile. `percentile_annotations` only walks
+    # the nested `ExpressionProfile`s and copies `median_percentile` back out;
+    # see its own docstring for why that keeps the two uses below from
+    # drifting apart. `build_omics` is the sole consumer of this return; the
+    # bundle itself gets `expression_profiles` directly, a few lines below,
+    # from this same call's result.
+    percentile_lookup = percentile_annotations(expression_profiles)
+    # Keyed by accession (as `str`, not the `AccessionId` newtype, to match
+    # `profiles.dataset` cell-for-cell) so `build_omics` can resolve, for
+    # whichever datasets contributed rows to one gene's profiles slice, which
+    # of *that* dataset's own tissue tokens is the heart. `frozenset()` for a
+    # contrast dataset is the correct answer, not a gap: that design never
+    # reaches the profiles path at all.
+    cardiac_tissues = {
+        str(dataset.id): frozenset(dataset.cardiac_tissues) for dataset in corpus.datasets
+    }
+    # The whole curated record per dataset, not only its `cardiac_tissues`
+    # projection above -- `build_gene_pages`'s expression section also needs
+    # `detection_floor` to name the value a below-floor caveat requires, the
+    # same "publish the whole record, not a projection" rule `cohort_registry`
+    # follows for `Cohort`. A second dict rather than widening `cardiac_tissues`
+    # itself: that mapping is `build_omics`'s own parameter today, and a second
+    # consumer reading a wider shape through the same name is a needless
+    # coupling between the two.
+    dataset_registry = {str(dataset.id): dataset for dataset in corpus.datasets}
+    # `select_top` ranks the cardiac series on `percentile_lookup` above, so
+    # the rank a reader's bundle preview is chosen by and the percentile the
+    # bundle itself publishes (via `expression_profiles`, handed to
+    # `build_genes` below) are the same number by construction -- there is
+    # exactly one computation of any gene's percentile in this build.
+    #
+    # This call is not safe to move back above `quantile_shards` /
+    # `expression_profiles` / `percentile_lookup`: `percentile_lookup` would
+    # not exist yet at that point in the function, and Python raises
+    # `UnboundLocalError` rather than silently falling back to
+    # `percentiles=None` -- measured directly, by making that exact edit and
+    # running the suite, in preference to assuming it (every test that calls
+    # `build_site` fails on it, since the name is unbound regardless of
+    # whether the corpus being built has any profiles data at all).
+    omics = build_omics(root, emitter, cardiac=cardiac_tissues, percentiles=percentile_lookup)
     variants = build_variants(root, emitter)
     # `facts` rather than a second `gene_facts` call below: the pages and the
     # bundles render from one derivation, so a page cannot state a confidence the
@@ -278,6 +368,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         published=published,
         burden=burden,
         concordance=concordance,
+        profiles=expression_profiles,
     )
     build_literature(corpus, emitter)
     # The resolution table for the bare cohort ids every burden row carries.
@@ -298,6 +389,7 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         validity=validity,
         published=published,
         census=census,
+        profile_census=profile_stats,
         emitter=emitter,
     )
     # The HTML over everything above. Wired here and nowhere else: until this
@@ -320,6 +412,11 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         cohorts=cohort_registry(corpus.cohorts),
         families=families,
         axes=axes,
+        # The same `expression_profiles` the bundles were built from, a few
+        # lines above -- so a gene page cannot show developmental expression
+        # data its own bundle does not carry, or vice versa.
+        profiles=expression_profiles,
+        datasets=dataset_registry,
     )
     # `validity` again, and the same object `build_gene_pages` was handed: the
     # browse row's `definitive for` cell and the gene page's `definitive for`
@@ -340,13 +437,13 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
     )
     # Last, and enforced as last: this seals the emitter.
     #
-    # The build counts come from `census`, the object `build_landing` was handed
-    # a moment ago, so `manifest.json` and `index.html` cannot publish two
-    # censuses of one build. `genes` is `len(published)` rather than
-    # `census.genes`: they are equal today at 23 of 23, but they answer different
-    # questions — how many genes the site publishes, and how many of those carry
-    # burden evidence — and the day they diverge each key must still mean what it
-    # says.
+    # The build counts come from `census` and `profile_stats`, the same objects
+    # `build_landing` was handed a moment ago, so `manifest.json` and
+    # `index.html` cannot publish two censuses of one build. `genes` is
+    # `len(published)` rather than `census.genes`: they are equal today at 23 of
+    # 23, but they answer different questions — how many genes the site
+    # publishes, and how many of those carry burden evidence — and the day they
+    # diverge each key must still mean what it says.
     write_manifest(
         corpus,
         emitter,
@@ -355,6 +452,8 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
             "genes": len(published),
             "burden_rows": census.rows,
             "cohort_families": census.families,
+            "profile_genes": profile_stats["genes"],
+            "profile_datasets": profile_stats["datasets"],
         },
     )
     return dict(emitter.checksums)

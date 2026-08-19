@@ -1,0 +1,189 @@
+# curation/cardiac_phases.yaml
+#
+# Source: Buijtendijk MFJ, Barnett P, van den Hoff MJB, "Development of the
+# human heart", Am J Med Genet C Semin Med Genet, 2020. PMID:32048790,
+# PMC7078965, open access. `attributed_to`/`citation` below name the same
+# source `models/phases.py` requires every phase to carry.
+#
+# GO ids were verified by exact match against EBI OLS (Ontology Lookup
+# Service). HsapDv ids and their Carnegie-stage day-post-fertilization ranges
+# were read from the HsapDv release pinned under `ontologies/`.
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE EDITING A BOUNDARY: ordinal weeks vs elapsed weeks.
+# ---------------------------------------------------------------------------
+# The review states timings in ORDINAL weeks ("the sixth week of
+# development"). `start_wpc`/`end_wpc` below are ELAPSED weeks post
+# conception -- the same quantity `curation/datasets/*.yaml`'s own `wpc`
+# column uses. The two differ by one, and transcribing the review's prose
+# directly is the off-by-one-week trap this file exists to avoid:
+#
+#   - "the Nth week of development" spans ELAPSED (N-1) to N wpc.
+#   - HsapDv gives Carnegie stage 16 as day 37-42 post-fertilization, i.e.
+#     37/7.0-42/7.0 = 5.29-6.00 ELAPSED wpc -- and the review calls CS16 "the
+#     sixth week", which is exactly consistent with the ordinal reading.
+#   - Transcribing "sixth week" as elapsed 6-7 wpc instead would put every
+#     boundary derived from it a full Carnegie stage too late, and nothing
+#     downstream would catch it: the mistake is internally consistent, it
+#     just mislabels the window on every gene this vocabulary phases.
+#
+# Every `start_wpc`/`end_wpc` value below is therefore computed from HsapDv's
+# own day-post-fertilization ranges (day / 7.0), NEVER read off the review's
+# ordinal-week sentences. The Carnegie stage and HsapDv id each boundary came
+# from are recorded on the phase itself (`start_carnegie_stage`/
+# `end_carnegie_stage`, `start_hsapdv_id`/`end_hsapdv_id`) precisely so this
+# can be checked rather than taken on trust. This is the same trap that
+# produced the correction below -- read that section too.
+#
+# ---------------------------------------------------------------------------
+# WHY PHASES OVERLAP: this is deliberate, not an unfinished cleanup.
+# ---------------------------------------------------------------------------
+# `models/phases.py` no longer requires phases to be disjoint, because they
+# are not: human cardiac morphogenetic processes run concurrently. Measured
+# from this same source, against the boundaries below, and against a real
+# built page rather than by hand (`phases_for` excludes `heart_looping` --
+# see the next section -- so it never appears in these matches even though
+# it is also biologically underway throughout this range) --
+#
+#   elapsed wpc   phases matched
+#   4             atrial septum morphogenesis, ventricular septum
+#                 morphogenesis
+#   6             atrial septum morphogenesis, ventricular septum
+#                 morphogenesis, outflow tract septum morphogenesis
+#   7             ventricular septum morphogenesis, heart valve
+#                 morphogenesis
+#
+# -- so a stage legitimately carries several phases at once, and a curator
+# adding a seventh phase must not "fix" an overlap that shows up: check
+# whether it is a real transcription error first (see `_coverage_spans` in
+# `validate/profiles.py`, PRF006, for the check that watches for an actual
+# hole rather than an overlap).
+#
+# ---------------------------------------------------------------------------
+# WHY heart_looping HAS NO end_wpc, AND A CORRECTION TO THIS FILE
+# ---------------------------------------------------------------------------
+# This file originally capped three phases' ends (heart_looping, ventricular
+# septum morphogenesis, heart valve morphogenesis) at Carnegie stage 23,
+# reasoning from the review's statement that the heart "already resembles
+# the postnatal configuration" by then. On review, that statement is about
+# pharyngeal arch artery / arterial pole remodelling -- it is not a
+# completion statement for any of the three, and using it as one was an
+# editorial invention this atlas should not have made.
+#
+# A second, targeted re-query of PMC7078965 found that two of the three DO
+# have a stated completion elsewhere in the text, simply not extracted the
+# first time (see those two phases' own `end_basis: stated` and their
+# comments below). Only `heart_looping` has a genuine absence: the review
+# states when it starts (CS10) and never states when it ends, confirmed by a
+# second, targeted query asking specifically for a completion time.
+#
+# Rather than invent a boundary the source does not give, `heart_looping`
+# below carries `end_wpc: null` and `end_basis: not_stated`. Both
+# `CardiacPhaseFile.phases_for` (`models/phases.py`) and the coverage-span
+# merge PRF006 checks (`validate/profiles.py`) exclude any phase with a null
+# `end_wpc` entirely -- it is recorded here, with its real sourced start, but
+# it never appears in a stage's `phase_ids` and never contributes to closing
+# a gap in the curated window. A phase whose end the source does not give
+# must not be asserted as still running at some later stage nothing
+# supports; a missing claim beats a wrong one in this atlas. This is also
+# why PRF006 now finds a real interior gap (2.71-3.29 then 3.71-8.57,
+# leaving 3.29-3.71 uncovered) instead of the seamless window the earlier,
+# invented cap produced -- that gap is a true statement about what this
+# source does and does not say, not a defect in this file.
+attributed_to: "Buijtendijk MFJ, Barnett P, van den Hoff MJB (2020)"
+citation: "PMID:32048790"
+phases:
+  - id: embryonic_heart_tube_morphogenesis
+    go_id: "GO:0003143"
+    label: "Embryonic heart tube morphogenesis"
+    # "In the beginning of the third week of development (CS9-10), when the
+    # linear heart tube has just formed" -- start = CS9's own start (day 19),
+    # end = CS10's own end (day 23).
+    start_wpc: 2.71
+    end_wpc: 3.29
+    start_carnegie_stage: "CS9"
+    end_carnegie_stage: "CS10"
+    start_hsapdv_id: "HsapDv:0000016"
+    end_hsapdv_id: "HsapDv:0000017"
+    end_basis: stated
+
+  - id: heart_looping
+    go_id: "GO:0001947"
+    label: "Heart looping"
+    # "At the beginning of the fourth week of development (CS10) the straight
+    # heart tube undergoes looping" -- start = CS10's own start. No end is
+    # stated anywhere in the source (confirmed by a targeted second query),
+    # so end_wpc is null rather than invented -- see the header comment.
+    # Excluded from phases_for and from PRF006's coverage-span merge for
+    # exactly that reason: this phase must never be asserted as still
+    # running at a stage the source gives no basis for.
+    start_wpc: 3.14
+    end_wpc: null
+    start_carnegie_stage: "CS10"
+    end_carnegie_stage: null
+    start_hsapdv_id: "HsapDv:0000017"
+    end_hsapdv_id: null
+    end_basis: not_stated
+
+  - id: atrial_septum_morphogenesis
+    go_id: "GO:0060413"
+    label: "Atrial septum morphogenesis"
+    # "Atrial septation starts with the formation of the primary atrial
+    # septum during the fourth week of developmental (CS12)" (start), through
+    # "From the end of the sixth week of development (CS17) onwards, the
+    # muscular wall of the right atrium folds down into the lumen" (end of
+    # the secondary septum's own onset -- CS17's own end).
+    start_wpc: 3.71
+    end_wpc: 6.29
+    start_carnegie_stage: "CS12"
+    end_carnegie_stage: "CS17"
+    start_hsapdv_id: "HsapDv:0000019"
+    end_hsapdv_id: "HsapDv:0000024"
+    end_basis: stated
+
+  - id: ventricular_septum_morphogenesis
+    go_id: "GO:0060412"
+    label: "Ventricular septum morphogenesis"
+    # "In human this process starts in the fourth week of development
+    # (CS12)" (start), through "the membranous septum in the adult human
+    # from the second half of the sixth week of development (CS19) onward"
+    # (end -- CS19's own end; missed on first extraction, found on the
+    # targeted re-query, see the header comment).
+    start_wpc: 3.71
+    end_wpc: 7.29
+    start_carnegie_stage: "CS12"
+    end_carnegie_stage: "CS19"
+    start_hsapdv_id: "HsapDv:0000019"
+    end_hsapdv_id: "HsapDv:0000026"
+    end_basis: stated
+
+  - id: outflow_tract_septum_morphogenesis
+    go_id: "GO:0003148"
+    label: "Outflow tract septum morphogenesis"
+    # "Septation of the OFT starts at its distal border in the sixth week of
+    # development (CS16) and proceeds in a proximal direction, to its
+    # completion a week later (CS18)" -- start = CS16's own start, end =
+    # CS18's own end.
+    start_wpc: 5.29
+    end_wpc: 6.86
+    start_carnegie_stage: "CS16"
+    end_carnegie_stage: "CS18"
+    start_hsapdv_id: "HsapDv:0000023"
+    end_hsapdv_id: "HsapDv:0000025"
+    end_basis: stated
+
+  - id: heart_valve_morphogenesis
+    go_id: "GO:0003179"
+    label: "Heart valve morphogenesis"
+    # "This process starts in developmental week seven (CS19)" (start),
+    # through "The septal leaflet, the last to form in the eight week of
+    # development (CS23), of the tricuspid valve" (end -- CS23's own end;
+    # missed on first extraction, found on the targeted re-query, see the
+    # header comment).
+    start_wpc: 6.86
+    end_wpc: 8.57
+    start_carnegie_stage: "CS19"
+    end_carnegie_stage: "CS23"
+    start_hsapdv_id: "HsapDv:0000026"
+    end_hsapdv_id: "HsapDv:0000030"
+    end_basis: stated
