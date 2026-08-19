@@ -2629,7 +2629,7 @@ def _profile_dataset(
         detection_floor=detection_floor,
         floor_source="source methods, section 4",
         quantile_estimator="linear",
-        stages=(Stage(token="7wpc", wpc=7.0),),
+        stages=(Stage(token="7wpc", wpc=7.0, order=1),),
     )
 
 

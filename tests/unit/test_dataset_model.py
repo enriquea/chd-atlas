@@ -65,7 +65,10 @@ def _profile_dataset(**overrides: object) -> Dataset:
         "detection_floor": 1.0,
         "floor_source": "source methods, section 4",
         "quantile_estimator": "linear",
-        "stages": [{"token": "7wpc", "wpc": 7.0}, {"token": "senior", "wpc": None}],
+        "stages": [
+            {"token": "7wpc", "wpc": 7.0, "order": 1},
+            {"token": "senior", "wpc": None, "order": 2},
+        ],
     }
     base.update(overrides)
     return Dataset(**base)
@@ -243,11 +246,32 @@ def test_stage_tokens_are_unique_and_wpc_may_be_null_postnatally() -> None:
     assert stages["senior"] is None
 
     with pytest.raises(ValidationError, match="duplicate stage tokens"):
-        _profile_dataset(stages=[{"token": "7wpc", "wpc": 7.0}, {"token": "7wpc", "wpc": 9.0}])
+        _profile_dataset(
+            stages=[
+                {"token": "7wpc", "wpc": 7.0, "order": 1},
+                {"token": "7wpc", "wpc": 9.0, "order": 2},
+            ]
+        )
 
 
 @pytest.mark.parametrize("wpc", [0, -1])
 def test_stage_wpc_must_be_positive(wpc: float) -> None:
     """`gt=0` is the bound; nullability (a postnatal stage) is covered above."""
     with pytest.raises(ValidationError):
-        Stage(token="x", wpc=wpc)
+        Stage(token="x", wpc=wpc, order=1)
+
+
+def test_a_stage_without_an_order_is_refused() -> None:
+    """`order` is required, not defaulted.
+
+    A stage with no declared position cannot be placed on a time axis, and a
+    default would silently place every undeclared stage in the same slot --
+    reintroducing the alphabetical scramble this field exists to remove.
+    """
+    with pytest.raises(ValidationError):
+        Stage(token="neonate", wpc=None)  # type: ignore[call-arg]
+
+
+def test_order_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        Stage(token="neonate", wpc=None, order=0)

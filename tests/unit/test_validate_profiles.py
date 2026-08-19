@@ -167,7 +167,7 @@ def _profile_dataset(**overrides: object) -> Dataset:
         "detection_floor": 1.0,
         "floor_source": "test fixture",
         "quantile_estimator": "linear",
-        "stages": [{"token": "7wpc", "wpc": 7.0}],
+        "stages": [{"token": "7wpc", "wpc": 7.0, "order": 1}],
     }
     base.update(overrides)
     return Dataset(**base)

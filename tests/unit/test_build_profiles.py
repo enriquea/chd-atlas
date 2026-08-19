@@ -428,10 +428,10 @@ def test_a_degenerate_zero_floor_refuses_rather_than_dividing_by_zero() -> None:
 # deliberately absent from `_STAGES` so `assign_phase` is asked about a token
 # with no `Stage` behind it at all.
 _STAGES = (
-    Stage(token="2wpc", wpc=2.0),
-    Stage(token="7wpc", wpc=7.0),
-    Stage(token="20wpc", wpc=20.0),
-    Stage(token="senior", wpc=None),
+    Stage(token="2wpc", wpc=2.0, order=1),
+    Stage(token="7wpc", wpc=7.0, order=2),
+    Stage(token="20wpc", wpc=20.0, order=3),
+    Stage(token="senior", wpc=None, order=4),
 )
 
 
@@ -532,7 +532,7 @@ def test_a_matched_stage_names_every_overlapping_phase_not_just_the_first() -> N
             _phase("oft_septation", 6.0, 9.0),
         ],
     )
-    result = assign_phase("6.5wpc", (Stage(token="6.5wpc", wpc=6.5),), overlapping)
+    result = assign_phase("6.5wpc", (Stage(token="6.5wpc", wpc=6.5, order=1),), overlapping)
     assert result.outcome is PhaseOutcome.MATCHED
     assert result.phase_ids == ("looping", "atrial_septation", "oft_septation")
     assert result.reason is None
@@ -581,7 +581,7 @@ def test_a_stage_exactly_at_the_last_phase_boundary_reads_as_after() -> None:
     pinned test's own '20wpc' is far past this boundary and cannot
     distinguish the two operators.
     """
-    boundary = assign_phase("8wpc", (Stage(token="8wpc", wpc=8.0),), _PHASES)
+    boundary = assign_phase("8wpc", (Stage(token="8wpc", wpc=8.0, order=1),), _PHASES)
     assert boundary.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert boundary.reason == "after the curated window"
 
@@ -604,7 +604,7 @@ def test_an_open_ended_phase_is_ignored_by_the_after_boundary_not_crashed_on() -
         citation="PMID:1",
         phases=[_open_phase("looping", 1.0), _phase("septation", 3.0, 5.0)],
     )
-    stages = (Stage(token="early", wpc=0.5), Stage(token="late", wpc=6.0))
+    stages = (Stage(token="early", wpc=0.5, order=1), Stage(token="late", wpc=6.0, order=2))
 
     before = assign_phase("early", stages, mixed)
     after = assign_phase("late", stages, mixed)
@@ -626,7 +626,7 @@ def test_every_phase_open_ended_never_reads_as_after_the_curated_window() -> Non
         citation="PMID:1",
         phases=[_open_phase("looping", 1.0)],
     )
-    result = assign_phase("late", (Stage(token="late", wpc=1000.0),), all_open)
+    result = assign_phase("late", (Stage(token="late", wpc=1000.0, order=1),), all_open)
     assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert result.reason == "outside the curated window"
 
@@ -678,7 +678,7 @@ def test_an_interior_gap_is_outside_the_window_not_an_empty_vocabulary() -> None
             _phase("septation", 6.0, 8.0),
         ],
     )
-    result = assign_phase("7wpc", (Stage(token="7wpc", wpc=5.5),), gapped)
+    result = assign_phase("7wpc", (Stage(token="7wpc", wpc=5.5, order=1),), gapped)
     assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert result.reason == "outside the curated window"
 
@@ -915,7 +915,7 @@ def _dataset(
     *,
     detection_floor: float = 1.0,
     cardiac_tissues: tuple[str, ...] = ("Heart",),
-    stages: tuple[Stage, ...] = (Stage(token="7wpc", wpc=7.0),),
+    stages: tuple[Stage, ...] = (Stage(token="7wpc", wpc=7.0, order=1),),
 ) -> Dataset:
     return Dataset(
         id=accession,
@@ -1296,7 +1296,7 @@ def test_tau_is_computed_per_stage_not_merged_across_stages(tmp_path: Path) -> N
         },
     )
     dataset = _dataset(
-        stages=(Stage(token="s1", wpc=1.0), Stage(token="s2", wpc=2.0)),
+        stages=(Stage(token="s1", wpc=1.0, order=1), Stage(token="s2", wpc=2.0, order=2)),
     )
 
     result = gene_expression_profiles(tmp_path, (dataset,), None, {})
@@ -1372,13 +1372,13 @@ def test_datasets_stages_and_tissues_are_all_sorted(tmp_path: Path) -> None:
     result = gene_expression_profiles(
         tmp_path,
         (
-            _dataset("E-ZZZZ-9", stages=(Stage(token="s1", wpc=1.0),)),
+            _dataset("E-ZZZZ-9", stages=(Stage(token="s1", wpc=1.0, order=1),)),
             _dataset(
                 "E-AAAA-1",
                 stages=(
-                    Stage(token="s3", wpc=3.0),
-                    Stage(token="s1", wpc=1.0),
-                    Stage(token="s2", wpc=2.0),
+                    Stage(token="s3", wpc=3.0, order=3),
+                    Stage(token="s1", wpc=1.0, order=1),
+                    Stage(token="s2", wpc=2.0, order=2),
                 ),
             ),
         ),
@@ -1447,7 +1447,9 @@ def test_build_omics_and_the_published_bundle_rank_on_the_same_percentile(
     two modules -- the one place a key-shape mismatch between the producer and
     the consumer would actually show up.
     """
-    dataset = _dataset(stages=(Stage(token="s1", wpc=1.0), Stage(token="s9", wpc=9.0)))
+    dataset = _dataset(
+        stages=(Stage(token="s1", wpc=1.0, order=1), Stage(token="s9", wpc=9.0, order=2))
+    )
     _write_profiles(
         tmp_path,
         "E-MTAB-6814",
