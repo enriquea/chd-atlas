@@ -37,6 +37,7 @@ def _dataset(accession: str = "GSE1000", **overrides: object) -> Dataset:
         "id": accession,
         "archive": "geo",
         "technology": "bulk_rnaseq",
+        "design": "contrast",
         "tissue": "right ventricular myocardium",
         "developmental_stage": "infant",
         "organism": "NCBITaxon:9606",

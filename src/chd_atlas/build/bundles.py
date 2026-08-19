@@ -39,6 +39,7 @@ from chd_atlas.build.derive import GeneFacts, gene_facts
 from chd_atlas.build.emit import Emitter, Json
 from chd_atlas.build.omics import ModalitySummary
 from chd_atlas.build.paths import gene_bundle_path
+from chd_atlas.build.profiles import EMPTY_EXPRESSION_PROFILE, ExpressionProfile
 from chd_atlas.build.validity import (
     GeneValidity,
     ValidityRecord,
@@ -120,6 +121,27 @@ def _summaries(modalities: Mapping[str, ModalitySummary]) -> Mapping[str, Json]:
     `encode_json` raises on anything `json.dumps` cannot serialise.
     """
     return cast(Mapping[str, Json], modalities)
+
+
+def _expression_profile(profiles: Mapping[str, ExpressionProfile], gene: str) -> Json:
+    """One gene's developmental expression profile, always present.
+
+    `profiles.get(gene, EMPTY_EXPRESSION_PROFILE)` -- never a `KeyError` guard
+    like `_concordance_for`'s, because a gene absent from `profiles` is not a
+    caller error the way a gene absent from `concordance` is: most genes have
+    no profile dataset covering them at all (there is no profile mirror
+    committed today), and `EMPTY_EXPRESSION_PROFILE` is exactly the shape
+    `gene_expression_profiles` itself never emits an entry for, so a consumer
+    reads one shape rather than guarding for a missing key.
+
+    `ExpressionProfile` is a `TypedDict`, assignable only to
+    `Mapping[str, object]` and never to `Mapping[str, Json]` whatever its
+    fields hold -- the same structural fact `_summaries` documents for
+    `ModalitySummary`, and the cast is the whole difference from rebuilding
+    the payload key by key, which would silently drop a field a later task
+    adds to `ExpressionProfile`.
+    """
+    return cast(Json, profiles.get(gene, EMPTY_EXPRESSION_PROFILE))
 
 
 def _validity_record(record: ValidityRecord) -> dict[str, Json]:
@@ -237,6 +259,7 @@ def build_genes(
     published: Collection[str],
     burden: Mapping[str, Sequence[BurdenRow]],
     concordance: Mapping[str, Json],
+    profiles: Mapping[str, ExpressionProfile],
 ) -> dict[str, GeneFacts]:
     """Emit `genes/index.json` and one bundle per published gene, and return the facts.
 
@@ -279,7 +302,21 @@ def build_genes(
     publishes no page for them. Their rows are still published in the shards
     those two modules wrote — the gene index simply does not link to them.
 
-    That last sentence covers `omics` and `variants` and nothing else. A
+    `profiles` is `gene_expression_profiles`' return (`build/profiles.py`):
+    the derived percentile placement, tau and phase assignment for every gene
+    `mirrors/profiles/*.tsv` mentions, published or not — that function takes
+    no `published` argument at all, so restricting it is entirely this
+    function's job, by the same iteration over `published` that already
+    restricts `omics` and `variants`. The same asymmetry as those two
+    applies: a merely-registered gene's *derived* facts reach no file (there
+    is no `expression_profile`-only shard, any more than there is a
+    `ModalitySummary`-only one), but its *raw* `profiles.tsv` measurements are
+    not lost — `build_omics` already treats `profiles` as one of its
+    dataset-linked tables and shards it exactly like `expression`,
+    `proteomics` and `phospho`, independent of gene publication.
+
+    That last paragraph, and the one before it, cover `omics`, `variants` and
+    `profiles` and nothing else. A
     `FunctionalEvidence` record about a gene outside `published` is worse off: no
     other build module reads `corpus.functional` — `derive.py` reads it only to
     count records per gene, and this is its only writer — so it reaches no
@@ -404,6 +441,12 @@ def build_genes(
                 # `omics` above. An absent key would make "no study reported
                 # this gene" indistinguishable from "the build dropped it".
                 "burden": burden_payload(burden.get(gene, ())),
+                # Always present, empty ({"datasets": []}) when no profile
+                # dataset's mirror covers this gene -- same rule as `omics`
+                # and `burden` above, for the same reason: an absent key
+                # would make "this gene was not covered by that source
+                # matrix" indistinguishable from "the build dropped it".
+                "expression_profile": _expression_profile(profiles, gene),
                 # The same object the browse row carries -- literally the
                 # same mapping, handed in by the runner -- so a consumer that
                 # filtered on the index and then fetched the bundle reads one

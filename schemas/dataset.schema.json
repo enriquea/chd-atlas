@@ -63,6 +63,44 @@
       "title": "Contrast",
       "type": "object"
     },
+    "DatasetDesign": {
+      "description": "Whether a dataset's rows are contrasts or abundances.\n\nDeclared rather than inferred from `len(contrasts)`, so a curator who\nforgot the contrasts is distinguishable from an abundance atlas that\ncorrectly has none.",
+      "enum": [
+        "contrast",
+        "profile"
+      ],
+      "title": "DatasetDesign",
+      "type": "string"
+    },
+    "Stage": {
+      "additionalProperties": false,
+      "description": "One of a dataset's own stage tokens, with its position in development.\n\n`wpc` is null post-natally, which is not a gap: a post-natal stage is\noutside every cardiac morphogenetic phase by definition, and the page says\nso rather than dropping the row.",
+      "properties": {
+        "token": {
+          "minLength": 1,
+          "title": "Token",
+          "type": "string"
+        },
+        "wpc": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wpc"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "title": "Stage",
+      "type": "object"
+    },
     "Technology": {
       "enum": [
         "bulk_rnaseq",
@@ -82,18 +120,52 @@
     "archive": {
       "$ref": "#/$defs/Archive"
     },
+    "cardiac_tissues": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Cardiac Tissues",
+      "type": "array"
+    },
     "contrasts": {
       "items": {
         "$ref": "#/$defs/Contrast"
       },
-      "minItems": 1,
       "title": "Contrasts",
       "type": "array"
+    },
+    "design": {
+      "$ref": "#/$defs/DatasetDesign"
+    },
+    "detection_floor": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detection Floor"
     },
     "developmental_stage": {
       "minLength": 1,
       "title": "Developmental Stage",
       "type": "string"
+    },
+    "floor_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Floor Source"
     },
     "id": {
       "pattern": "^(PXD\\d{6,}|GSE\\d+|E-[A-Z]{4}-\\d+|EGA[SD]\\d{11})$",
@@ -128,6 +200,26 @@
       "default": null,
       "title": "Publication"
     },
+    "quantile_estimator": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Quantile Estimator"
+    },
+    "stages": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Stage"
+      },
+      "title": "Stages",
+      "type": "array"
+    },
     "technology": {
       "$ref": "#/$defs/Technology"
     },
@@ -146,7 +238,7 @@
     "organism",
     "n_samples",
     "licence",
-    "contrasts"
+    "design"
   ],
   "title": "Dataset",
   "type": "object"

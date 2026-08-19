@@ -2,6 +2,7 @@
 import gzip
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from chd_atlas.build.profiles import ProfileCensus
 from chd_atlas.build.runner import BuildRefused, _gene_registry, build_site
 from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.corpus import load_curation
@@ -261,6 +263,47 @@ def test_the_gate_refuses_on_an_error_and_builds_through_a_warning(
     else:
         build_site(repo, out)
         assert (out / "manifest.json").is_file()
+
+
+def test_the_expression_census_reaches_the_manifest_and_the_page_unswapped(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`profile_census`'s own published-vs-registry restriction is proven by a
+    hand-built fixture in `test_build_profiles.py`; this proves the *wiring*
+    `build_site` does with its answer, which no test reading a real build can
+    -- the committed corpus has no `profiles` mirror, so both figures are 0
+    there, and a transposed assignment (`profile_genes` reading `datasets`
+    and vice versa), or one hardcoded to a literal `0` that never reads
+    `profile_stats` at all, would publish exactly the same manifest and page
+    as a correct build. Genes and datasets are given different values here for
+    the same reason `BurdenCensus`'s three figures are all distinct in
+    `test_the_burden_census_reaches_the_page_in_both_places_and_agrees_with_
+    itself`: two figures equal to each other cannot catch a swap between their
+    own keys.
+
+    `profile_census` itself is monkeypatched to a fixed answer rather than
+    given real mirror data -- the same technique
+    `test_the_gate_refuses_on_an_error_and_builds_through_a_warning` already
+    uses on `validate_repository` in this file -- so this test is cheap and
+    about exactly one thing: `build_site` reads the return and publishes
+    `genes` under `profile_genes` and `datasets` under `profile_datasets`, in
+    both `manifest.json` and `index.html`, never the other way round.
+    """
+    monkeypatch.setattr(
+        "chd_atlas.build.runner.profile_census",
+        lambda profiles, published: ProfileCensus(genes=7, datasets=4),
+    )
+    out = tmp_path / "dist"
+
+    build_site(repo, out)
+
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["counts"]["profile_genes"] == 7
+    assert manifest["counts"]["profile_datasets"] == 4
+
+    page = (out / "index.html").read_text()
+    assert re.search(r"<dt>Genes with developmental expression data</dt>\s*<dd>7</dd>", page)
+    assert re.search(r"<dt>Developmental expression datasets</dt>\s*<dd>4</dd>", page)
 
 
 def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_path: Path) -> None:

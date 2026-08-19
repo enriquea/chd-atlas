@@ -118,3 +118,31 @@ sources:
     redistribution: permitted_with_attribution
     ontology_prefix: HP
     ontology_file: ontologies/hp-2026-06-23.obo
+  - id: expression_atlas_e_mtab_6814
+    name: >-
+      EMBL-EBI Expression Atlas, experiment E-MTAB-6814 ("Human RNA-seq
+      time-series of the development of seven major organs"), the
+      per-assay-group TPM matrix E-MTAB-6814-tpms.tsv and its
+      E-MTAB-6814-configuration.xml
+    # The Atlas publishes no release tag for a baseline experiment, so the
+    # file's own sha256 is the version -- checkable in a way a `retrieved_on`
+    # date is not. Both files are needed and neither implies the other: the
+    # matrix holds the quantiles, the configuration maps each assay-group id to
+    # its (stage, organ) and the assays it aggregates.
+    #
+    # The files themselves are NOT committed: 86 MB and 24 KB respectively,
+    # and the reviewable artifacts are mirrors/profiles/E-MTAB-6814.tsv and
+    # mirrors/profile_quantiles/E-MTAB-6814.tsv. Reproduce with
+    # scripts/convert_cardoso_moreira.py (run via scripts/hpc/).
+    version: "sha256:92484a979fb8e262fe1f535b2b902ba8088310bbbec76969ba873b51d593f4be"
+    retrieved_on: 2026-08-19
+    url: https://www.ebi.ac.uk/gxa/experiments/E-MTAB-6814/Results
+    # Verified against EMBL-EBI's Terms of Use on the date above: "EMBL-EBI
+    # itself places no additional restrictions on the use or redistribution of
+    # the data available via its Data Resources and Tools other than those
+    # provided by the original data owners", and EMBL-EBI "expects attribution
+    # ... in accordance with good scientific practice". No CC licence is
+    # asserted: EMBL-EBI's own licensing page states that no single licence is
+    # mandated across resources, and this experiment's IDF declares none.
+    licence: EMBL-EBI Terms of Use
+    redistribution: permitted_with_attribution

@@ -40,10 +40,26 @@ _GENE_COLUMN: Final[dict[str, str | None]] = {
     "phospho": None,
 }
 
-# Ranking for the embedded slice: FDR ascending, so the most significant row
-# leads. `profiles` reports no FDR — it is an abundance table, not a contrast —
-# so its slice is the head of the table's own sort order instead.
-_RANK_BY: Final = "fdr"
+# Which column ranks the embedded slice, per modality. `profiles` reports no
+# FDR -- it is an abundance table, not a contrast -- so it ranks on the
+# percentile the build derived instead, and is selected in strata (below).
+#
+# `select_top` branches on `_RANK_BY[schema_name] is None` rather than on the
+# literal name "profiles": this dict is the single place that says which
+# modalities have no significance column, so a mutation to this entry alone —
+# not a second, independent string check — is what proves the stratified path
+# is actually reached because of it.
+_RANK_BY: Final[dict[str, str | None]] = {
+    "expression": "fdr",
+    "proteomics": "fdr",
+    "phospho": "fdr",
+    "profiles": None,
+}
+
+# The share of `top` reserved for non-cardiac organs on a profiles slice. Never
+# more than half: the cardiac series is what the page is about, and reserving
+# more would spend the preview on comparison organs.
+_RESERVED_SHARE: Final = 2
 
 
 class ModalitySummary(TypedDict):
@@ -185,6 +201,40 @@ def _genes_for_row(
     return index.genes_for(accession)
 
 
+def _profile_percentile(
+    row: Mapping[str, Any], percentiles: Mapping[tuple[str, str, str, str | None], int]
+) -> int | None:
+    """The one figure `_by_percentile_then_stage` ranks a `profiles` row on.
+
+    Read back from `percentiles` -- `profiles.percentile_annotations`'s own
+    return, threaded down from `runner.py` -- rather than computed here: this
+    module has no access to the quantile grids a percentile needs, and must
+    not grow a second, parallel way to derive one. A row this attribution
+    cannot place (no entry for its cell, including every null-stage row,
+    which can never have one by construction -- `profile_quantiles.stage` is
+    not nullable) returns `None`, exactly the answer `placement()` itself
+    gives for the same fact, and `_by_percentile_then_stage` already reads
+    `None` as "sorts last".
+
+    `row["genes"]` is read rather than `row["gene"]` re-cast to `str`: it is
+    this same attribution loop's own answer, written the line above the call
+    site, so this reuses it instead of deriving "which gene" a second way. A
+    row with no gene (`genes` empty) returns `None` -- such a row is never
+    filed under any gene's `top` list either, so the value this returns is
+    never read, but computing it must still not raise.
+    """
+    genes = row.get("genes")
+    if not genes:
+        return None
+    dataset = row.get("dataset")
+    tissue = row.get("tissue")
+    if not isinstance(dataset, str) or not isinstance(tissue, str):
+        return None
+    stage = row.get("stage")
+    key = (genes[0], dataset, tissue, stage if isinstance(stage, str) else None)
+    return percentiles.get(key)
+
+
 def _comparable(value: object) -> tuple[int, float, str]:
     """One totally ordered form of a cell, so a mixed-type key cannot raise.
 
@@ -211,24 +261,168 @@ def _comparable(value: object) -> tuple[int, float, str]:
     return (2, 0.0, str(value))
 
 
-def _rank(row: Mapping[str, Any], sort_key: tuple[str, ...]) -> tuple[Any, ...]:
+def _rank(row: Mapping[str, Any], schema_name: str, sort_key: tuple[str, ...]) -> tuple[Any, ...]:
     """Sort key for the embedded slice: significance first, canonical order after.
 
-    A missing or null FDR ranks last, since a row reporting no FDR is not
-    evidence of significance. For `profiles`, which has no such column, that
-    applies to every row and the canonical key alone decides the slice.
+    A missing or null value in the ranking column ranks last, since a row
+    reporting no significance is not evidence of significance. `_RANK_BY[schema_name]`
+    is `None` for `profiles`, which has no such column at all -- callers route
+    that modality to `select_top`'s stratified path instead, but this function
+    answers `inf` for it too rather than assume it is never asked.
     """
-    fdr = row.get(_RANK_BY)
-    significance = float("inf") if fdr is None else float(fdr)
+    column = _RANK_BY[schema_name]
+    value = row.get(column) if column is not None else None
+    significance = float("inf") if value is None else float(value)
     return (significance, *(_comparable(row.get(field)) for field in sort_key))
 
 
-def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, ModalitySummary]]:
+def _by_percentile_then_stage(row: Mapping[str, Any]) -> tuple[float, str]:
+    """Most highly ranked first, ties broken by the stage token.
+
+    A missing percentile sorts last rather than first: a row the build could
+    not place is not evidence of high expression. `build_omics` writes
+    `percentile` via `_profile_percentile`, above, before this ever runs --
+    see that function's docstring for where the figure comes from and
+    `profiles.percentile_annotations` for why it is never computed twice.
+    """
+    percentile = row.get("percentile")
+    rank = -float(percentile) if isinstance(percentile, int | float) else float("inf")
+    return (rank, str(row.get("stage", "")))
+
+
+def select_top(
+    schema_name: str,
+    rows: list[dict[str, Any]],
+    cardiac: frozenset[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """The rows a gene bundle embeds for one modality.
+
+    This is a publication decision, not a tuning parameter — it chooses which
+    rows a reader sees — which is why it is a named function with its own tests
+    rather than a slice expression inside the accumulation loop.
+
+    For every modality whose `_RANK_BY` entry names a column, the historical
+    rule: rank by that column ascending, then the table's canonical sort key.
+    For the one modality whose entry is `None` (`profiles`), a *stratified*
+    slice instead: the cardiac series leads, but at least one row of every
+    other tissue present is reserved, because tau is computed over those
+    organs and D39(b) requires its inputs to be reachable from the same
+    payload that publishes it.
+
+    Measured 2026-08-14: ranking profiles by `fdr` — a column that table does
+    not have — ties every row at `inf` and falls back to the canonical sort
+    key, whose `tissue` component is alphabetical, putting 0 of 14 heart rows
+    in a 25-row slice at 14 stages per organ. Ranking cardiac-first without a
+    reservation over-corrects: 0 of 6 comparison organs reach a 25-row slice at
+    23 stages, so a bundle could carry tau computed over seven organs and one
+    of the seven values it used.
+    """
+    if _RANK_BY[schema_name] is not None:
+        sort_key = TABLE_SCHEMAS[schema_name].sort_key
+        ranked = sorted(rows, key=partial(_rank, schema_name=schema_name, sort_key=sort_key))
+        return ranked[:limit]
+
+    by_tissue: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        # `or ""` rather than `.get(..., "")`: a row whose `tissue` key is
+        # present but null must not coerce through `str()` into the literal
+        # "None" -- the same trap `_genes_for_row` above is written against for
+        # `protein`, which would otherwise merge an unplaced row into whichever
+        # bucket a corrupt mirror happened to spell that way.
+        by_tissue.setdefault(str(row.get("tissue") or ""), []).append(row)
+    # Sorted, not set order: `top` is published, and a slice whose membership
+    # follows PYTHONHASHSEED is a determinism bug that reproduces on some runs.
+    # `by_tissue` is a dict, so this sort is comparison-based on `str` names and
+    # does not depend on hash seed either way -- sorted regardless, because its
+    # *insertion* order follows row-read order, which is a fact about the
+    # mirror's file layout rather than a guarantee anyone has made about it.
+    for series in by_tissue.values():
+        series.sort(key=_by_percentile_then_stage)
+
+    cardiac_names = sorted(name for name in by_tissue if name in cardiac)
+    other_names = sorted(name for name in by_tissue if name not in cardiac)
+
+    reserved = min(len(other_names), limit // _RESERVED_SHARE)
+    picked: list[dict[str, Any]] = []
+    for name in cardiac_names:
+        picked.extend(by_tissue[name][: max(0, limit - reserved - len(picked))])
+
+    # Round-robin, so every comparison organ contributes one row before any
+    # takes a second. Breadth is the point: the reader is being shown what tau
+    # was computed over, not the six best rows of one other organ.
+    depth = 0
+    while len(picked) < limit and any(len(by_tissue[n]) > depth for n in other_names):
+        for name in other_names:
+            if len(picked) >= limit:
+                break
+            if len(by_tissue[name]) > depth:
+                picked.append(by_tissue[name][depth])
+        depth += 1
+    return picked[:limit]
+
+
+def _cardiac_tissues(
+    rows: list[dict[str, Any]], cardiac: Mapping[str, frozenset[str]]
+) -> frozenset[str]:
+    """Which tissue names count as the cardiac series for one gene's profiles rows.
+
+    Unioned over only the datasets actually present in `rows`, never the whole
+    corpus-wide `cardiac` mapping: a dataset that contributes no row here must
+    not lend its own cardiac token to a gene it says nothing about. Restricting
+    the union this way does not fully close the harder case named at the
+    `build_omics` call site in `runner.py` — two datasets that both contribute
+    rows here and happen to share a tissue *name* are still inseparable, since
+    `by_tissue` above buckets on the name alone; if one calls "Heart" cardiac
+    and the other uses "Heart" for an unrelated comparison tissue, the rows
+    merge into one bucket and the cardiac declaration wins for both. Not
+    observed in the one curated profiles dataset today, and not fixable without
+    widening `select_top`'s contract to carry per-row dataset identity into the
+    partition itself — flagged here rather than assumed away.
+    """
+    result: frozenset[str] = frozenset()
+    for dataset in {str(row.get("dataset", "")) for row in rows}:
+        result |= cardiac.get(dataset, frozenset())
+    return result
+
+
+def build_omics(
+    root: Path,
+    emitter: Emitter,
+    *,
+    cardiac: Mapping[str, frozenset[str]] | None = None,
+    percentiles: Mapping[tuple[str, str, str, str | None], int] | None = None,
+) -> dict[str, dict[str, ModalitySummary]]:
     """Emit one shard per omics table and return a per-gene, per-modality summary.
 
     Keyed `{hgnc_id: {table name: ModalitySummary}}`. A gene appears only if some
     row is about it; a modality only if that gene has a row in it.
+
+    `cardiac` is `{dataset accession: that dataset's own cardiac_tissues}`, built
+    by `runner.py` from `corpus.datasets` and consulted only for the `profiles`
+    modality (see `select_top`). Defaulting an absent entry to no cardiac tissue
+    at all — never fabricating one — is a safe degrade rather than a false
+    measurement: `select_top` responds to an empty `cardiac` by treating every
+    tissue as an ordinary comparison organ and round-robining across all of
+    them, which preserves breadth instead of silently preferring whichever
+    tissue happens to sort first.
+
+    `percentiles` is `{(gene, dataset, tissue, stage): median_percentile}` --
+    `profiles.percentile_annotations`'s own return, built by `runner.py` from
+    the same `gene_expression_profiles` call that also produces the published
+    bundle, and threaded down here rather than recomputed (see that function's
+    docstring for why the two cannot drift apart). Consulted only for the
+    `profiles` modality, to annotate each row with the figure
+    `_by_percentile_then_stage` ranks on before `select_top` runs. Defaulting
+    an absent mapping — or an absent entry within one — to no percentile at
+    all is the same safe degrade `cardiac` documents above: `select_top`
+    responds by falling back to the stage token alone, exactly as it already
+    did before this figure existed to rank on.
     """
+    if cardiac is None:
+        cardiac = {}
+    if percentiles is None:
+        percentiles = {}
     index = _accession_index(root)
     summaries: dict[str, dict[str, ModalitySummary]] = {}
 
@@ -268,6 +462,12 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, ModalitySum
         # the attribution would otherwise be two things that could disagree.
         for row in rows:
             row["genes"] = list(_genes_for_row(row, _GENE_COLUMN[schema_name], index))
+            # The one modality whose rows carry no significance column at all
+            # (`_RANK_BY[schema_name] is None` -- see that dict's own comment
+            # for why this is the discriminator rather than the literal name
+            # "profiles") needs a figure to rank on before `select_top` runs.
+            if _RANK_BY[schema_name] is None:
+                row["percentile"] = _profile_percentile(row, percentiles)
 
         # Through `slug` for the same reason a gene bundle path is: the stem is a
         # filename, and a space or a colon in one would be published as a URL
@@ -311,8 +511,16 @@ def build_omics(root: Path, emitter: Emitter) -> dict[str, dict[str, ModalitySum
     # is.
     for modalities in summaries.values():
         for schema_name, modality in modalities.items():
-            modality["top"].sort(key=partial(_rank, sort_key=TABLE_SCHEMAS[schema_name].sort_key))
-            modality["top"] = modality["top"][:TOP_N]
+            # Computed only for `profiles`: `select_top` never reads `cardiac`
+            # for any other modality, and resolving it here would walk every
+            # row of every well-studied gene's expression/proteomics/phospho
+            # evidence for an answer nothing uses.
+            cardiac_here = (
+                _cardiac_tissues(modality["top"], cardiac)
+                if schema_name == "profiles"
+                else frozenset()
+            )
+            modality["top"] = select_top(schema_name, modality["top"], cardiac_here, TOP_N)
             # `shards` is published as a JSON array, whose order `encode_json`
             # does not touch, and it is accumulated from a directory listing —
             # the case emit.py names as the likeliest way this build loses

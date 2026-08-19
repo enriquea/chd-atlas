@@ -251,3 +251,47 @@ publications:
     # name above is PubMed's, which already carries the correction. Checked
     # before any number from this paper was transcribed, because an erratum on
     # a burden paper could just as easily have corrected the counts.
+  - id: PMID:31243369
+    title: >-
+      Gene expression across mammalian organ development.
+    journal: Nature
+    year: 2019
+    authors:
+      - Cardoso-Moreira M
+      - Halbert J
+      - Valloton D
+      - Velten B
+      - Chen C
+      - Shao Y
+      - Liechti A
+      - Ascenção K
+      - Rummel C
+      - Ovchinnikova S
+      - Mazin PV
+      - Xenarios I
+      - Harshman K
+      - Mort M
+      - Cooper DN
+      - Sandi C
+      - Soares MJ
+      - Ferreira PG
+      - Afonso S
+      - Carneiro M
+      - Turner JMA
+      - VandeBerg JL
+      - Fallahshahroudi A
+      - Jensen P
+      - Behr R
+      - Lisgo S
+      - Lindsay S
+      - Khaitovich P
+      - Huber W
+      - Baker J
+      - Anders S
+      - Zhang YE
+      - Kaessmann H
+    # Read off the paper: a developmental RNA-seq time-series, not a
+    # case-control or family study. It asserts no gene-disease relationship and
+    # is cited here only as the origin of an expression dataset.
+    study_type: transcriptomics
+    doi: 10.1038/s41586-019-1338-5

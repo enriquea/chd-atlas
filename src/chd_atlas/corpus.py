@@ -23,6 +23,7 @@ from chd_atlas.models.literature import (
     Publication,
     PublicationFile,
 )
+from chd_atlas.models.phases import CardiacPhaseFile
 from chd_atlas.models.scope import ChdScopeFile, ScopeEntry
 
 
@@ -39,6 +40,7 @@ class Corpus:
     datasets: tuple[Dataset, ...] = ()
     chd_scope: tuple[ScopeEntry, ...] = ()
     cohorts: tuple[Cohort, ...] = ()
+    cardiac_phases: CardiacPhaseFile | None = None
 
 
 @dataclass
@@ -125,6 +127,7 @@ def unexpected_curation_entries(root: Path) -> list[ValidationIssue]:
 
     expected_files = {
         ".id_registry.yaml",
+        "cardiac_phases.yaml",
         "chd_scope.yaml",
         "cohorts.yaml",
         "featured.yaml",
@@ -234,6 +237,11 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         if parsed_cohorts is not None:
             cohorts = tuple(parsed_cohorts.cohorts)
 
+    cardiac_phases: CardiacPhaseFile | None = None
+    cardiac_phases_path = curation / "cardiac_phases.yaml"
+    if cardiac_phases_path.is_file():
+        cardiac_phases = _parse(CardiacPhaseFile, cardiac_phases_path, acc)
+
     corpus = Corpus(
         root=root,
         assertions=tuple(assertions),
@@ -244,5 +252,6 @@ def load_curation(root: Path) -> tuple[Corpus, list[ValidationIssue]]:
         datasets=tuple(datasets),
         chd_scope=chd_scope,
         cohorts=cohorts,
+        cardiac_phases=cardiac_phases,
     )
     return corpus, acc.issues

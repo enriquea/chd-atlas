@@ -571,6 +571,18 @@ class Technology(StrEnum):
     PHOSPHOPROTEOMICS = "phosphoproteomics"
 
 
+class DatasetDesign(StrEnum):
+    """Whether a dataset's rows are contrasts or abundances.
+
+    Declared rather than inferred from `len(contrasts)`, so a curator who
+    forgot the contrasts is distinguishable from an abundance atlas that
+    correctly has none.
+    """
+
+    CONTRAST = "contrast"
+    PROFILE = "profile"
+
+
 MODEL_ORGANISMS: Final[dict[str, str]] = {
     "NCBITaxon:9606": "Homo sapiens",
     "NCBITaxon:10090": "Mus musculus",

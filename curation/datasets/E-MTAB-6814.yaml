@@ -1,0 +1,103 @@
+# curation/datasets/E-MTAB-6814.yaml
+#
+# The EMBL-EBI Expression Atlas reprocessing of the human developmental
+# RNA-seq time-series. **The values this atlas publishes are the Atlas's, not
+# the paper's**: `E-MTAB-6814-analysis-methods.tsv` records iRAP 1.0.1, HISAT2
+# against Ensembl release 107, FeatureCounts, then limma quantile
+# normalisation. The paper reports RPKM from a different pipeline. Anything
+# comparing a number here against a figure in the paper is comparing two
+# quantifications, not two readings of one.
+#
+# `tissue` and `developmental_stage` are summary descriptors, kept because the
+# model requires them of every dataset; the authoritative per-row values are
+# the mirror's own `tissue` and `stage` columns. The organ tokens are the
+# Atlas's (forebrain, hindbrain) and NOT the paper's (brain, cerebellum).
+id: E-MTAB-6814
+archive: arrayexpress
+technology: bulk_rnaseq
+design: profile
+tissue: >-
+  forebrain, heart, hindbrain, kidney, liver, ovary, testis
+developmental_stage: >-
+  4 weeks post conception to elderly adult (13 prenatal, 8 post-natal stages)
+organism: NCBITaxon:9606
+# Assays aggregated into the 119 assay groups. The experiment design lists 313
+# runs; 26 are assigned to no group and contribute to nothing published here.
+n_samples: 287
+# EMBL-EBI Terms of Use, verified 2026-08-19: "EMBL-EBI itself places no
+# additional restrictions on the use or redistribution of the data available
+# via its Data Resources and Tools other than those provided by the original
+# data owners", and it "expects attribution ... in accordance with good
+# scientific practice".
+licence: EMBL-EBI Terms of Use
+publication: PMID:31243369
+contrasts: []
+cardiac_tissues:
+  - heart
+# D41. The Atlas declares no expression threshold anywhere in the drop -- not
+# in the IDF, not in analysis-methods.tsv -- so this is a curated choice and is
+# named as one rather than presented as the source's. 1 TPM is the convention
+# the tissue-specificity literature uses, including the tau benchmark this
+# layer already cites for its own method.
+#
+# Measured 2026-08-19 over the 154 registry genes, so the cost is stated rather
+# than assumed: 22.5% of their (gene, organ, stage) cells fall below it, and in
+# heart across 4-9 wpc, 13 genes read "below the detection floor" at every
+# stage of the morphogenetic window. Those are disproportionately the
+# rare-lineage genes bulk tissue dilutes, which is why the page's
+# bulk-dilution caveat is unconditional.
+detection_floor: 1.0
+floor_source: >-
+  Curated, not mirrored: the Expression Atlas declares no threshold for this
+  experiment. 1 TPM is the convention used in the tissue-specificity
+  literature (Kryuchkova-Mostacci & Robinson-Rechavi 2017, Brief Bioinform,
+  the same benchmark this layer's tau follows).
+# R type-7 / numpy default, implemented explicitly in
+# scripts/convert_cardoso_moreira.py so the rule behind a published percentile
+# is auditable from the converter alone.
+quantile_estimator: linear
+stages:
+  - token: "4 week post conception"
+    wpc: 4.0
+  - token: "5 week post conception"
+    wpc: 5.0
+  - token: "6 week post conception"
+    wpc: 6.0
+  - token: "7 week post conception"
+    wpc: 7.0
+  - token: "8 week post conception"
+    wpc: 8.0
+  - token: "9 week post conception"
+    wpc: 9.0
+  - token: "10 week post conception"
+    wpc: 10.0
+  - token: "11 week post conception"
+    wpc: 11.0
+  - token: "12 week post conception"
+    wpc: 12.0
+  - token: "13 week post conception"
+    wpc: 13.0
+  - token: "16 week post conception"
+    wpc: 16.0
+  - token: "18 week post conception"
+    wpc: 18.0
+  - token: "19 week post conception"
+    wpc: 19.0
+  # Post-natal: outside every cardiac morphogenetic phase by definition,
+  # which is a fact about the stage, not a missing value.
+  - token: "adolescent"
+    wpc: null
+  - token: "elderly"
+    wpc: null
+  - token: "infant"
+    wpc: null
+  - token: "middle adult"
+    wpc: null
+  - token: "neonate"
+    wpc: null
+  - token: "school age child"
+    wpc: null
+  - token: "toddler"
+    wpc: null
+  - token: "young adult"
+    wpc: null

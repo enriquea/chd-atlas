@@ -1,11 +1,12 @@
 # tests/unit/test_build_omics.py
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from chd_atlas.build.emit import Emitter
-from chd_atlas.build.omics import TOP_N, _accession_index, build_omics
+from chd_atlas.build.omics import TOP_N, _accession_index, build_omics, select_top
 
 EXPRESSION_HEADER = (
     "dataset\tcontrast\tgene\tlog2fc\tpvalue\tfdr\tdirection\tn_case\tn_control\ttissue\tstage\n"
@@ -495,6 +496,231 @@ def test_a_row_reporting_no_fdr_ranks_below_every_row_that_does(
 
     top = summaries["HGNC:11604"]["expression"]["top"]
     assert [row["fdr"] for row in top] == [0.01, 0.02, None]
+
+
+# `profiles` reports no significance column at all, so ranking it like the other
+# three modalities ties every row at `inf` and falls back to the table's canonical
+# sort key, whose `tissue` component sorts alphabetically. Cardoso-Moreira's seven
+# organs sort Brain, Cerebellum, Heart, Kidney, Liver, Ovary, Testis -- so at enough
+# stages per organ, Heart never reaches a 25-row slice at all (measured: the
+# zero-heart regime begins at 13 stages per organ). `CARDIAC`/`ORGANS` name that
+# dataset's own vocabulary; `HGNC:11604` is reused from every fixture above.
+CARDIAC = frozenset({"Heart"})
+ORGANS = ("Brain", "Cerebellum", "Heart", "Kidney", "Liver", "Ovary", "Testis")
+
+
+def _profile_rows(datasets: int, stages: int) -> list[dict[str, object]]:
+    return [
+        {
+            "dataset": f"E-MTAB-{d}",
+            "gene": "HGNC:11604",
+            "tissue": organ,
+            "stage": f"{i:02d}",
+            "median_abundance": float(100 - i),
+            "unit": "rpkm",
+            "n_samples": 3,
+            "percentile": 100 - i,
+        }
+        for d in range(datasets)
+        for organ in ORGANS
+        for i in range(stages)
+    ]
+
+
+@pytest.mark.parametrize("stages", [14, 23])
+def test_the_cardiac_series_reaches_the_bundle(stages: int) -> None:
+    """Measured: at 14 stages the current rule puts 0 of 14 heart rows in `top`.
+
+    Only Brain and Cerebellum reach it -- two organs' worth of stages exhaust
+    TOP_N=25 before Heart is reached, because every profiles row ties at `inf`
+    (no fdr column) and the tie-break sorts tissue alphabetically.
+    """
+    top = select_top("profiles", _profile_rows(1, stages), CARDIAC, TOP_N)
+    assert any(row["tissue"] == "Heart" for row in top)
+
+
+@pytest.mark.parametrize(("datasets", "stages"), [(1, 23), (2, 14)])
+def test_every_organ_tau_was_computed_over_also_reaches_the_bundle(
+    datasets: int, stages: int
+) -> None:
+    """The naive cardiac-first fix reverses which rows are lost.
+
+    Measured: at 23 stages it gives 23/23 heart and 3 of 7 organs; with two
+    datasets it gives 25/25 heart and 1 of 7. The bundle would then carry tau
+    computed over seven organs and one of the seven values it used.
+
+    14 stages with one dataset is NOT a sufficient fixture -- measured, all
+    seven organs still fit there, so a test at 14 passes both the bug and the
+    fix.
+    """
+    top = select_top("profiles", _profile_rows(datasets, stages), CARDIAC, TOP_N)
+    assert {str(row["tissue"]) for row in top} == set(ORGANS)
+    assert sum(row["tissue"] == "Heart" for row in top) >= 2
+
+
+def test_a_missing_percentile_sorts_after_every_row_that_has_one() -> None:
+    """The direction is the guarantee, not merely that a tie-break exists.
+
+    Every row in every fixture above either has a percentile (`_profile_rows`)
+    or is uniformly missing one (`_profile_tsv_rows`) -- so nothing above can
+    tell `_by_percentile_then_stage` ranking a missing value last from ranking
+    it first, since a tie shared by a whole bucket never reaches the
+    comparison at all. One tissue with one of each is what makes the direction
+    observable: a row the build could not place is not evidence of high
+    expression, so it must not queue-jump a row that has an actual rank.
+    """
+    rows: list[dict[str, object]] = [
+        {
+            "dataset": "E-MTAB-0",
+            "gene": "HGNC:11604",
+            "tissue": "Heart",
+            "stage": "01",
+            "median_abundance": 1.0,
+            "unit": "rpkm",
+            "n_samples": 3,
+            "percentile": None,
+        },
+        {
+            "dataset": "E-MTAB-0",
+            "gene": "HGNC:11604",
+            "tissue": "Heart",
+            "stage": "02",
+            "median_abundance": 99.0,
+            "unit": "rpkm",
+            "n_samples": 3,
+            "percentile": 90,
+        },
+    ]
+
+    top = select_top("profiles", rows, CARDIAC, TOP_N)
+
+    assert [row["stage"] for row in top] == ["02", "01"]
+
+
+def test_the_cardiac_series_is_ranked_by_percentile_not_by_stage_token(
+    tmp_path: Path,
+) -> None:
+    """The ranker reads a key nothing used to write.
+
+    Measured before this fix: no writer existed, so every profiles row tied at
+    "missing percentile" and the stage token alone decided which rows a reader
+    sees. It degraded silently rather than failing, which is why it survived.
+    """
+    _table(
+        tmp_path,
+        "profiles",
+        "E-MTAB-9999.tsv",
+        PROFILES_HEADER
+        # "s1" sorts before "s9" alphabetically but is the *lower*-ranked row:
+        # stage-token order and percentile order disagree by construction, or
+        # this test would pass whether or not `percentiles` is even consulted
+        # -- the trap this project has hit four times (§4.14/15b/30/36).
+        + "E-MTAB-9999\tHGNC:11604\tHeart\ts1\t10.0\trpkm\t\t\t3\n"
+        + "E-MTAB-9999\tHGNC:11604\tHeart\ts9\t90.0\trpkm\t\t\t3\n",
+    )
+    percentiles = {
+        ("HGNC:11604", "E-MTAB-9999", "Heart", "s1"): 10,
+        ("HGNC:11604", "E-MTAB-9999", "Heart", "s9"): 90,
+    }
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(
+        tmp_path,
+        emitter,
+        cardiac={"E-MTAB-9999": frozenset({"Heart"})},
+        percentiles=percentiles,
+    )
+
+    top = summaries["HGNC:11604"]["profiles"]["top"]
+    assert [row["stage"] for row in top] == ["s9", "s1"]
+
+
+def test_a_row_with_no_percentile_annotation_sorts_last_not_first_or_crashing(
+    tmp_path: Path,
+) -> None:
+    """A null-stage row can never have a quantile grid, by construction
+    (`profile_quantiles.stage` is not nullable -- `profiles.py`'s own module
+    docstring), so it can never gain an entry in `percentiles` either. This
+    proves that absence degrades to "sorts last" through the real
+    `build_omics`/`_profile_percentile` wiring, not merely through a row dict
+    a test built by hand with `"percentile": None` already in it.
+    """
+    _table(
+        tmp_path,
+        "profiles",
+        "E-MTAB-9999.tsv",
+        PROFILES_HEADER
+        # Null stage first on disk, so a builder that forgot to rank at all --
+        # or that ranked a missing percentile *first* -- would still put this
+        # row ahead of "s1" instead of behind it.
+        + "E-MTAB-9999\tHGNC:11604\tHeart\t\t5.0\trpkm\t\t\t3\n"
+        + "E-MTAB-9999\tHGNC:11604\tHeart\ts1\t10.0\trpkm\t\t\t3\n",
+    )
+    percentiles = {("HGNC:11604", "E-MTAB-9999", "Heart", "s1"): 10}
+    emitter = Emitter(root=tmp_path / "dist")
+
+    summaries = build_omics(
+        tmp_path,
+        emitter,
+        cardiac={"E-MTAB-9999": frozenset({"Heart"})},
+        percentiles=percentiles,
+    )
+
+    top = summaries["HGNC:11604"]["profiles"]["top"]
+    assert [row["stage"] for row in top] == ["s1", None]
+
+
+def _profile_tsv_rows(dataset: str, gene: str, stages: int) -> str:
+    """Rows for every organ in `ORGANS`, with no `percentile` column at all.
+
+    Unlike `_profile_rows` above, which supplies a percentile by hand: a real
+    `mirrors/profiles/*.tsv` row never has one on disk -- `build_omics` derives
+    and writes it via `_profile_percentile` before `select_top` runs, and with
+    no `percentiles` mapping supplied (as here) that derivation answers `None`
+    for every row, which is the row shape a bare read of the mirror actually
+    produces.
+    """
+    return "".join(
+        f"{dataset}\t{gene}\t{organ}\t{i:02d}\t{100 - i}.0\ttpm\t\t\t3\n"
+        for organ in ORGANS
+        for i in range(stages)
+    )
+
+
+def test_build_omics_resolves_cardiac_status_per_gene_from_only_the_datasets_that_contributed_a_row(
+    tmp_path: Path,
+) -> None:
+    """The two tests above call `select_top` directly and never exercise this wiring.
+
+    `build_omics` must resolve, per gene and modality, which dataset(s)
+    contributed the rows being ranked and union only *their* declared
+    `cardiac_tissues` -- not the whole corpus-wide mapping `runner.py` builds
+    from every curated dataset. Unioning globally would let a dataset that
+    contributes no row to this gene at all lend its own cardiac token to an
+    organ here: `GSE999999` below declares Kidney cardiac but has no row for
+    HGNC:11604 at all. Measured against a version that unions every dataset in
+    the mapping regardless of whether it contributed a row: Kidney received 6
+    of 25 rows -- the reserved share of a second cardiac series -- instead of
+    an ordinary comparison organ's round-robin share of 2.
+    """
+    _table(
+        tmp_path,
+        "profiles",
+        "GSE000001.tsv",
+        PROFILES_HEADER + _profile_tsv_rows("GSE000001", "HGNC:11604", 14),
+    )
+    emitter = Emitter(root=tmp_path / "dist")
+    cardiac = {"GSE000001": frozenset({"Heart"}), "GSE999999": frozenset({"Kidney"})}
+
+    summaries = build_omics(tmp_path, emitter, cardiac=cardiac)
+
+    top = summaries["HGNC:11604"]["profiles"]["top"]
+    counts = Counter(str(row["tissue"]) for row in top)
+    assert counts["Heart"] == 14, "the cardiac series must still lead"
+    assert counts["Kidney"] == 2, (
+        "a dataset contributing no row here must not lend its cardiac token to "
+        "this gene's comparison organs"
+    )
 
 
 def test_shard_paths_go_through_the_identifier_path_rule(tmp_path: Path) -> None:
