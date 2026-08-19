@@ -72,3 +72,34 @@ def test_missing_validity_mirrors_fails_validation(tmp_path: Path) -> None:
     assert report.ok is False
     assert "TBL012" in codes
     assert "SCP000" in codes
+
+
+def test_the_curated_post_natal_stage_sequence_is_pinned_against_a_literal() -> None:
+    """The eight post-natal tokens carry no `wpc`, so `order` is their only
+    chronology and PRF012 cannot check them by construction.
+
+    Without this, re-alphabetising that block in `curation/datasets/
+    E-MTAB-6814.yaml` would silently restore the exact defect `Stage.order`
+    removes -- `elderly` published second of the eight -- with every gate
+    green: the model accepts any ascending integers, and no validator can
+    contradict a null `wpc`.
+
+    Read from the real committed dataset and asserted against a literal
+    spelled out here, never against `sorted()` of the tokens themselves --
+    sorting them is what the defect did.
+    """
+    from chd_atlas.corpus import load_curation
+
+    corpus, _ = load_curation(REPO_ROOT)
+    dataset = next(item for item in corpus.datasets if item.id == "E-MTAB-6814")
+    ordered = [stage.token for stage in sorted(dataset.stages, key=lambda item: item.order)]
+    assert ordered[13:] == [
+        "neonate",
+        "infant",
+        "toddler",
+        "school age child",
+        "adolescent",
+        "young adult",
+        "middle adult",
+        "elderly",
+    ]

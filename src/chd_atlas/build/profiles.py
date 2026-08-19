@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import bisect
 import math
+import sys
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -932,15 +933,38 @@ def _stage_entry(
     )
 
 
-def _stage_sort_key(token: str | None) -> tuple[bool, str]:
-    """Every real stage token, alphabetically, with the null-stage bucket last.
+# Where a token the dataset never declared sorts: after every declared stage,
+# before the null-stage bucket. Not `len(order)`, which would collide with a
+# declared position whenever a curator numbers from 0 or leaves a gap.
+_UNDECLARED_STAGE: Final = sys.maxsize
 
-    A `bool` first component rather than interleaving `None` with strings --
-    Python raises `TypeError` comparing `None` to `str` directly, so a plain
-    `key=lambda t: t` would crash the moment one dataset carries a null-stage
-    row alongside a declared one.
+
+def _stage_sort_key(token: str | None, order: Mapping[str, int]) -> tuple[bool, int, str]:
+    """Curated chronological order, undeclared tokens after it, null last.
+
+    **This sorted alphabetically until 2026-08-20**, and its own docstring
+    said so approvingly. Alphabetical is deterministic and reproducible and
+    wrong for a time series: it published `4 week post conception` eighth,
+    after `19 week post conception`, and `elderly` second of the eight
+    post-natal stages -- in the HTML page and in the published JSON alike.
+    The defect survived an adversarial review, a mutation matrix and a
+    promotion to `main`, because sentences cannot show a trajectory and every
+    block was individually correct.
+
+    `order` is the dataset's own `{token: Stage.order}` map, so the curator's
+    curated chronology is what sorts the axis. `Stage.wpc` cannot do this job:
+    it is null for every post-natal stage, so the eight tokens that most need
+    ordering have no number at all.
+
+    A `bool` first component rather than interleaving `None` with ints --
+    Python raises `TypeError` comparing `None` to `int` directly, so a plain
+    key would crash the moment one dataset carries a null-stage row alongside
+    a declared one. `token` is the final component so two undeclared tokens
+    still order deterministically rather than by dict insertion.
     """
-    return (token is None, token or "")
+    if token is None:
+        return (True, 0, "")
+    return (False, order.get(token, _UNDECLARED_STAGE), token)
 
 
 def _dataset_entry(
@@ -957,9 +981,15 @@ def _dataset_entry(
     by_stage: dict[str | None, list[_ProfileRow]] = {}
     for row in rows:
         by_stage.setdefault(row.stage, []).append(row)
+    # `dataset` is `None` for an accession no curated record names
+    # (`ProfileGap.DATASET_NOT_REGISTERED`), which degrades every token to
+    # undeclared and therefore to token order. That is the honest fallback: an
+    # unregistered dataset has no curated chronology to sort by, and the gap is
+    # already stated on every cell it affects.
+    order = {stage.token: stage.order for stage in dataset.stages} if dataset is not None else {}
     stages = [
         _stage_entry(dataset_id, token, by_stage[token], dataset, dataset_gap, phases, grids)
-        for token in sorted(by_stage, key=_stage_sort_key)
+        for token in sorted(by_stage, key=lambda token: _stage_sort_key(token, order))
     ]
     return DatasetProfileEntry(
         dataset=dataset_id,

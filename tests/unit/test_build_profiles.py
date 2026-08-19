@@ -1396,6 +1396,92 @@ def test_datasets_stages_and_tissues_are_all_sorted(tmp_path: Path) -> None:
     assert [entry["tissue"] for entry in tissues] == ["Alpha", "Zebra"]
 
 
+def test_stages_publish_in_curated_chronological_order_not_alphabetical(tmp_path: Path) -> None:
+    """The published stage array is ordered by `Stage.order`, not by token.
+
+    Pinned against a literal rather than against `sorted(...)` of anything --
+    a test that derives its expectation from the code under test compares the
+    module to itself. The four tokens are chosen so alphabetical and
+    chronological order DISAGREE in two independent places: alphabetically
+    "10wpc" precedes "4wpc" and "elderly" precedes "neonate", so a mutant
+    that drops the order lookup publishes a visibly different list. Both
+    disagreements are real ones this atlas shipped -- `4 week post
+    conception` rendered eighth, `elderly` second of eight post-natal
+    stages -- rather than invented ones.
+
+    Written to disk in a third order again, and DECLARED in a fourth, so
+    neither the encounter order of the mirror rows nor the position of a
+    record in the curated YAML list can pass this by accident.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", stage="elderly"),
+            _profile_row(gene="HGNC:1", stage="10wpc"),
+            _profile_row(gene="HGNC:1", stage="neonate"),
+            _profile_row(gene="HGNC:1", stage="4wpc"),
+        ],
+    )
+
+    result = gene_expression_profiles(
+        tmp_path,
+        (
+            _dataset(
+                stages=(
+                    Stage(token="neonate", wpc=None, order=3),
+                    Stage(token="4wpc", wpc=4.0, order=1),
+                    Stage(token="elderly", wpc=None, order=4),
+                    Stage(token="10wpc", wpc=10.0, order=2),
+                ),
+            ),
+        ),
+        None,
+        {},
+    )
+
+    stages = result["HGNC:1"]["datasets"][0]["stages"]
+    assert [entry["stage"] for entry in stages] == ["4wpc", "10wpc", "neonate", "elderly"]
+
+
+def test_a_stage_the_dataset_never_declared_sorts_after_every_declared_one(
+    tmp_path: Path,
+) -> None:
+    """An undeclared token keeps a defined position: last but one.
+
+    A mirror row naming a stage the dataset record does not list is a real
+    state -- `PRF005` reports it rather than the build assuming it away -- so
+    this sort must have an answer for it. It must not sort first by accident,
+    and it must not raise. The null-stage bucket still sorts last of all,
+    behind the undeclared token.
+
+    Alphabetically "4wpc" already precedes "aaa_undeclared" (digits beat
+    letters in ASCII), so token order alone would agree with the first two
+    entries here; what this pins is the *sentinel's* position. A
+    `_UNDECLARED_STAGE` of -1, or of `len(order)`, moves "aaa_undeclared"
+    ahead of the declared stage and fails.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", stage=None),
+            _profile_row(gene="HGNC:1", stage="aaa_undeclared"),
+            _profile_row(gene="HGNC:1", stage="4wpc"),
+        ],
+    )
+
+    result = gene_expression_profiles(
+        tmp_path,
+        (_dataset(stages=(Stage(token="4wpc", wpc=4.0, order=1),)),),
+        None,
+        {},
+    )
+
+    stages = result["HGNC:1"]["datasets"][0]["stages"]
+    assert [entry["stage"] for entry in stages] == ["4wpc", "aaa_undeclared", None]
+
+
 # --- percentile_annotations: the flat lookup build_omics ranks on (Task 8b) -
 
 
