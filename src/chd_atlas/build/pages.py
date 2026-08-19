@@ -1703,20 +1703,26 @@ _PERCENTILE_COMPARABILITY_NOTICE: Final = (
 def _phase_sentence(phase: PhaseInfo) -> str:
     """Where a stage falls in the curated cardiac-phase vocabulary, or why not.
 
-    **Every branch names a state; none renders blank.** `curation/cardiac_
-    phases.yaml` declares zero phases today (Task 4's placeholder, boundaries
-    not yet transcribed from a verified source), so on the real corpus every
-    stage resolves to `OUTSIDE_WINDOW` with reason "outside the curated
-    window" -- true, and this function says exactly that rather than omitting
-    the line or rendering an empty one, which is the difference between a
-    documented gap and what reads as a rendering bug.
+    **Every branch names a state; none renders blank.** A stage the curated
+    vocabulary does not cover resolves to `OUTSIDE_WINDOW` with a reason
+    naming where it misses -- this function says exactly that rather than
+    omitting the line or rendering an empty one, which is the difference
+    between a documented gap and what reads as a rendering bug.
 
-    `MATCHED` is the only branch that names a `phase_id` rather than a
-    `reason` -- `profiles.PhaseAssignment` guarantees the two are never both
-    set -- and is unreachable on the committed corpus for the reason above.
-    The underscore-to-space rewrite is the only transformation applied to it,
-    because `phase_id` is this atlas's own slug (`curation/cardiac_
-    phases.yaml`), not third-party mirrored text.
+    **`MATCHED` may name several phases, never just the first.** Human
+    cardiac morphogenesis runs several processes concurrently -- at 6 wpc an
+    AVSD gene needs "atrial septation" and a TGA gene needs "outflow tract
+    septation", and both are true at once (see `models/phases.py`'s module
+    docstring for the measured concurrency table) -- so `profiles.PhaseInfo.
+    phase_ids` is a tuple, already sorted deterministically by
+    `CardiacPhaseFile.phases_for`, and every id in it is rendered, joined by
+    commas, with the noun pluralised for two or more. `phase_ids` is non-empty
+    exactly when `reason` is `None` (`profiles.PhaseAssignment` guarantees the
+    two are never both set), so an unreachable empty-tuple-under-MATCHED case
+    still renders a named state rather than raising. The underscore-to-space
+    rewrite is the only transformation applied to each id, because a phase id
+    is this atlas's own slug (`curation/cardiac_phases.yaml`), not
+    third-party mirrored text.
 
     Every other branch renders `reason` verbatim, through `html.escape` like
     every other value this function assembles by hand. `profiles.py` already
@@ -1726,8 +1732,13 @@ def _phase_sentence(phase: PhaseInfo) -> str:
     parallel vocabulary here could only ever repeat them or drift from them.
     """
     if phase["outcome"] == PhaseOutcome.MATCHED.value:
-        label = html.escape((phase["phase_id"] or "").replace("_", " ")) or "unnamed phase"
-        return f"Developmental phase: <strong>{label}</strong>."
+        ids = phase["phase_ids"]
+        if not ids:
+            return "Developmental phase: <strong>unnamed phase</strong>."
+        labels = [html.escape(phase_id.replace("_", " ")) or "unnamed phase" for phase_id in ids]
+        noun = "phase" if len(labels) == 1 else "phases"
+        joined = ", ".join(f"<strong>{label}</strong>" for label in labels)
+        return f"Developmental {noun}: {joined}."
     reason = phase["reason"] or "not available"
     return f"Developmental phase: {html.escape(reason)}."
 

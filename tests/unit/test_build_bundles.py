@@ -193,7 +193,11 @@ def _profile_payload(**overrides: object) -> dict[str, Any]:
                 "stages": [
                     {
                         "stage": "7wpc",
-                        "phase": {"outcome": "matched", "phase_id": "septation", "reason": None},
+                        "phase": {
+                            "outcome": "matched",
+                            "phase_ids": ["septation"],
+                            "reason": None,
+                        },
                         "specificity": _specificity_payload(),
                         "specificity_unavailable_reason": None,
                         "tissues": [

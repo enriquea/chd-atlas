@@ -908,13 +908,17 @@ cannot be confused with "the build dropped it".
 { "expression_profile": { "datasets": [] } }
 ```
 
-**That is the real shape on every gene bundle in the committed corpus
-today.** No `profiles` mirror has ever been committed, so `manifest.json`'s
-`counts.profile_genes` is `92` and `counts.profile_datasets` is `1` — 92 genes
-carry a developmental expression profile, across 1 dataset. The nested shape
-below is illustrative — constructed to show every field, not copied from a
-real build the way every other example in this document is, because no gene
-bundle carries a populated one yet:
+**That is still the real shape for a gene no profile dataset's rows mention.**
+`mirrors/profiles/E-MTAB-6814.tsv` is committed, and `manifest.json`'s
+`counts.profile_genes`/`counts.profile_datasets` say how far that reaches:
+92 genes carry a developmental expression profile, across 1 dataset. Most
+published genes carry the populated shape today, not the empty one above.
+The nested shape below is illustrative — restructured for
+readability (a real gene's `stages` runs to a dozen or more entries, one per
+token the dataset declares) rather than copied verbatim from one bundle — but
+every value in its `phase` block is real: it is `assign_phase`'s actual,
+reproducible answer for a 7-elapsed-week stage against the boundaries
+`curation/cardiac_phases.yaml` curates today.
 
 ```json
 {
@@ -926,8 +930,10 @@ bundle carries a populated one yet:
         "stages": [
           {
             "stage": "7wpc",
-            "phase": { "outcome": "outside_window", "phase_id": null,
-                       "reason": "outside the curated window" },
+            "phase": { "outcome": "matched",
+                       "phase_ids": ["heart_looping", "ventricular_septum_morphogenesis",
+                                     "heart_valve_morphogenesis"],
+                       "reason": null },
             "specificity": { "tau": 0.62, "scale": "log2(x+1)", "method": "…",
                               "tissues": ["heart", "kidney", "liver"],
                               "n_tissues": 3, "highest_in": "heart",
@@ -975,16 +981,24 @@ never goes through that mechanism at all: it has no gene column, so
 
   | `phase.outcome` | meaning |
   | --- | --- |
-  | `matched` | the stage's own developmental age (`wpc`) falls inside a curated cardiac phase; `phase_id` names it |
+  | `matched` | the stage's own developmental age (`wpc`) falls inside one or more curated cardiac phases; `phase_ids` names all of them |
   | `outside_window` | a real age exists, but no curated phase covers it |
   | `post_natal` | the stage has no developmental age at all |
   | `undeclared` | the dataset's own record does not declare this stage token |
   | `null` | the row itself carries no stage token; `reason` says so |
 
-  Today `curation/cardiac_phases.yaml` declares zero phases — its boundaries
-  have not yet been transcribed from a verified source — so every real stage
-  currently resolves `outside_window`. That is a stated gap in the curated
-  vocabulary, not a defect in this field.
+  **`phase_ids` may name more than one phase, and often does.** Human cardiac
+  morphogenesis runs several processes concurrently — at 6 elapsed weeks post
+  conception, atrial septation, ventricular septation and outflow tract
+  septation are all underway at once — so a stage legitimately matches every
+  phase whose window contains its `wpc`, never just the nearest or the first
+  declared. `curation/cardiac_phases.yaml` curates six phases transcribed from
+  Buijtendijk et al. 2020 (PMID:32048790), each carrying the Gene Ontology
+  term, Carnegie stage(s) and HsapDv id(s) its boundaries were read from, plus
+  whether its end is a boundary the source states or a curator's cap where the
+  source names none (`end_basis`) — not published in this bundle field, only
+  in the curation file itself, so a consumer auditing a boundary starts there.
+  `phase_ids` is empty exactly when `outcome` is not `matched`.
 - `specificity` is Yanai's τ (tau) over every organ a dataset sampled at one
   stage, or `null` with `specificity_unavailable_reason` naming why:
 

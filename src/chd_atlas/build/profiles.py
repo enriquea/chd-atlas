@@ -343,32 +343,31 @@ def specificity(medians: Mapping[str, float], floor: float) -> Specificity | Non
 
 
 class PhaseOutcome(StrEnum):
-    """Why `assign_phase` returned the `phase_id` (or lack of one) that it did.
+    """Why `assign_phase` returned the `phase_ids` (or lack of them) that it did.
 
-    Four outcomes, never a bare `None`: a page that only checked
-    `phase_id is None` would render one sentence for a post-natal stage, a
-    stage past the curated window, and a stage the dataset's own record never
-    declared -- three different facts, and `UNDECLARED` is not a biological
-    statement at all, it is a curation gap PRF005 also reports from the other
-    direction. `Resolution` in `chd_atlas/genes.py` is the precedent: a
-    caller branches on the named outcome, never on which fields happen to be
-    `None` or on matching the display text in `reason`.
+    Four outcomes, never a bare emptiness check: a page that only checked
+    whether `phase_ids` was empty would render one sentence for a post-natal
+    stage, a stage past the curated window, and a stage the dataset's own
+    record never declared -- three different facts, and `UNDECLARED` is not a
+    biological statement at all, it is a curation gap PRF005 also reports from
+    the other direction. `Resolution` in `chd_atlas/genes.py` is the
+    precedent: a caller branches on the named outcome, never on which fields
+    happen to be empty or on matching the display text in `reason`.
     """
 
     MATCHED = "matched"
-    """`wpc` falls inside a declared cardiac phase; `phase_id` names it."""
+    """`wpc` falls inside one or more declared cardiac phases; `phase_ids`
+    names all of them. Human cardiac morphogenesis runs several processes
+    concurrently (see `models/phases.py`'s module docstring for the measured
+    concurrency table), so MATCHED means "one or more phases", never "exactly
+    one" -- a caller that assumes a single match would silently drop every
+    phase but the first for any stage inside an overlap."""
 
     OUTSIDE_WINDOW = "outside_window"
     """A real `wpc` exists, but no curated phase covers it -- before the
-    first, after the last, or in an interior gap between two (PRF006 flags
-    the gap shape as a probable transcription slip; this is the runtime fact
-    a page renders regardless of *why* the gap exists). The committed
-    `curation/cardiac_phases.yaml` declares zero phases today -- the
-    boundaries have not yet been transcribed from a verified source -- so on
-    the real corpus every stage with a real `wpc` resolves here. That is
-    correct, not a bug and not a blank: Task 4's placeholder file exists
-    precisely so this reads as "outside the curated window" rather than as
-    silence."""
+    first, after the last, or in an interior gap no phase's interval reaches
+    (PRF006 flags the gap shape as a probable transcription slip; this is the
+    runtime fact a page renders regardless of *why* the gap exists)."""
 
     POST_NATAL = "post_natal"
     """The stage's own `wpc` is null. Every `CardiacPhase` is prenatal by
@@ -390,15 +389,18 @@ class PhaseOutcome(StrEnum):
 class PhaseAssignment:
     """Where one of a dataset's own stage tokens falls in the curated phase vocabulary.
 
-    `phase_id` is set only for `PhaseOutcome.MATCHED`. `reason` is a short,
-    renderable phrase explaining an absent `phase_id`, and is `None` exactly
-    when `phase_id` is not -- a page renders one field or the other, never
-    both, and never neither.
+    `phase_ids` is non-empty only for `PhaseOutcome.MATCHED`, and may name
+    several phases at once -- see `CardiacPhaseFile.phases_for`, which this
+    function reads from, and `PhaseOutcome.MATCHED`'s own docstring for why a
+    single-match assumption would be wrong. `reason` is a short, renderable
+    phrase explaining an empty `phase_ids`, and is `None` exactly when
+    `phase_ids` is not empty -- a page renders one or the other, never both,
+    and never neither.
     """
 
     token: str
     outcome: PhaseOutcome
-    phase_id: str | None = None
+    phase_ids: tuple[str, ...] = ()
     reason: str | None = None
 
 
@@ -421,14 +423,17 @@ def assign_phase(
        `phases.phases` for the boundary comparison in step 4, which would
        raise `IndexError` on an empty sequence otherwise -- and this is not a
        hypothetical: it is the committed corpus's own state today.
-    4. Otherwise `phases.phase_for(wpc)` is tried. A hit is `MATCHED`. A miss
-       is `OUTSIDE_WINDOW` again, with a reason naming *where*: "before the
-       curated window" (earlier than every phase's `start_wpc`), "after the
-       curated window" (at or past the last phase's `end_wpc` -- the common
-       case, since a real developmental series runs well past any
-       morphogenetic window, not an edge case), or the same generic phrase as
-       step 3 for the rarer case of an interior gap between two declared
-       phases, which PRF006 already names as a probable transcription slip.
+    4. Otherwise `phases.phases_for(wpc)` is tried. One or more hits is
+       `MATCHED`, naming every matching phase -- never just the first, since
+       overlapping phases are the ordinary case (see `models/phases.py`'s
+       module docstring). No hits is `OUTSIDE_WINDOW` again, with a reason
+       naming *where*: "before the curated window" (earlier than every
+       phase's `start_wpc`), "after the curated window" (at or past the
+       latest `end_wpc` across every phase -- the common case, since a real
+       developmental series runs well past any morphogenetic window, not an
+       edge case), or the same generic phrase as step 3 for the rarer case of
+       an interior gap no phase's interval reaches, which PRF006 already
+       names as a probable transcription slip.
     """
     stage = next((candidate for candidate in stages if candidate.token == token), None)
     if stage is None:
@@ -445,9 +450,13 @@ def assign_phase(
             outcome=PhaseOutcome.OUTSIDE_WINDOW,
             reason="outside the curated window",
         )
-    found = phases.phase_for(stage.wpc)
-    if found is not None:
-        return PhaseAssignment(token=token, outcome=PhaseOutcome.MATCHED, phase_id=found.id)
+    found = phases.phases_for(stage.wpc)
+    if found:
+        return PhaseAssignment(
+            token=token,
+            outcome=PhaseOutcome.MATCHED,
+            phase_ids=tuple(phase.id for phase in found),
+        )
 
     starts = [phase.start_wpc for phase in phases.phases]
     ends = [phase.end_wpc for phase in phases.phases]
@@ -629,10 +638,16 @@ class PhaseInfo(TypedDict):
     `None` exactly for a stage with no token at all (a null `profiles.stage`),
     which is not one of `PhaseOutcome`'s four members because no token means
     there was nothing to ask `assign_phase` about in the first place.
+
+    `phase_ids` may name more than one phase -- human cardiac morphogenesis
+    runs several processes concurrently, so a stage legitimately matches every
+    phase whose interval contains its `wpc` (see `models/phases.py`'s module
+    docstring for the measured concurrency this exists to preserve). Empty
+    exactly when `reason` is not `None`.
     """
 
     outcome: str | None
-    phase_id: str | None
+    phase_ids: tuple[str, ...]
     reason: str | None
 
 
@@ -873,11 +888,11 @@ def _phase_entry(
     real token.
     """
     if stage_token is None:
-        return PhaseInfo(outcome=None, phase_id=None, reason=_NO_STAGE_PHASE_REASON)
+        return PhaseInfo(outcome=None, phase_ids=(), reason=_NO_STAGE_PHASE_REASON)
     stages = dataset.stages if dataset is not None else ()
     assignment = assign_phase(stage_token, stages, phases)
     return PhaseInfo(
-        outcome=assignment.outcome.value, phase_id=assignment.phase_id, reason=assignment.reason
+        outcome=assignment.outcome.value, phase_ids=assignment.phase_ids, reason=assignment.reason
     )
 
 

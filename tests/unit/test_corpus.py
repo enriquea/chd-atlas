@@ -186,9 +186,15 @@ def test_loads_cardiac_phases(tmp_path: Path) -> None:
         "citation: ISBN:0872796248\n"
         "phases:\n"
         "  - id: looping\n"
+        "    go_id: GO:0001947\n"
         "    label: Cardiac looping\n"
         "    start_wpc: 3.0\n"
         "    end_wpc: 5.0\n"
+        "    start_carnegie_stage: CS10\n"
+        "    end_carnegie_stage: CS12\n"
+        "    start_hsapdv_id: HsapDv:0000017\n"
+        "    end_hsapdv_id: HsapDv:0000019\n"
+        "    end_basis: stated\n"
     )
 
     corpus, issues = load_curation(tmp_path)

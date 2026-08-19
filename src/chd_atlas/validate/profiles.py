@@ -59,18 +59,22 @@ validators collect issues, and `build_site` is what refuses.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
 from chd_atlas.issues import Severity, ValidationIssue
 from chd_atlas.models.dataset import Dataset
-from chd_atlas.models.phases import CardiacPhaseFile
+from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile
 from chd_atlas.tables import PROFILE_QUANTILES, PROFILES, TableSchema, mirror_paths, read_table
 
 # A private alias purely for readability below: every check in this module is
 # keyed on the same triple.
 _Triple = tuple[str, str, str]
+
+# One merged run of cardiac-phase coverage: (start_wpc, end_wpc, the sorted
+# ids of every phase that merged into it). See `_coverage_spans`.
+_CoverageSpan = tuple[float, float, tuple[str, ...]]
 
 _PROFILES_COLUMNS: tuple[str, ...] = ("dataset", "tissue", "stage", "unit")
 _QUANTILES_COLUMNS: tuple[str, ...] = ("dataset", "tissue", "stage", "percentile", "value", "unit")
@@ -207,8 +211,8 @@ def validate_profile_references(
       matched by no `profiles` row for that dataset.
     - **PRF005** (ERROR) -- a `profiles.stage` token a dataset's own record
       does not declare in `stages`.
-    - **PRF006** (WARNING) -- an interior gap between two declared cardiac
-      phases; see `_prf006_issues` for why only interior gaps, and only a
+    - **PRF006** (WARNING) -- an interior gap no declared cardiac phase
+      covers; see `_prf006_issues` for why only interior gaps, and only a
       warning.
     - **PRF007** (ERROR) -- a `profiles.gene` id in no gene registry.
     - **PRF009** (WARNING) -- a published gene missing a `profiles` row in a
@@ -520,16 +524,60 @@ def _prf005_issues(
     return issues
 
 
+def _coverage_spans(phases: Sequence[CardiacPhase]) -> list[_CoverageSpan]:
+    """Merge overlapping or touching phase intervals into maximal coverage spans.
+
+    **Why a merge, not a pairwise-adjacent comparison.** Before phases could
+    overlap, "sort by start, compare each phase only to the very next one"
+    was already a correct interior-gap test, because no phase could ever
+    reach past its immediate successor. Once phases may overlap
+    (`models/phases.py`'s module docstring), that stops being true: a long
+    phase can span past several shorter ones nested or overlapping inside it,
+    and comparing only *adjacent-in-sort-order* phases would then report a
+    false gap between two short phases that a third, wider phase already
+    covers. Worked example: `A=[1,10)`, `B=[2,3)`, `C=[8,9)` sorts as
+    `A, B, C`; comparing `B` to `C` directly sees `C.start (8) > B.end (3)`
+    and reports a gap that does not exist, because `A` already covers all of
+    `[1,10)`, `B` and `C` included. Merging into spans first is what keeps
+    the check correct once overlap is legal, not merely unchanged for the
+    non-overlapping case it used to be the only case.
+
+    A phase merges into the running span when its own start falls at or
+    before the span's current end (`<=`, matching the half-open-interval
+    "touching is not a gap" rule the old pairwise check already used); the
+    span's end then becomes the *later* of the two ends, never simply
+    replaced, so a short phase nested inside a longer one cannot shrink the
+    span back down. Each span's `phase_ids` names every phase merged into it,
+    sorted by `(start_wpc, id)` via the traversal order -- `_prf006_issues`
+    re-sorts them again before rendering, so this function does not need to
+    guarantee that ordering on its own return.
+    """
+    ordered = sorted(phases, key=lambda phase: (phase.start_wpc, phase.id))
+    spans: list[_CoverageSpan] = []
+    for phase in ordered:
+        if spans and phase.start_wpc <= spans[-1][1]:
+            start, end, ids = spans[-1]
+            spans[-1] = (start, max(end, phase.end_wpc), (*ids, phase.id))
+        else:
+            spans.append((phase.start_wpc, phase.end_wpc, (phase.id,)))
+    return spans
+
+
 def _prf006_issues(root: Path, phases: CardiacPhaseFile | None) -> list[ValidationIssue]:
-    """PRF006 -- an interior gap between two declared cardiac phases.
+    """PRF006 -- an interior gap no declared cardiac phase covers.
 
     WARNING, not ERROR, and interior gaps only -- the spec's single-line code
-    table hid that this splits in two. The *overlap* half is already enforced
-    at model-load time by `CardiacPhaseFile.phases_are_unique_and_disjoint`: a
-    file whose phases overlap does not load at all, which is stronger than
-    anything a validator can add, and needs no PRF006. What the model cannot
-    see is a **hole**: `[3,5)` and `[6,8)` both load cleanly, and a stage at
-    5.x wpc then falls in no phase with nothing said anywhere.
+    table hid that this splits in two.
+
+    **Redefined for overlap.** Phases may now overlap by design
+    (`models/phases.py`'s module docstring), so "gap" can no longer mean "the
+    space between one phase and the very next in sorted order" -- that
+    pairwise reading misfires once a wider phase can span past a nested,
+    narrower one; see `_coverage_spans` for a worked counter-example. A gap is
+    instead a wpc region strictly between the earliest start and the latest
+    end that **no phase, individually, reaches** -- computed by merging every
+    phase into maximal coverage spans first (`_coverage_spans`) and reporting
+    only between two *spans*, never between two raw phases.
 
     Never the region before the first phase or after the last: a curated
     window legitimately stops before the post-natal stages (a null-wpc stage
@@ -537,36 +585,42 @@ def _prf006_issues(root: Path, phases: CardiacPhaseFile | None) -> list[Validati
     trigger on every correct vocabulary -- and a check that fires on every
     correct input is a check a curator learns to ignore. `phases=None` (no
     vocabulary curated yet) skips this entirely, the same treatment
-    `validate_profiles` gives an unread `profile_quantiles` mirror.
+    `validate_profiles` gives an unread `profile_quantiles` mirror; an empty
+    `phases.phases` list needs no separate guard, because `_coverage_spans`
+    of an empty sequence is `[]` and the pairwise loop below is then a no-op.
 
-    Sorted by `(start_wpc, id)` -- the same key
-    `CardiacPhaseFile.phases_are_unique_and_disjoint` and `phase_for` already
-    sort by -- rather than trusting `phases.phases`' own list order, which is
-    YAML declaration order and need not be chronological. Pinned by
-    `test_prf006_reports_one_issue_per_interior_gap_in_wpc_order`, whose
-    phases are declared out of order specifically to make a dropped sort
-    compare the wrong pairs rather than merely reorder the report.
+    Each message names every phase id bordering the gap on each side, not
+    just one, because a merged span can carry several overlapping phases --
+    naming only one would let a curator "fix" the wrong phase. Pinned by
+    `test_prf006_reports_one_issue_per_interior_gap_in_wpc_order` (the
+    non-overlapping case, phases declared out of wpc order so a dropped sort
+    compares the wrong pairs rather than merely reordering the report) and by
+    `test_prf006_does_not_report_a_gap_a_wider_overlapping_phase_already_
+    covers` (the overlap case `_coverage_spans`'s own docstring works through).
     """
     if phases is None:
         return []
     issues: list[ValidationIssue] = []
     location = str(root / "curation" / "cardiac_phases.yaml")
-    ordered = sorted(phases.phases, key=lambda phase: (phase.start_wpc, phase.id))
-    # strict=False: `ordered[1:]` is one element shorter than `ordered` by
+    spans = _coverage_spans(phases.phases)
+    # strict=False: `spans[1:]` is one element shorter than `spans` by
     # construction, the standard pairwise-zip idiom -- not a length mismatch
-    # to guard against. Consecutive pairs only, which is what makes this
-    # interior: the region before `ordered[0]` and after `ordered[-1]` never
+    # to guard against. Consecutive spans only, which is what makes this
+    # interior: the region before `spans[0]` and after `spans[-1]` never
     # appears as either half of a pair.
-    for earlier, later in zip(ordered, ordered[1:], strict=False):
-        if later.start_wpc > earlier.end_wpc:
+    for earlier, later in zip(spans, spans[1:], strict=False):
+        _, earlier_end, earlier_ids = earlier
+        later_start, _, later_ids = later
+        if later_start > earlier_end:
             issues.append(
                 ValidationIssue(
                     "PRF006",
                     Severity.WARNING,
                     location,
-                    f"a gap [{earlier.end_wpc}, {later.start_wpc}) falls between phase "
-                    f"'{earlier.id}' (ends {earlier.end_wpc}) and phase '{later.id}' "
-                    f"(starts {later.start_wpc}); a stage in this range falls in no phase",
+                    f"a gap [{earlier_end}, {later_start}) falls between phase(s) "
+                    f"{sorted(earlier_ids)} (covering up to {earlier_end}) and phase(s) "
+                    f"{sorted(later_ids)} (from {later_start}); a stage in this range "
+                    f"falls in no phase",
                 )
             )
     return issues

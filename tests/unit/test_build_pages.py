@@ -18,6 +18,7 @@ from chd_atlas.build.emit import Emitter
 from chd_atlas.build.pages import (
     _EM_DASH,
     _SCOPE_RULE,
+    _phase_sentence,
     build_gene_index_page,
     build_gene_pages,
 )
@@ -2567,10 +2568,10 @@ def _specificity(
 
 def _phase_info(
     outcome: str | None = "matched",
-    phase_id: str | None = "septation",
+    phase_ids: tuple[str, ...] = ("septation",),
     reason: str | None = None,
 ) -> PhaseInfo:
-    return PhaseInfo(outcome=outcome, phase_id=phase_id, reason=reason)
+    return PhaseInfo(outcome=outcome, phase_ids=phase_ids, reason=reason)
 
 
 def _stage_entry(
@@ -2925,11 +2926,12 @@ def test_tau_undefined_at_one_organ_says_so_rather_than_a_number(tmp_path: Path)
 
 
 def test_every_stage_outcome_reads_as_a_state_never_a_bug_or_blank(tmp_path: Path) -> None:
-    """The empty phase vocabulary is the CURRENT state: `curation/cardiac_
-    phases.yaml` declares zero phases, so every stage on the real site resolves
-    to `outside_window` today. This pins all four `PhaseOutcome` members plus
-    `MATCHED`, so a gene page is proven correct for the day a phase is finally
-    curated, not only for the state the committed corpus happens to be in.
+    """Pins all four `PhaseOutcome` members, so a gene page is proven correct
+    for a stage in each state -- including MATCHED with only one phase, which
+    `test_a_matched_stage_with_several_phases_names_every_one` deliberately
+    does NOT also cover, per the fixture-diversity rule: a fixture where every
+    MATCHED stage carries the same number of phases could not distinguish
+    "renders the one phase" from "renders `phase_ids[0]` and drops the rest".
     """
     profile = _expression_profile(
         (
@@ -2937,25 +2939,27 @@ def test_every_stage_outcome_reads_as_a_state_never_a_bug_or_blank(tmp_path: Pat
                 stages=(
                     _stage_entry(
                         stage="s_matched",
-                        phase=_phase_info(outcome="matched", phase_id="outflow_tract_septation"),
+                        phase=_phase_info(
+                            outcome="matched", phase_ids=("outflow_tract_septation",)
+                        ),
                     ),
                     _stage_entry(
                         stage="s_outside",
                         phase=_phase_info(
                             outcome="outside_window",
-                            phase_id=None,
+                            phase_ids=(),
                             reason="outside the curated window",
                         ),
                     ),
                     _stage_entry(
                         stage="s_postnatal",
-                        phase=_phase_info(outcome="post_natal", phase_id=None, reason="post-natal"),
+                        phase=_phase_info(outcome="post_natal", phase_ids=(), reason="post-natal"),
                     ),
                     _stage_entry(
                         stage="s_undeclared",
                         phase=_phase_info(
                             outcome="undeclared",
-                            phase_id=None,
+                            phase_ids=(),
                             reason="stage not declared by this dataset",
                         ),
                     ),
@@ -2976,6 +2980,30 @@ def test_every_stage_outcome_reads_as_a_state_never_a_bug_or_blank(tmp_path: Pat
     assert "Developmental phase: stage not declared by this dataset." in undeclared
     for block in (matched, outside, postnatal, undeclared):
         assert "Developmental phase: .</p>" not in block, "a blank reason is a rendering bug"
+
+
+def test_a_matched_stage_with_several_phases_names_every_one() -> None:
+    """A stage inside an overlap must name ALL of its phases, not just the
+    first -- the unique killer of a renderer that reads only `phase_ids[0]`.
+
+    Deliberately three phases, not two: with two, a truncating renderer that
+    always shows exactly one and a correct renderer that drops the last of
+    two could both pass a weaker assertion. Three phases makes "shows one",
+    "shows two of three" and "shows all three" three distinct, checkable
+    outcomes, and the singular/plural noun is checked on both sides so a
+    mutant hard-coding "phases" (plural) cannot pass the single-phase test
+    above either.
+    """
+    phase = _phase_info(
+        outcome="matched",
+        phase_ids=("atrial_septation", "outflow_tract_septation", "ventricular_septation"),
+    )
+    sentence = _phase_sentence(phase)
+    assert sentence == (
+        "Developmental phases: <strong>atrial septation</strong>, "
+        "<strong>outflow tract septation</strong>, "
+        "<strong>ventricular septation</strong>."
+    )
 
 
 def test_the_bulk_dilution_caveat_is_unconditional_not_only_beside_bad_news(

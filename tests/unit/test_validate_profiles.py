@@ -2,12 +2,14 @@
 """The rules that stop a gene's percentile being read against another
 dataset's ruler.
 
-Every fixture here is synthetic rather than transcribed from a real study --
-unlike `test_validate_burden.py`, which builds on one real row -- because no
-`profiles`/`profile_quantiles` mirror has ever been committed (measured:
-`git log --all` returns nothing for either path). `_p` and `_grid` build the
-smallest valid row and the smallest valid 101-row quantile grid respectively,
-so each test only has to state what it is varying.
+Every fixture here is synthetic rather than transcribed from a real study,
+unlike `test_validate_burden.py`, which builds on one real row -- these checks
+are about shapes two tables can disagree on (a unit, a cell, a monotone
+breakpoint run), not about any one dataset's actual numbers, so a synthetic
+row states what each test varies without pulling in E-MTAB-6814's own
+1.2M-row mirror. `_p` and `_grid` build the smallest valid row and the
+smallest valid 101-row quantile grid respectively, so each test only has to
+state what it is varying.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from pathlib import Path
 
 from chd_atlas.issues import Severity
 from chd_atlas.models.dataset import Dataset
-from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile
+from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile, EndBasis
 from chd_atlas.tables import PROFILE_QUANTILES, PROFILES
 from chd_atlas.validate.profiles import validate_profile_references, validate_profiles
 
@@ -172,7 +174,25 @@ def _profile_dataset(**overrides: object) -> Dataset:
 
 
 def _phase(phase_id: str, start_wpc: float, end_wpc: float) -> CardiacPhase:
-    return CardiacPhase(id=phase_id, label=phase_id, start_wpc=start_wpc, end_wpc=end_wpc)
+    """A validly-constructed `CardiacPhase` for interval-logic tests.
+
+    The Carnegie-stage/HsapDv/`go_id`/`end_basis` values are placeholders,
+    not a claim about embryology -- only `id`/`start_wpc`/`end_wpc` vary
+    across the tests that use this factory, matching `test_models_phases.py`'s
+    own `_phase()`.
+    """
+    return CardiacPhase(
+        id=phase_id,
+        go_id="GO:0000001",
+        label=phase_id,
+        start_wpc=start_wpc,
+        end_wpc=end_wpc,
+        start_carnegie_stage="CS1",
+        end_carnegie_stage="CS2",
+        start_hsapdv_id="HsapDv:0000001",
+        end_hsapdv_id="HsapDv:0000002",
+        end_basis=EndBasis.STATED,
+    )
 
 
 def _phase_file(*phases: CardiacPhase) -> CardiacPhaseFile:
@@ -781,6 +801,52 @@ def test_prf006_reports_one_issue_per_interior_gap_in_wpc_order() -> None:
     assert "8.0" in issues[1].message and "10.0" in issues[1].message
     assert "'C'" in issues[2].message and "'D'" in issues[2].message
     assert "15.0" in issues[2].message and "20.0" in issues[2].message
+
+
+def test_prf006_does_not_report_a_gap_a_wider_overlapping_phase_already_covers() -> None:
+    """The unique killer of a pairwise-adjacent PRF006 that never learned to merge.
+
+    Phases may overlap by design (`models/phases.py`'s module docstring), and
+    once they do, "sort by start, compare each phase only to its immediate
+    successor" stops being a correct gap test. `A=[1,10)` fully covers
+    `B=[2,3)` and `C=[8,9)`; sorted by start this is A, B, C, and a check that
+    compares B directly to C would see `C.start (8) > B.end (3)` and report a
+    false gap in `[3,8)` -- even though A already covers every wpc in that
+    range. The real vocabulary this test guards is exactly this shape: `heart
+    _looping` spans almost the entire curated window and several shorter,
+    later phases sit inside it.
+    """
+    nested = _phase_file(
+        _phase("A", 1.0, 10.0),
+        _phase("B", 2.0, 3.0),
+        _phase("C", 8.0, 9.0),
+    )
+    issues = validate_profile_references(
+        _root_with(), datasets=(), known_genes=None, published_genes=set(), phases=nested
+    )
+    assert issues == []
+
+
+def test_prf006_reports_a_real_gap_bordered_by_merged_overlapping_phases() -> None:
+    """A genuine hole must still be found once its borders are themselves
+    merged from more than one overlapping phase -- naming every phase on
+    each side of the gap, not an arbitrary one of them.
+
+    `A=[1,3)` and `B=[2,4)` overlap and merge into one coverage span
+    `[1,4)`; `C=[6,9)` is a separate span. The gap `[4,6)` is real and must
+    be reported exactly once, crediting both `A` and `B` on its near side.
+    """
+    phases = _phase_file(
+        _phase("A", 1.0, 3.0),
+        _phase("B", 2.0, 4.0),
+        _phase("C", 6.0, 9.0),
+    )
+    issues = validate_profile_references(
+        _root_with(), datasets=(), known_genes=None, published_genes=set(), phases=phases
+    )
+    assert [i.code for i in issues] == ["PRF006"]
+    assert "'A'" in issues[0].message and "'B'" in issues[0].message and "'C'" in issues[0].message
+    assert "4.0" in issues[0].message and "6.0" in issues[0].message
 
 
 def test_prf007_names_a_gene_id_no_registry_knows() -> None:

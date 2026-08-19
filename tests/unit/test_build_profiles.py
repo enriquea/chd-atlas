@@ -41,7 +41,7 @@ from chd_atlas.build.profiles import (
     specificity,
 )
 from chd_atlas.models.dataset import Dataset, Stage
-from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile
+from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile, EndBasis
 
 # 101 breakpoints, percentile i at index i. Hand-built so the expected answers
 # below are read off the grid rather than computed by the code under test.
@@ -433,12 +433,36 @@ _STAGES = (
     Stage(token="20wpc", wpc=20.0),
     Stage(token="senior", wpc=None),
 )
+
+
+def _phase(id_: str, start_wpc: float, end_wpc: float, **overrides: object) -> CardiacPhase:
+    """A validly-constructed `CardiacPhase` for interval-logic tests.
+
+    The Carnegie-stage/HsapDv/`go_id` values are placeholders, not a claim
+    about embryology, matching `test_models_phases.py`'s own factory.
+    """
+    base: dict[str, object] = {
+        "id": id_,
+        "go_id": "GO:0000001",
+        "label": id_,
+        "start_wpc": start_wpc,
+        "end_wpc": end_wpc,
+        "start_carnegie_stage": "CS1",
+        "end_carnegie_stage": "CS2",
+        "start_hsapdv_id": "HsapDv:0000001",
+        "end_hsapdv_id": "HsapDv:0000002",
+        "end_basis": EndBasis.STATED,
+    }
+    base.update(overrides)
+    return CardiacPhase.model_validate(base)
+
+
 _PHASES = CardiacPhaseFile(
     attributed_to="O'Rahilly & Muller 1987",
     citation="ISBN:0872796248",
     phases=[
-        CardiacPhase(id="looping", label="Cardiac looping", start_wpc=3.0, end_wpc=5.0),
-        CardiacPhase(id="septation", label="Septation", start_wpc=5.0, end_wpc=8.0),
+        _phase("looping", 3.0, 5.0),
+        _phase("septation", 5.0, 8.0),
     ],
 )
 
@@ -450,20 +474,44 @@ def test_a_stage_outside_every_phase_publishes_a_reason_not_a_gap() -> None:
     past the last one. The source's series runs well past the morphogenetic
     window, so this is the common case, not an edge case.
     """
-    assert assign_phase("7wpc", _STAGES, _PHASES).phase_id == "septation"
-    assert assign_phase("20wpc", _STAGES, _PHASES).phase_id is None
+    assert assign_phase("7wpc", _STAGES, _PHASES).phase_ids == ("septation",)
+    assert assign_phase("20wpc", _STAGES, _PHASES).phase_ids == ()
     assert assign_phase("20wpc", _STAGES, _PHASES).reason == "after the curated window"
     assert assign_phase("senior", _STAGES, _PHASES).reason == "post-natal"
     assert assign_phase("unknown", _STAGES, _PHASES).reason == "stage not declared by this dataset"
 
 
 def test_a_matched_phase_carries_no_reason_the_page_would_have_to_suppress() -> None:
-    """`reason` explains an ABSENT `phase_id`, and is `None` exactly when
-    `phase_id` is not -- a caller must never face both populated at once.
+    """`reason` explains an EMPTY `phase_ids`, and is `None` exactly when
+    `phase_ids` is not empty -- a caller must never face both populated at once.
     """
     result = assign_phase("7wpc", _STAGES, _PHASES)
     assert result.outcome is PhaseOutcome.MATCHED
-    assert result.phase_id == "septation"
+    assert result.phase_ids == ("septation",)
+    assert result.reason is None
+
+
+def test_a_matched_stage_names_every_overlapping_phase_not_just_the_first() -> None:
+    """The unique killer of `phases_for`/`assign_phase` truncating to one match.
+
+    `_PHASES` alone (looping, septation -- disjoint) cannot catch a caller
+    that silently takes only `found[0]`, because every wpc it exercises
+    matches at most one phase. Three phases overlap at 6.5 wpc here; a
+    truncating implementation would report exactly one of them and this test
+    would fail no matter which one survived.
+    """
+    overlapping = CardiacPhaseFile(
+        attributed_to="x",
+        citation="PMID:1",
+        phases=[
+            _phase("looping", 3.0, 8.0),
+            _phase("atrial_septation", 5.0, 7.0),
+            _phase("oft_septation", 6.0, 9.0),
+        ],
+    )
+    result = assign_phase("6.5wpc", (Stage(token="6.5wpc", wpc=6.5),), overlapping)
+    assert result.outcome is PhaseOutcome.MATCHED
+    assert result.phase_ids == ("looping", "atrial_septation", "oft_septation")
     assert result.reason is None
 
 
@@ -484,7 +532,7 @@ def test_post_natal_and_undeclared_carry_the_matching_outcome(
     """
     result = assign_phase(token, _STAGES, _PHASES)
     assert result.outcome is expected_outcome
-    assert result.phase_id is None
+    assert result.phase_ids == ()
 
 
 def test_a_stage_before_the_curated_window_is_distinguished_from_one_after_it() -> None:
@@ -503,7 +551,7 @@ def test_a_stage_before_the_curated_window_is_distinguished_from_one_after_it() 
 
 def test_a_stage_exactly_at_the_last_phase_boundary_reads_as_after() -> None:
     """Intervals are half-open, so a wpc exactly at the last phase's own
-    `end_wpc` is not inside it (`phase_for(8.0) is None` -- pinned by
+    `end_wpc` is not inside it (`phases_for(8.0) == ()` -- pinned by
     `models/phases.py`'s own boundary test) -- but the fallback comparison
     here must still be `>=`, not `>`, or this exact value falls through to
     the generic "outside" text instead of the more specific "after" one. The
@@ -528,9 +576,10 @@ def test_a_stage_exactly_at_the_last_phase_boundary_reads_as_after() -> None:
 def test_an_absent_or_empty_phase_vocabulary_reads_as_outside_the_window(
     phases: CardiacPhaseFile | None,
 ) -> None:
-    """The committed `curation/cardiac_phases.yaml` IS the second case today
-    -- ships with zero phases, deliberately, until a source is verified -- so
-    this is the real corpus's own state, not a hypothetical.
+    """An unloaded corpus (`phases is None`) and a loaded-but-empty vocabulary
+    are the two states before any phase is curated -- `curation/cardiac_
+    phases.yaml` shipped with zero phases from Task 4 until a source was
+    verified, and both states must keep working once it no longer does.
 
     Both parametrisations must be exercised, not just one: a fix that special
     -cases `phases is None` but forgets `not phases.phases` (or the reverse)
@@ -542,7 +591,7 @@ def test_an_absent_or_empty_phase_vocabulary_reads_as_outside_the_window(
     result = assign_phase("7wpc", _STAGES, phases)
     assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert result.reason == "outside the curated window"
-    assert result.phase_id is None
+    assert result.phase_ids == ()
 
 
 def test_an_interior_gap_is_outside_the_window_not_an_empty_vocabulary() -> None:
@@ -557,8 +606,8 @@ def test_an_interior_gap_is_outside_the_window_not_an_empty_vocabulary() -> None
         attributed_to="O'Rahilly & Muller 1987",
         citation="ISBN:0872796248",
         phases=[
-            CardiacPhase(id="looping", label="Cardiac looping", start_wpc=3.0, end_wpc=5.0),
-            CardiacPhase(id="septation", label="Septation", start_wpc=6.0, end_wpc=8.0),
+            _phase("looping", 3.0, 5.0),
+            _phase("septation", 6.0, 8.0),
         ],
     )
     result = assign_phase("7wpc", (Stage(token="7wpc", wpc=5.5),), gapped)
@@ -1019,7 +1068,7 @@ def test_a_null_stage_row_publishes_with_a_stated_reason_not_a_dropped_row(
     # dataset simply never declared.
     assert stages[None]["phase"] == {
         "outcome": None,
-        "phase_id": None,
+        "phase_ids": (),
         "reason": "no developmental stage recorded for this measurement",
     }
 
@@ -1138,13 +1187,13 @@ def test_a_real_stage_resolves_its_phase_through_the_datasets_own_wpc_mapping(
     phases = CardiacPhaseFile(
         attributed_to="O'Rahilly & Muller 1987",
         citation="ISBN:0872796248",
-        phases=[CardiacPhase(id="septation", label="Septation", start_wpc=5.0, end_wpc=8.0)],
+        phases=[_phase("septation", 5.0, 8.0)],
     )
 
     result = gene_expression_profiles(tmp_path, (_dataset(),), phases, {})
 
     phase = result["HGNC:1"]["datasets"][0]["stages"][0]["phase"]
-    assert phase == {"outcome": "matched", "phase_id": "septation", "reason": None}
+    assert phase == {"outcome": "matched", "phase_ids": ("septation",), "reason": None}
 
 
 def test_tau_is_computed_per_stage_not_merged_across_stages(tmp_path: Path) -> None:
