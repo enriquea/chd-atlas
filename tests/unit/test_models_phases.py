@@ -16,6 +16,15 @@ docstring for the measured concurrency table this vocabulary is built to
 represent -- so `phases_for` returns a tuple, possibly with more than one
 member, and `CardiacPhaseFile` no longer rejects an overlapping pair at load
 time. Only duplicate ids are still rejected.
+
+**A phase may also have no stated end at all, and this file used to invent
+one.** An earlier revision capped every open-ended phase at a curator-chosen
+boundary (`end_basis: curator_capped`); that concept is retired --
+`EndBasis` now has exactly two members, `STATED` and `NOT_STATED` -- because
+two of the three phases originally capped turned out to have a real, stated
+end the first extraction missed, and the third (`heart_looping`, still
+open-ended for real) must never be asserted as running at a stage the source
+gives no basis for. `_open_phase()` below builds that shape.
 """
 
 from __future__ import annotations
@@ -30,7 +39,7 @@ from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile, EndBasis
 
 
 def _phase(id_: str, start_wpc: float, end_wpc: float, **overrides: object) -> CardiacPhase:
-    """A validly-constructed `CardiacPhase` for interval-logic tests.
+    """A validly-constructed, fully-`STATED` `CardiacPhase` for interval-logic tests.
 
     The Carnegie-stage/HsapDv/`go_id` values are placeholders, not a claim
     about embryology -- only `id`, `start_wpc` and `end_wpc` vary across the
@@ -48,6 +57,28 @@ def _phase(id_: str, start_wpc: float, end_wpc: float, **overrides: object) -> C
         "start_hsapdv_id": "HsapDv:0000001",
         "end_hsapdv_id": "HsapDv:0000002",
         "end_basis": EndBasis.STATED,
+    }
+    base.update(overrides)
+    return CardiacPhase.model_validate(base)
+
+
+def _open_phase(id_: str, start_wpc: float, **overrides: object) -> CardiacPhase:
+    """A validly-constructed `CardiacPhase` with a real start and NO stated end.
+
+    The `heart_looping` shape: every end field is `None` and `end_basis` is
+    `NOT_STATED`, matching what `end_fields_match_end_basis` requires.
+    """
+    base: dict[str, object] = {
+        "id": id_,
+        "go_id": "GO:0000001",
+        "label": id_,
+        "start_wpc": start_wpc,
+        "end_wpc": None,
+        "start_carnegie_stage": "CS1",
+        "end_carnegie_stage": None,
+        "start_hsapdv_id": "HsapDv:0000001",
+        "end_hsapdv_id": None,
+        "end_basis": EndBasis.NOT_STATED,
     }
     base.update(overrides)
     return CardiacPhase.model_validate(base)
@@ -199,49 +230,118 @@ def test_whitespace_only_attribution_is_rejected(field: str) -> None:
         CardiacPhaseFile(**_file(**{field: "   "}))
 
 
-def test_end_basis_distinguishes_a_stated_end_from_a_curator_capped_one() -> None:
-    """`end_basis` is not decorative: a stated and a capped phase must both
-    construct, and must round-trip as genuinely different values -- never
-    collapsed to one, and never silently defaulted for the other.
+def test_end_basis_distinguishes_a_stated_end_from_a_not_stated_one() -> None:
+    """`end_basis` is not decorative: a stated and an open-ended phase must
+    both construct, and must round-trip as genuinely different values --
+    never collapsed to one, and never silently defaulted for the other.
     """
     stated = _phase("septation", 3.0, 5.0, end_basis=EndBasis.STATED)
-    capped = _phase("looping", 3.0, 9.0, end_basis=EndBasis.CURATOR_CAPPED)
+    open_ended = _open_phase("looping", 3.0)
     assert stated.end_basis is EndBasis.STATED
-    assert capped.end_basis is EndBasis.CURATOR_CAPPED
-    assert stated.end_basis is not capped.end_basis
+    assert stated.end_wpc == 5.0
+    assert open_ended.end_basis is EndBasis.NOT_STATED
+    assert open_ended.end_wpc is None
+    assert stated.end_basis is not open_ended.end_basis
 
 
 def test_end_basis_rejects_a_value_outside_the_two_member_vocabulary() -> None:
-    """A closed vocabulary: 'stated' and 'curator_capped' are the only two
-    facts a boundary can be, and a third spelling (a typo, or a future
-    'estimated' nobody has designed yet) must not silently pass through as a
-    string.
+    """A closed vocabulary: 'stated' and 'not_stated' are the only two facts
+    a boundary can be, and a third spelling (a typo, the retired
+    'curator_capped', or a future value nobody has designed yet) must not
+    silently pass through as a string.
     """
     with pytest.raises(ValidationError):
         _phase("a", 1.0, 2.0, end_basis="estimated")
+    with pytest.raises(ValidationError):
+        _phase("a", 1.0, 2.0, end_basis="curator_capped")
+
+
+@pytest.mark.parametrize("missing_field", ["end_wpc", "end_carnegie_stage", "end_hsapdv_id"])
+def test_end_basis_stated_requires_every_end_field(missing_field: str) -> None:
+    """`end_basis: stated` with an end field left `None` is a claimed boundary
+    with no number behind it -- caught for each end field independently, so a
+    guard checking only `end_wpc` cannot silently let the other two drift.
+
+    Built from an explicit, fully-STATED dict rather than through `_phase()`
+    -- `_phase()` binds `end_wpc` positionally, which collides with also
+    overriding it by keyword when `missing_field == "end_wpc"`.
+    """
+    fields: dict[str, object] = {
+        "id": "a",
+        "go_id": "GO:0000001",
+        "label": "a",
+        "start_wpc": 1.0,
+        "end_wpc": 2.0,
+        "start_carnegie_stage": "CS1",
+        "end_carnegie_stage": "CS2",
+        "start_hsapdv_id": "HsapDv:0000001",
+        "end_hsapdv_id": "HsapDv:0000002",
+        "end_basis": EndBasis.STATED,
+    }
+    fields[missing_field] = None
+    with pytest.raises(ValidationError, match="end field is missing"):
+        CardiacPhase.model_validate(fields)
+
+
+@pytest.mark.parametrize(
+    "extra_field, value",
+    [("end_wpc", 9.0), ("end_carnegie_stage", "CS9"), ("end_hsapdv_id", "HsapDv:9")],
+)
+def test_end_basis_not_stated_forbids_every_end_field(extra_field: str, value: object) -> None:
+    """The reverse direction: `end_basis: not_stated` with a real value in any
+    end field would be silently treated as sourced by `phases_for` and
+    `_coverage_spans` (both key on `end_wpc is None`), reintroducing the
+    invented-boundary defect `NOT_STATED` exists to rule out. Checked per
+    field for the same reason as the STATED direction above.
+    """
+    with pytest.raises(ValidationError, match="end field is set"):
+        _open_phase("a", 1.0, **{extra_field: value})
+
+
+def test_a_phase_with_no_stated_end_is_never_returned_by_phases_for() -> None:
+    """Unconditional, at every wpc -- not merely 'too far past its start'.
+
+    There is no source-given point at which this atlas could say an
+    open-ended phase has stopped, so picking any cutoff (its own start, a
+    round number, the vocabulary's last known end) would itself be an
+    invented boundary. Checked at the phase's own start, just after it, and
+    far past every other phase in the file, so a mutant that excludes it only
+    near one of those three regions is still caught.
+    """
+    file = CardiacPhaseFile(
+        attributed_to="x",
+        citation="PMID:1",
+        phases=[_open_phase("looping", 3.0), _phase("septation", 5.0, 8.0)],
+    )
+    assert file.phases_for(3.0) == ()
+    assert file.phases_for(4.0) == ()
+    assert [phase.id for phase in file.phases_for(6.0)] == ["septation"]
+    assert file.phases_for(100.0) == ()
 
 
 def test_the_committed_phase_vocabulary_loads_and_matches_the_verified_table() -> None:
     """A smoke test over the real file, which no unit fixture can stand in for.
 
     Pins the actual embryology this atlas ships, verified against the
-    boundary table in the task that populated this file (HsapDv day-post-
-    fertilization ranges / 7.0; see `curation/cardiac_phases.yaml`'s own
-    header for the ordinal-vs-elapsed-week trap this guards against).
+    boundary table supplied for this file (HsapDv day-post-fertilization
+    ranges / 7.0; see `curation/cardiac_phases.yaml`'s own header for the
+    ordinal-vs-elapsed-week trap this guards against, and for the correction
+    history: two of the three phases originally marked `curator_capped` had
+    a real stated end the first extraction simply missed; only `heart_
+    looping` genuinely has none).
 
-    **4 wpc and 7 wpc are both triple matches, but not the same triple.**
-    4 wpc: heart looping + atrial septation + ventricular septation (matches
-    the concurrency table in `models/phases.py`'s module docstring exactly).
-    7 wpc: heart looping + ventricular septation + heart valve morphogenesis
-    -- outflow tract septation has already ended by 6.86 wpc, so it does NOT
-    appear here even though a same-day illustrative reading might expect it.
-    Both are pinned explicitly so a mutant collapsing either count to 1, or
-    silently substituting one triple's members for the other's, is caught.
+    **`heart_looping` never appears in any `phases_for` result here**, even
+    though it is curated (with a real, stated start) and even though it is
+    biologically underway throughout 3.14-8.57 wpc -- it has no stated end,
+    so it is structurally excluded (`end_wpc is None`) rather than asserted
+    past a point the source never gave. A mutant that lets it leak back into
+    a match is exactly what this test's absence of `"heart_looping"` from
+    every list below is watching for.
 
-    **Capped vs. stated is pinned by name, not just by count.** A mutant that
-    flips which three phases are capped (rather than merely dropping the
-    field) would survive a "some are stated, some are capped" assertion; it
-    cannot survive naming each side.
+    **Every wpc pinned gives a DIFFERENT match set**, not just a different
+    count, per the fixture-diversity rule: 1 phase, 2 phases, 3 phases, 1
+    phase again (a different one), then 0 -- a mutant that returns the wrong
+    *members* while keeping the right *count* cannot survive all five.
     """
     path = Path(__file__).parent.parent.parent / "curation" / "cardiac_phases.yaml"
     raw = path.read_text(encoding="utf-8")
@@ -274,17 +374,34 @@ def test_the_committed_phase_vocabulary_loads_and_matches_the_verified_table() -
     assert basis["embryonic_heart_tube_morphogenesis"] is EndBasis.STATED
     assert basis["atrial_septum_morphogenesis"] is EndBasis.STATED
     assert basis["outflow_tract_septum_morphogenesis"] is EndBasis.STATED
-    assert basis["heart_looping"] is EndBasis.CURATOR_CAPPED
-    assert basis["ventricular_septum_morphogenesis"] is EndBasis.CURATOR_CAPPED
-    assert basis["heart_valve_morphogenesis"] is EndBasis.CURATOR_CAPPED
+    assert basis["ventricular_septum_morphogenesis"] is EndBasis.STATED
+    assert basis["heart_valve_morphogenesis"] is EndBasis.STATED
+    assert basis["heart_looping"] is EndBasis.NOT_STATED
 
+    by_id = {phase.id: phase for phase in parsed.phases}
+    assert by_id["heart_looping"].end_wpc is None
+    assert by_id["heart_looping"].start_wpc == pytest.approx(3.14)
+    assert by_id["ventricular_septum_morphogenesis"].end_wpc == pytest.approx(7.29)
+    assert by_id["heart_valve_morphogenesis"].end_wpc == pytest.approx(8.57)
+
+    # heart_looping's own stated start (3.14) is the wpc where its exclusion
+    # is closest to mattering -- it still must not appear, even here; only
+    # embryonic_heart_tube_morphogenesis (whose own window, [2.71, 3.29),
+    # already contains 3.14) is a real match.
+    assert [phase.id for phase in parsed.phases_for(3.14)] == ["embryonic_heart_tube_morphogenesis"]
     assert [phase.id for phase in parsed.phases_for(4.0)] == [
-        "heart_looping",
         "atrial_septum_morphogenesis",
         "ventricular_septum_morphogenesis",
     ]
+    assert [phase.id for phase in parsed.phases_for(6.0)] == [
+        "atrial_septum_morphogenesis",
+        "ventricular_septum_morphogenesis",
+        "outflow_tract_septum_morphogenesis",
+    ]
     assert [phase.id for phase in parsed.phases_for(7.0)] == [
-        "heart_looping",
         "ventricular_septum_morphogenesis",
         "heart_valve_morphogenesis",
     ]
+    assert [phase.id for phase in parsed.phases_for(8.0)] == ["heart_valve_morphogenesis"]
+    assert parsed.phases_for(9.0) == ()
+    assert parsed.phases_for(100.0) == ()

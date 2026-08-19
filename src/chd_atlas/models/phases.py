@@ -15,14 +15,25 @@ a disjoint partition -- one phase per stage -- and that was wrong. Human
 cardiac morphogenetic processes run concurrently; a disjoint partition would
 force picking one label per stage and silently discarding the others, and the
 discarded one may be exactly the lesion-relevant process a reader came for.
-Measured from Buijtendijk et al. 2020 (PMID:32048790), against the boundaries
-this file transcribes:
 
-| elapsed wpc | processes simultaneously underway |
+**This table was corrected once and the correction is recorded here on
+purpose.** It originally read "4 | looping, atrial septation, ventricular
+septation" and so on, transcribed from the source's *ordinal*-week prose --
+which is exactly the off-by-one-week error this file's own next section warns
+against, and it produced a wrong row (it placed outflow tract septation at 7
+wpc; the numeric boundaries below place it only through 6.86 wpc). The table
+below is derived from the boundaries `curation/cardiac_phases.yaml` actually
+curates, verified against a real built page rather than trusted by
+arithmetic, and `heart_looping` is absent from every row on purpose -- it has
+no stated end (see `EndBasis.NOT_STATED` below) and `phases_for` excludes it
+from every match for exactly that reason, even though it is also
+biologically underway throughout this range:
+
+| elapsed wpc | phases matched |
 |---|---|
-| 4 | looping, atrial septation, ventricular septation |
+| 4 | atrial septation, ventricular septation |
 | 6 | atrial septation, ventricular septation, outflow tract septation |
-| 7 | ventricular septation, outflow tract septation, valve formation |
+| 7 | ventricular septation, valve formation |
 
 At 6 wpc an AVSD gene needs "atrial septation" and a TGA gene needs "outflow
 tract septation", and both are true at once -- a disjoint model can represent
@@ -38,9 +49,10 @@ sixth week", which is consistent with the ordinal reading and NOT with reading
 "sixth week" as elapsed wpc 6-7. Transcribing the prose directly would shift
 every boundary a full Carnegie stage too late, silently and consistently
 enough that nothing downstream would catch it -- exactly the kind of error
-this file's own docstring exists to name rather than let recur. See
-`curation/cardiac_phases.yaml`'s header comment for the same warning at the
-point a curator is most likely to re-introduce it.
+this file's own docstring exists to name rather than let recur, and exactly
+the error the table above was corrected from. See `curation/cardiac_
+phases.yaml`'s header comment for the same warning at the point a curator is
+most likely to re-introduce it.
 """
 
 from __future__ import annotations
@@ -53,26 +65,33 @@ from chd_atlas.duplicates import duplicates
 
 
 class EndBasis(StrEnum):
-    """Whether a phase's `end_wpc` is transcribed fact or a curator's editorial cap.
+    """Whether a phase's `end_wpc` is one of the source's own statements, or absent.
 
-    Several of the transcribed processes have no stated end at all -- the
-    source describes when they start and simply moves on to the next process
-    -- and leaving `end_wpc` undefined is not an option `CardiacPhase` offers
-    (`end_wpc` is required, `gt=0`, and must exceed `start_wpc`). Capping such
-    a phase at the last Carnegie stage the source discusses (CS23, "the heart
-    already resembles the postnatal configuration") is a defensible curator
-    choice, but it is a **different kind of fact** from a boundary the source
-    itself states, and collapsing the two into one untyped `end_wpc` would let
-    a curated guess masquerade as a transcribed measurement -- silently, and
-    permanently, since nothing would ever again distinguish them.
+    **Two members, not three.** An earlier revision of this vocabulary had a
+    third, `CURATOR_CAPPED`, for a phase the source names no end for --
+    "capped" at the last Carnegie stage the source discusses at all, on the
+    reasoning that the heart "already resembles the postnatal configuration"
+    by then. That statement turned out to describe arterial-pole remodelling,
+    not any of the three processes it was used to cap, and was this atlas
+    inventing a boundary the source never gave -- once for a genuine gap
+    (`heart_looping`) and twice for phases whose real completion had simply
+    not been extracted yet (`ventricular_septum_morphogenesis`,
+    `heart_valve_morphogenesis` -- both now `STATED`, at the source's own
+    words). `CURATOR_CAPPED` is retired rather than kept unused: a vocabulary
+    member no curated phase exercises is a guard nobody has seen fail, and a
+    future phase with a genuinely unknown end should be modelled the way
+    `heart_looping` now is -- `NOT_STATED`, with `end_wpc` left null rather
+    than a boundary invented to fill it.
 
-    `STATED` means the source names this boundary directly. `CURATOR_CAPPED`
-    means the source names no end for this process, and the curator drew a
-    line rather than leaving `end_wpc` undefined.
+    `STATED` means the source names this boundary directly, and every end
+    field (`end_wpc`, `end_carnegie_stage`, `end_hsapdv_id`) is populated.
+    `NOT_STATED` means the source names no end for this process at all, and
+    every end field is `None` -- `CardiacPhase.end_fields_match_end_basis`
+    enforces that the two can never disagree.
     """
 
     STATED = "stated"
-    CURATOR_CAPPED = "curator_capped"
+    NOT_STATED = "not_stated"
 
 
 class CardiacPhase(BaseModel):
@@ -85,9 +104,15 @@ class CardiacPhase(BaseModel):
     check this atlas's transcription against the source without taking this
     file's word for it: `start_carnegie_stage`/`end_carnegie_stage` name the
     Carnegie stages the source itself cites, `start_hsapdv_id`/`end_hsapdv_id`
-    name the HsapDv ontology terms those stages resolve to, and `end_basis`
-    says whether `end_wpc` is one of the source's own statements or a
-    curator's cap (see `EndBasis`).
+    name the HsapDv ontology terms those stages resolve to.
+
+    **The start is always known; the end may not be.** Every phase this
+    atlas curates has a source-stated start, so `start_wpc`/
+    `start_carnegie_stage`/`start_hsapdv_id` are always required. The three
+    end fields are `None` together exactly when `end_basis` is `NOT_STATED`
+    (`end_fields_match_end_basis` enforces this) -- a phase with no stated
+    end is recorded with its real start and an honest gap where its end
+    would be, never a curator's guess at one.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -96,17 +121,45 @@ class CardiacPhase(BaseModel):
     go_id: str = Field(min_length=1)
     label: str = Field(min_length=1)
     start_wpc: float = Field(gt=0)
-    end_wpc: float = Field(gt=0)
+    end_wpc: float | None = Field(default=None, gt=0)
     start_carnegie_stage: str = Field(min_length=1)
-    end_carnegie_stage: str = Field(min_length=1)
+    end_carnegie_stage: str | None = Field(default=None, min_length=1)
     start_hsapdv_id: str = Field(min_length=1)
-    end_hsapdv_id: str = Field(min_length=1)
+    end_hsapdv_id: str | None = Field(default=None, min_length=1)
     end_basis: EndBasis
 
     @model_validator(mode="after")
     def interval_is_non_empty(self) -> CardiacPhase:
-        if self.end_wpc <= self.start_wpc:
+        """`end_wpc`, when present, must exceed `start_wpc`.
+
+        Skipped entirely when `end_wpc is None` -- there is no interval to
+        check, and `end_fields_match_end_basis` below is what enforces that a
+        null `end_wpc` is itself a deliberate, `NOT_STATED` fact rather than
+        an oversight.
+        """
+        if self.end_wpc is not None and self.end_wpc <= self.start_wpc:
             raise ValueError(f"phase {self.id}: end_wpc must exceed start_wpc")
+        return self
+
+    @model_validator(mode="after")
+    def end_fields_match_end_basis(self) -> CardiacPhase:
+        """`end_basis` and the three end fields must never disagree.
+
+        `STATED` requires all three (`end_wpc`, `end_carnegie_stage`,
+        `end_hsapdv_id`) to be present; `NOT_STATED` requires all three to be
+        absent. Without this check a curator could write `end_basis: stated`
+        with `end_wpc: null` (a claimed boundary with no number behind it) or
+        `end_basis: not_stated` with a real `end_wpc` (a value this atlas
+        would then treat as unsourced everywhere it matters -- `phases_for`
+        and PRF006's coverage-span merge both key on `end_wpc is None`, not
+        on `end_basis`, so a mismatch here would silently reintroduce exactly
+        the invented-boundary defect `NOT_STATED` exists to rule out).
+        """
+        end_fields = (self.end_wpc, self.end_carnegie_stage, self.end_hsapdv_id)
+        if self.end_basis is EndBasis.STATED and any(field is None for field in end_fields):
+            raise ValueError(f"phase {self.id}: end_basis is stated but an end field is missing")
+        if self.end_basis is EndBasis.NOT_STATED and any(field is not None for field in end_fields):
+            raise ValueError(f"phase {self.id}: end_basis is not_stated but an end field is set")
         return self
 
 
@@ -161,17 +214,27 @@ class CardiacPhaseFile(BaseModel):
     def phases_for(self, wpc: float | None) -> tuple[CardiacPhase, ...]:
         """Every phase containing `wpc`, sorted by `(start_wpc, id)` -- possibly several.
 
-        Empty, never `None`, both for a null wpc and for a real wpc matched by
-        no phase: a post-natal stage (`wpc is None`) is outside every cardiac
-        morphogenetic phase by definition, and a real wpc outside the curated
-        window is a different, real fact. Returning an empty tuple rather than
-        raising in either case is what lets a page say "outside the curated
-        window" or "post-natal" instead of dropping the row. Sorted
-        deterministically so two callers -- and two builds of one commit --
-        see phases in the same order regardless of this list's own YAML
-        declaration order or of `PYTHONHASHSEED`.
+        Empty, never `None`, for three different reasons, and a caller must
+        not conflate them: a null `wpc` (post-natal, outside every cardiac
+        morphogenetic phase by definition), a real `wpc` matched by no
+        curated phase, and a real `wpc` that falls only inside a phase with
+        no stated end. That third case is deliberate and unconditional: a
+        phase with `end_wpc is None` (`EndBasis.NOT_STATED`) is excluded from
+        this match at every `wpc`, not merely at wpc values "too far" past
+        its start -- there is no source-given point at which this atlas could
+        say it has stopped, so it must never be asserted as still running
+        rather than picking an arbitrary cutoff nobody stated. Returning an
+        empty tuple rather than raising in any of the three cases is what
+        lets a page say "outside the curated window" or "post-natal" instead
+        of dropping the row. Sorted deterministically so two callers -- and
+        two builds of one commit -- see phases in the same order regardless
+        of this list's own YAML declaration order or of `PYTHONHASHSEED`.
         """
         if wpc is None:
             return ()
-        matches = [phase for phase in self.phases if phase.start_wpc <= wpc < phase.end_wpc]
+        matches = [
+            phase
+            for phase in self.phases
+            if phase.end_wpc is not None and phase.start_wpc <= wpc < phase.end_wpc
+        ]
         return tuple(sorted(matches, key=lambda phase: (phase.start_wpc, phase.id)))

@@ -195,6 +195,26 @@ def _phase(phase_id: str, start_wpc: float, end_wpc: float) -> CardiacPhase:
     )
 
 
+def _open_phase(phase_id: str, start_wpc: float) -> CardiacPhase:
+    """A validly-constructed `CardiacPhase` with a real start and NO stated end.
+
+    The `heart_looping` shape, matching `test_models_phases.py`'s and
+    `test_build_profiles.py`'s own `_open_phase()`.
+    """
+    return CardiacPhase(
+        id=phase_id,
+        go_id="GO:0000001",
+        label=phase_id,
+        start_wpc=start_wpc,
+        end_wpc=None,
+        start_carnegie_stage="CS1",
+        end_carnegie_stage=None,
+        start_hsapdv_id="HsapDv:0000001",
+        end_hsapdv_id=None,
+        end_basis=EndBasis.NOT_STATED,
+    )
+
+
 def _phase_file(*phases: CardiacPhase) -> CardiacPhaseFile:
     """A minimal, valid `CardiacPhaseFile` wrapping the given phases."""
     return CardiacPhaseFile(
@@ -847,6 +867,34 @@ def test_prf006_reports_a_real_gap_bordered_by_merged_overlapping_phases() -> No
     assert [i.code for i in issues] == ["PRF006"]
     assert "'A'" in issues[0].message and "'B'" in issues[0].message and "'C'" in issues[0].message
     assert "4.0" in issues[0].message and "6.0" in issues[0].message
+
+
+def test_prf006_does_not_let_an_open_ended_phase_close_a_gap_it_was_never_shown_to_close() -> None:
+    """The real vocabulary's own shape: `heart_looping` starts at 3.14, well
+    before the true gap [3.29, 3.71), and has no stated end -- an
+    implementation that let it contribute coverage regardless (treating its
+    missing end as "runs forever", or defaulting it to some large number)
+    would paper over the gap this test's fixture reproduces exactly.
+
+    `looping=[1.0, no end)`, `A=[0.5, 2.0)`, `B=[3.0, 5.0)`: without
+    `looping`'s exclusion, a naive implementation might read `looping` as
+    covering from 1.0 onward and merge straight through to `B`, reporting no
+    gap at all. With the exclusion applied correctly, `A`'s span is `[0.5,
+    2.0)`, `looping` contributes nothing, and `B`'s span is `[3.0, 5.0)`:
+    exactly one real gap, `[2.0, 3.0)`.
+    """
+    phases = _phase_file(
+        _phase("A", 0.5, 2.0),
+        _open_phase("looping", 1.0),
+        _phase("B", 3.0, 5.0),
+    )
+    issues = validate_profile_references(
+        _root_with(), datasets=(), known_genes=None, published_genes=set(), phases=phases
+    )
+    assert [i.code for i in issues] == ["PRF006"]
+    assert "'A'" in issues[0].message and "'B'" in issues[0].message
+    assert "looping" not in issues[0].message
+    assert "2.0" in issues[0].message and "3.0" in issues[0].message
 
 
 def test_prf007_names_a_gene_id_no_registry_knows() -> None:

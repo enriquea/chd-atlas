@@ -428,12 +428,20 @@ def assign_phase(
        overlapping phases are the ordinary case (see `models/phases.py`'s
        module docstring). No hits is `OUTSIDE_WINDOW` again, with a reason
        naming *where*: "before the curated window" (earlier than every
-       phase's `start_wpc`), "after the curated window" (at or past the
-       latest `end_wpc` across every phase -- the common case, since a real
-       developmental series runs well past any morphogenetic window, not an
-       edge case), or the same generic phrase as step 3 for the rarer case of
-       an interior gap no phase's interval reaches, which PRF006 already
-       names as a probable transcription slip.
+       phase's `start_wpc` -- every phase has one, `CardiacPhase.start_wpc`
+       is never null), "after the curated window" (at or past the latest
+       *known* `end_wpc` across every phase that has one -- the common case,
+       since a real developmental series runs well past any morphogenetic
+       window, not an edge case), or the same generic phrase as step 3 for
+       the rarer case of an interior gap no phase's interval reaches, which
+       PRF006 already names as a probable transcription slip. A phase with
+       no stated end (`EndBasis.NOT_STATED`) contributes its `start_wpc` to
+       the "before" comparison -- a real, sourced fact -- but nothing to the
+       "after" one: there is no known end for it to be the latest of, the
+       same exclusion `phases_for` itself applies. If literally every phase
+       has an unstated end, there is no "after" boundary to compare against
+       at all, and every wpc past the last start reads as the generic
+       "outside the curated window" rather than crashing on an empty `max()`.
     """
     stage = next((candidate for candidate in stages if candidate.token == token), None)
     if stage is None:
@@ -459,10 +467,10 @@ def assign_phase(
         )
 
     starts = [phase.start_wpc for phase in phases.phases]
-    ends = [phase.end_wpc for phase in phases.phases]
+    ends = [phase.end_wpc for phase in phases.phases if phase.end_wpc is not None]
     if stage.wpc < min(starts):
         reason = "before the curated window"
-    elif stage.wpc >= max(ends):
+    elif ends and stage.wpc >= max(ends):
         reason = "after the curated window"
     else:
         reason = "outside the curated window"

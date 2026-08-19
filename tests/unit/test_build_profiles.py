@@ -457,6 +457,29 @@ def _phase(id_: str, start_wpc: float, end_wpc: float, **overrides: object) -> C
     return CardiacPhase.model_validate(base)
 
 
+def _open_phase(id_: str, start_wpc: float, **overrides: object) -> CardiacPhase:
+    """A validly-constructed `CardiacPhase` with a real start and NO stated end.
+
+    Matches `test_models_phases.py`'s own `_open_phase()` -- the `heart_
+    looping` shape, used here to prove `assign_phase`'s before/after
+    boundary computation ignores such a phase's (absent) end correctly.
+    """
+    base: dict[str, object] = {
+        "id": id_,
+        "go_id": "GO:0000001",
+        "label": id_,
+        "start_wpc": start_wpc,
+        "end_wpc": None,
+        "start_carnegie_stage": "CS1",
+        "end_carnegie_stage": None,
+        "start_hsapdv_id": "HsapDv:0000001",
+        "end_hsapdv_id": None,
+        "end_basis": EndBasis.NOT_STATED,
+    }
+    base.update(overrides)
+    return CardiacPhase.model_validate(base)
+
+
 _PHASES = CardiacPhaseFile(
     attributed_to="O'Rahilly & Muller 1987",
     citation="ISBN:0872796248",
@@ -561,6 +584,51 @@ def test_a_stage_exactly_at_the_last_phase_boundary_reads_as_after() -> None:
     boundary = assign_phase("8wpc", (Stage(token="8wpc", wpc=8.0),), _PHASES)
     assert boundary.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert boundary.reason == "after the curated window"
+
+
+def test_an_open_ended_phase_is_ignored_by_the_after_boundary_not_crashed_on() -> None:
+    """`heart_looping`'s real shape: a phase with no stated end must not
+    contribute to "after the curated window", and must not make the
+    computation raise either.
+
+    Two phases here: `looping` has no end at all (start 1.0), `septation` is
+    fully stated (3.0-5.0). A wpc past 5.0 must read "after", using
+    `septation`'s own end -- never `looping`'s absence, and never a `TypeError`
+    from comparing `None` into `max()`. `looping`'s own start (1.0) still
+    counts toward "before the curated window" at the low end, since a start is
+    always real -- checked at wpc 0.5 in the same test so both directions of
+    the boundary are exercised against one fixture.
+    """
+    mixed = CardiacPhaseFile(
+        attributed_to="x",
+        citation="PMID:1",
+        phases=[_open_phase("looping", 1.0), _phase("septation", 3.0, 5.0)],
+    )
+    stages = (Stage(token="early", wpc=0.5), Stage(token="late", wpc=6.0))
+
+    before = assign_phase("early", stages, mixed)
+    after = assign_phase("late", stages, mixed)
+
+    assert before.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert before.reason == "before the curated window"
+    assert after.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert after.reason == "after the curated window"
+
+
+def test_every_phase_open_ended_never_reads_as_after_the_curated_window() -> None:
+    """The degenerate case `ends and ...` guards: if not one phase has a
+    stated end, there is no "after" boundary to compare against, and a wpc
+    past every start must read as the generic "outside the curated window"
+    rather than crashing on `max()` of an empty sequence.
+    """
+    all_open = CardiacPhaseFile(
+        attributed_to="x",
+        citation="PMID:1",
+        phases=[_open_phase("looping", 1.0)],
+    )
+    result = assign_phase("late", (Stage(token="late", wpc=1000.0),), all_open)
+    assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
+    assert result.reason == "outside the curated window"
 
 
 @pytest.mark.parametrize(

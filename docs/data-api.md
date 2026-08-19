@@ -931,7 +931,7 @@ reproducible answer for a 7-elapsed-week stage against the boundaries
           {
             "stage": "7wpc",
             "phase": { "outcome": "matched",
-                       "phase_ids": ["heart_looping", "ventricular_septum_morphogenesis",
+                       "phase_ids": ["ventricular_septum_morphogenesis",
                                      "heart_valve_morphogenesis"],
                        "reason": null },
             "specificity": { "tau": 0.62, "scale": "log2(x+1)", "method": "…",
@@ -994,11 +994,21 @@ never goes through that mechanism at all: it has no gene column, so
   phase whose window contains its `wpc`, never just the nearest or the first
   declared. `curation/cardiac_phases.yaml` curates six phases transcribed from
   Buijtendijk et al. 2020 (PMID:32048790), each carrying the Gene Ontology
-  term, Carnegie stage(s) and HsapDv id(s) its boundaries were read from, plus
-  whether its end is a boundary the source states or a curator's cap where the
-  source names none (`end_basis`) — not published in this bundle field, only
-  in the curation file itself, so a consumer auditing a boundary starts there.
-  `phase_ids` is empty exactly when `outcome` is not `matched`.
+  term and the Carnegie stage(s)/HsapDv id(s) its boundaries were read from —
+  not published in this bundle field, only in the curation file itself, so a
+  consumer auditing a boundary starts there. `phase_ids` is empty exactly
+  when `outcome` is not `matched`.
+
+  **One of the six, `heart_looping`, never appears in `phase_ids` at all.**
+  The source states when it starts but never states when it ends, and this
+  atlas will not guess a cutoff nothing supports: `end_basis` on that phase
+  is `not_stated` rather than `stated`, and a phase in that state is excluded
+  from every stage's match, at every `wpc`, not merely "too far" past its own
+  start. It is still curated — with its real, sourced start — so a consumer
+  reading `curation/cardiac_phases.yaml` directly sees it; a consumer reading
+  only bundle JSON never does, because this atlas would rather publish
+  nothing for that phase than assert it is still running at a stage the
+  source gives no basis for.
 - `specificity` is Yanai's τ (tau) over every organ a dataset sampled at one
   stage, or `null` with `specificity_unavailable_reason` naming why:
 

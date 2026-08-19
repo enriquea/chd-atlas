@@ -551,10 +551,21 @@ def _coverage_spans(phases: Sequence[CardiacPhase]) -> list[_CoverageSpan]:
     sorted by `(start_wpc, id)` via the traversal order -- `_prf006_issues`
     re-sorts them again before rendering, so this function does not need to
     guarantee that ordering on its own return.
+
+    **A phase with no stated end (`end_wpc is None`, `EndBasis.NOT_STATED`)
+    contributes no coverage at all** -- skipped before it can be merged, the
+    same exclusion `CardiacPhaseFile.phases_for` applies and for the same
+    reason: there is no source-given point at which such a phase's coverage
+    would end, so it must not be treated as closing a gap it was never shown
+    to close. This is precisely why the real vocabulary now has a genuine
+    interior gap where an earlier, invented end for `heart_looping` used to
+    paper over one -- see `curation/cardiac_phases.yaml`'s own header comment.
     """
     ordered = sorted(phases, key=lambda phase: (phase.start_wpc, phase.id))
     spans: list[_CoverageSpan] = []
     for phase in ordered:
+        if phase.end_wpc is None:
+            continue
         if spans and phase.start_wpc <= spans[-1][1]:
             start, end, ids = spans[-1]
             spans[-1] = (start, max(end, phase.end_wpc), (*ids, phase.id))
