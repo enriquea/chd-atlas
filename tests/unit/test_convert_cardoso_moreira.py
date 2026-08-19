@@ -127,7 +127,7 @@ def test_a_grid_is_101_rows_non_decreasing_and_states_its_denominator() -> None:
     values = [row["value"] for row in rows]
     # Not `strict=True`: the two sequences differ in length by one by
     # design -- this walks adjacent pairs, it does not zip equals.
-    assert all(a <= b for a, b in zip(values, values[1:]))
+    assert all(a <= b for a, b in zip(values, values[1:], strict=False))
     assert values[0] == 0.0
     assert {row["n_genes"] for row in rows} == {100}
     assert {row["unit"] for row in rows} == {"tpm"}

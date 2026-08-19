@@ -983,7 +983,14 @@ def test_polars_pattern_engine_agrees_with_python_re(tmp_path: Path) -> None:
     #
     # The burden figure has now risen twice: from 1,192 x 4 when PMID:34324492
     # added 103 rows, and again here.
-    assert total_compared == 104_654
+    #
+    # **104,654 -> 122,980 on 2026-08-19**, when the first profiles mirror
+    # landed: E-MTAB-6814 contributes 18,326 rows whose `gene` column is
+    # pattern-checked, plus 12,019 quantile rows whose `unit` column is. This
+    # figure is a census of the committed corpus, not a property of the code,
+    # so it moves whenever a mirror does -- which is the point of pinning it:
+    # a silent change in what gets pattern-checked is exactly what it catches.
+    assert total_compared == 122_980
 
     for pattern in patterns:
         compiled = re.compile(pattern)

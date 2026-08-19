@@ -558,12 +558,17 @@ def test_the_api_doc_states_the_expression_census_the_build_produces(site: Path)
     survived multiple readings last time because they still agreed with each
     other.
 
-    Both figures are 0 on the committed corpus -- there is no `profiles`
-    mirror -- and the doc has to say so in exactly those terms, not merely in
-    a rounded-off "none yet".
+    The figures moved on 2026-08-19, when E-MTAB-6814 landed: 0 genes across 0
+    datasets became 92 across 1. That is exactly the event this test exists for
+    -- the doc's sentence was internally consistent and false the moment a
+    source arrived, which is how eight claims survived last time.
+
+    Matched on the singular stem "dataset", not "datasets": the doc must read
+    "across 1 dataset", and a pin that demanded "1 datasets" would force
+    ungrammatical English into a public artifact to keep a test green.
     """
     manifest = json.loads((site / "manifest.json").read_text())
     doc = DOC.read_text()
 
     assert f"{manifest['counts']['profile_genes']} genes" in doc
-    assert f"{manifest['counts']['profile_datasets']} datasets" in doc
+    assert f"{manifest['counts']['profile_datasets']} dataset" in doc

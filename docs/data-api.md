@@ -46,9 +46,9 @@ What the build produced, and a checksum for every file in it.
 {
   "counts": {
     "assertions": 1, "burden_rows": 915, "cohort_families": 3,
-    "cohorts": 13, "datasets": 0, "featured": 1, "functional": 0,
-    "genes": 92, "phenotypes": 3, "profile_datasets": 0, "profile_genes": 0,
-    "publications": 4
+    "cohorts": 13, "datasets": 1, "featured": 1, "functional": 0,
+    "genes": 92, "phenotypes": 3, "profile_datasets": 1, "profile_genes": 92,
+    "publications": 5
   },
   "files": {
     "genes/index.json": "sha256:<64 hex>",
@@ -910,8 +910,8 @@ cannot be confused with "the build dropped it".
 
 **That is the real shape on every gene bundle in the committed corpus
 today.** No `profiles` mirror has ever been committed, so `manifest.json`'s
-`counts.profile_genes` and `counts.profile_datasets` are both `0` — 0 genes
-carry a developmental expression profile, across 0 datasets. The nested shape
+`counts.profile_genes` is `92` and `counts.profile_datasets` is `1` — 92 genes
+carry a developmental expression profile, across 1 dataset. The nested shape
 below is illustrative — constructed to show every field, not copied from a
 real build the way every other example in this document is, because no gene
 bundle carries a populated one yet:

@@ -721,7 +721,17 @@ def test_prf_references_run_on_both_scope_branches(
         + "\t".join(["GSE999999", "HGNC:99999", "Heart", "7wpc", "10.0", "tpm", "", "", "5"])
         + "\n"
     )
-    (tmp_path / "mirrors" / "genes.tsv").write_text(_GENES_TSV_HEADER)
+    # A registry with a real row, NOT a bare header. An empty-but-readable
+    # registry reaches `known_genes or None` as None, which skips the gene
+    # check entirely -- so a header-only fixture would make PRF007 fire for the
+    # wrong reason (the registry "did not load") and would keep passing even if
+    # the unregistered-gene rule were deleted. The row below is a gene the
+    # profiles mirror does NOT cite, so PRF007 fires on HGNC:99999 specifically.
+    (tmp_path / "mirrors" / "genes.tsv").write_text(
+        _GENES_TSV_HEADER
+        + "\t".join(["HGNC:11604", "TBX5", "T-box 5", "", "ENSG00000089225", "6910", "", "", ""])
+        + "\n"
+    )
     if include_validity_mirrors:
         (tmp_path / "mirrors" / "clingen_gene_validity.tsv").write_text(_EMPTY_CLINGEN_TSV)
         (tmp_path / "mirrors" / "gencc_submissions.tsv").write_text(_EMPTY_GENCC_TSV)

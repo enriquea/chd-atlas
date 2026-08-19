@@ -602,7 +602,14 @@ def validate_repository(root: Path) -> ValidationReport:
             validate_profile_references(
                 root,
                 datasets=corpus.datasets,
-                known_genes=known_genes,
+                # `or None` for the reason the burden call above uses it: an
+                # unreadable registry must skip the gene check, not report every
+                # row as dangling. Passing the empty set bare made PRF007 fire
+                # 154 times -- once per mirrored gene -- which is precisely the
+                # cascade REF000/SRC000/ONT000 exist to prevent. Measured when
+                # the first profiles mirror landed; the unit test passed `None`
+                # explicitly and so never exercised this call site.
+                known_genes=known_genes or None,
                 published_genes=_gate_published_genes(root, corpus),
                 phases=corpus.cardiac_phases,
             )
