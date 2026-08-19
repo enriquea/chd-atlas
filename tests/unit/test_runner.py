@@ -863,3 +863,33 @@ def test_an_unmapped_classification_does_not_crash_validate_repository(tmp_path:
     # check that runs independently of `_gate_published_genes` -- proving the
     # defensive fallback silences the crash, not the evidence of the defect.
     assert any(issue.code == "TBL004" for issue in report.issues)
+
+
+def test_a_programmer_error_in_the_gate_propagates_rather_than_silencing_prf009(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sibling of the test above, and the case it does NOT cover.
+
+    `_gate_published_genes` absorbs `KeyError` and `ValueError` because those
+    are the *data* failures its docstring names, and each already arrives with
+    its own ERROR from `validate_table` -- so degrading to an empty published
+    set cannot hide anything.
+
+    A blanket `except Exception` also absorbed programmer errors, and those
+    have no accompanying validation error to make them visible. Measured
+    2026-08-19: injecting a `TypeError` into `gene_validity` -- the shape of an
+    ordinary refactor regression -- produced `0 error(s), 4 warning(s)` with
+    `ok=True` while PRF009 checked nothing at all. The report was green and one
+    validator was dead.
+
+    So this asserts the opposite of its sibling on purpose: a `ValueError` is
+    absorbed and a `TypeError` is not. Raised by review on PR #39; the
+    docstring's own guarantee had covered data failures and not code ones.
+    """
+
+    def boom(*args: object, **kwargs: object) -> dict[str, object]:
+        raise TypeError("simulated refactor regression, not a data problem")
+
+    monkeypatch.setattr("chd_atlas.validate.runner.gene_validity", boom)
+    with pytest.raises(TypeError, match="simulated refactor regression"):
+        validate_repository(Path("."))

@@ -1188,8 +1188,13 @@ or `phospho` — to a summary of that gene's rows:
   The slice is *stratified*: the cardiac series leads, ranked by the derived
   `placement.median_percentile`
   (see [`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
-  above), but **at least one row of every other tissue present in the shard
-  is reserved**, never more than half of `top`.
+  above), but slots are **reserved for the non-cardiac tissues**, up to half of `top`.
+
+  With `top` capped at 25 that reservation is at most 12, so every other
+  tissue present is represented only while there are 12 or fewer of them —
+  measured, and true of this dataset, which has six. Past that the cardiac
+  series can consume its budget and the remaining tissues share what is left,
+  so do not read the reservation as a guarantee that every tissue appears.
 
   **The reservation exists because of τ.** A gene's `tau` figure (also
   documented there) is computed over every organ a dataset sampled at one

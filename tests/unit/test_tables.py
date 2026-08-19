@@ -327,10 +327,21 @@ def test_variants_chrom_rejects_a_chr_prefix() -> None:
 
 
 def test_profiles_admits_rpkm_and_still_refuses_an_unknown_unit() -> None:
-    """The source publishes RPKM; converting it to TPM would author a number.
+    """`unit` admits `rpkm` so a source publishing it need not be converted.
 
-    `unit` exists so two incomparable quantities cannot merge, so widening it is
-    a deliberate vocabulary change, not a convenience. The negative half is the
+    **This layer does not publish RPKM, and the distinction matters.** The
+    paper (Cardoso-Moreira et al. 2019) reports RPKM; the mirror this atlas
+    actually carries is the EMBL-EBI Expression Atlas *reprocessing* of the
+    same experiment, which requantified everything and publishes TPM and FPKM.
+    `mirrors/profiles/E-MTAB-6814.tsv` is 100% `tpm` — measured, 18,326 of
+    18,326 rows — and `scripts/convert_cardoso_moreira.py` sets `UNIT = "tpm"`.
+    An earlier revision of this docstring said "the source publishes RPKM",
+    which was true of the paper and false of the mirror, on a test shipped in
+    the same PR as the TPM converter. Raised by review on PR #39.
+
+    `rpkm` stays in the vocabulary regardless: `unit` exists so two
+    incomparable quantities cannot merge, and the next source to publish RPKM
+    must be able to say so rather than be converted. The negative half is the
     half that matters: a typo must still fail.
     """
     column = next(c for c in TABLE_SCHEMAS["profiles"].columns if c.name == "unit")

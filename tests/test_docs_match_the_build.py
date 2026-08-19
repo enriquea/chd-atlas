@@ -449,11 +449,20 @@ def test_the_omics_section_documents_profiles_stratified_top_not_ranked_by_signi
     """16a: `top` was documented as "ranked by significance" with no
     qualification, which Task 8 made false for `profiles` -- that table has
     no significance column at all, so its slice is stratified: the cardiac
-    series leads on derived percentile, with at least one row of every other
-    tissue reserved so a gene's own τ stays auditable from the same payload
-    that publishes it. A consumer reading the old, unscoped sentence expects
-    the 25 highest-ranked rows for every modality and gets something
-    deliberately different for this one.
+    series leads on derived percentile, with slots reserved for the other
+    tissues so a gene's own τ stays auditable from the same payload that
+    publishes it. A consumer reading the old, unscoped sentence expects the 25
+    highest-ranked rows for every modality and gets something deliberately
+    different for this one.
+
+    **The reservation is bounded and the doc must not overstate it.** An
+    earlier wording promised "at least one row of every other tissue present
+    in the shard", which `select_top` guarantees only while there are 12 or
+    fewer such tissues -- `reserved` is `min(len(others), TOP_N // 2)`.
+    Measured 2026-08-19 with a 19-row cardiac series: 6 and 12 other tissues
+    all appear, 13 and 20 do not. True of this dataset, which has six, and
+    stated as a general guarantee it is not. Raised by review on PR #39, and
+    the negative assertion below is what stops the promise coming back.
     """
     doc = DOC.read_text()
     start = doc.index("## `omics/<modality>/<accession>.json`")
@@ -466,7 +475,13 @@ def test_the_omics_section_documents_profiles_stratified_top_not_ranked_by_signi
     assert "profiles` ranks `top` differently" in section
     assert "stratified" in section
     assert "median_percentile" in section
-    assert "at least one row of every other tissue" in section
+    assert "reserved for the non-cardiac tissues" in section
+    # The bound must be stated, not just the reservation.
+    assert "12" in section
+    # Negative: the unconditional promise must not return. A positive
+    # assertion fails when a sentence is deleted; this fails when a deleted
+    # one comes back, which is what nobody is watching for.
+    assert "at least one row of every other tissue" not in section
     assert "reserved" in section
     assert "D39(b)" in section
     assert "ranking bug" in section

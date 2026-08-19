@@ -368,6 +368,11 @@ def _gate_published_genes(root: Path, corpus: Corpus) -> set[str]:
       an_unknown_one_raises` pins equal to the vocab maps this function's
       callee dispatches on. Measured: 7/7 and 8/8 terms, no drift either way.
 
+    **The catch is narrow for the same reason.** Only `KeyError` and
+    `ValueError` are absorbed -- the two data failures above. A programmer
+    error has no accompanying validation error to make it visible, so it must
+    propagate rather than leave PRF009 silently dead in a green report.
+
     That last one is the load-bearing link and the only one that is not
     self-evident from this file. If that test is ever deleted, the two
     hand-written literals can drift, a term valid to the schema but unmapped
@@ -385,7 +390,20 @@ def _gate_published_genes(root: Path, corpus: Corpus) -> set[str]:
     scope_terms = {str(entry.id) for entry in corpus.chd_scope}
     try:
         return published_genes(gene_validity(clingen, gencc, in_scope=scope_terms))
-    except Exception:
+    except (KeyError, ValueError):
+        # Narrow deliberately. These two are the *data* failure modes named
+        # above -- a column an upstream rename dropped raises `KeyError`, and a
+        # classification term the atlas vocabulary has not mapped raises
+        # `ValueError` by design -- and each already arrives with its own ERROR
+        # from `validate_table`, so degrading here cannot hide anything.
+        #
+        # A blanket `except Exception` also swallowed programmer errors, and
+        # those have no accompanying error to make them visible. Measured
+        # 2026-08-19 on this branch: injecting a `TypeError` into
+        # `gene_validity` -- the shape of an ordinary refactor regression --
+        # produced `0 error(s), 4 warning(s)` with `ok=True` and PRF009
+        # silently checking nothing. The docstring's guarantee covered data
+        # failures and not code ones. Raised by review on PR #39.
         return set()
 
 
