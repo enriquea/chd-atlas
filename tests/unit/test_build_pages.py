@@ -2886,7 +2886,17 @@ def test_the_forest_carries_no_summary_diamond(
     """D33: no pooled statistic, ever. These cohorts overlap -- DDD
     contributes cases to more than one cited paper -- so a pooled estimate
     would count the same children twice. The forest idiom invites a diamond
-    and a reader expects one; its absence is deliberate and captioned."""
+    and a reader expects one; its absence is deliberate and captioned.
+
+    **Captioned in two places, and only one of them was guarded.** The
+    figure's `<title>` is what a screen reader announces before any of the
+    marks, and it makes the same claim in its own words. Measured 2026-08-20,
+    rewriting it to announce "and a pooled summary" survived the whole suite:
+    the assertion below is scoped to `<figure class="forest">`, which contains
+    the caption as well, so the caption answered for the title. A reader using
+    assistive technology would have been told this atlas publishes the one
+    statistic D33 forbids -- and told it first.
+    """
     section = _burden_section_text(
         _burden_page(
             tmp_path,
@@ -2901,7 +2911,14 @@ def test_the_forest_carries_no_summary_diamond(
     # carries "no pooled statistic across studies" as the matrix caption a
     # screen above, so the section-wide assertion above passes with or without
     # a word from this figure (CLAUDE.md section 4.19).
-    assert "no pooled" in _forest_figures(section)[0]
+    figure = _forest_figures(section)[0]
+    assert "no pooled" in figure
+    # And the same scoping again, one level in: the caption and the title are
+    # two sentences and a check over the figure is answered by either.
+    announced = re.search(r"<title>(.*?)</title>", figure, re.S)
+    assert announced is not None, "the figure announces nothing to a screen reader"
+    assert "no pooled summary" in announced.group(1)
+    assert "a pooled summary" not in announced.group(1).replace("no pooled summary", "")
 
 
 def test_a_forest_never_replaces_the_figures_it_summarises(
@@ -4257,29 +4274,10 @@ def test_the_band_caption_names_only_the_breaks_this_figure_actually_draws(
     assert "below the foot of the scale, not at a value on it" in ticked
 
 
-def test_a_stage_below_the_floor_is_an_axis_tick_and_never_a_zero(tmp_path: Path) -> None:
-    """Below the floor, not sampled, and zero are three different claims.
-
-    Plotting a below-floor stage at zero would put it on the axis as the
-    lowest *measurement*; leaving a gap would make it indistinguishable from a
-    stage nobody sampled.
-
-    The counts are asserted, not only the class name: a renderer that ticked
-    every stage, or that ticked the below-floor stage *and* plotted it, would
-    satisfy a bare `in` check.
-    """
-    profile = _heart_series(("4wpc", 5.0), ("5wpc", None), ("6wpc", 40.0), ("7wpc", 275.0))
-    section = _expression_section_text(
-        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
-    )
-
-    assert "chart-absent" in section
-    assert section.count('class="chart-absent"') == 1
-    assert section.count('class="chart-point"') == 3
-
-
 def test_the_line_never_spans_a_stage_the_atlas_did_not_place(tmp_path: Path) -> None:
-    """A below-floor stage breaks the line; it is not drawn straight over.
+    """A below-floor stage breaks the line; it is not drawn straight over, is
+    ticked rather than plotted at zero, and its tick never lands on a real
+    measurement.
 
     Measured 2026-08-20 on the committed corpus: 20 of the 85 charted genes
     carry a below-floor stage strictly between two plotted points, and TBX1
@@ -4291,6 +4289,27 @@ def test_the_line_never_spans_a_stage_the_atlas_did_not_place(tmp_path: Path) ->
     The fixture has two runs and a lone leading point, so "one line through
     everything", "splits but drops a run" and "splits correctly" are three
     distinguishable outcomes rather than two.
+
+    **Absorbs `test_a_stage_below_the_floor_is_an_axis_tick_and_never_a_zero`,
+    whose fixture this one is a strict superset of.** Measured 2026-08-20:
+    all three mutants that test could kill are killed here too, so it was
+    paying for a build without being the unique killer of anything. Its
+    rationale is the record and moves with it -- *below the floor*, *not
+    sampled* and *zero* are three different claims: plotting a below-floor
+    stage at zero puts it on the axis as the lowest measurement this atlas
+    made, and leaving a gap makes it indistinguishable from a stage nobody
+    sampled. The counts are asserted rather than the class name alone,
+    because a renderer that ticked every stage, or that ticked the
+    below-floor stage *and* plotted it, satisfies a bare `in` check.
+
+    **And `_FLOOR_GAP` is what keeps the tick off the lowest real point.**
+    That constant's whole stated purpose is to stop the atlas's weakest
+    statement about a figure -- "we do not vouch for this one" -- landing on
+    the same pixel row as its lowest real one. Nothing guarded it: the lowest
+    placed point always sits at exactly `_PLOT_BOTTOM - _FLOOR_GAP`, so
+    ticking a below-floor stage there instead of on the axis puts the two
+    marks on one row on every charted page -- cy 116.0 on HGNC:10249 --
+    which is the conflation `_percentile_cell` refuses in words.
     """
     profile = _heart_series(
         ("4wpc", 5.0),
@@ -4312,6 +4331,21 @@ def test_the_line_never_spans_a_stage_the_atlas_did_not_place(tmp_path: Path) ->
     # stages that broke it are still ticked.
     assert section.count('class="chart-point"') == 5
     assert section.count('class="chart-absent"') == 2
+
+    # No tick shares a row with a measurement. Read off the published `cy`
+    # rather than recomputed, so the assertion cannot agree with the renderer
+    # by sharing its arithmetic.
+    figure = _trajectory_figure(section)
+    rows = {
+        css: {cy for cy in re.findall(rf'<circle class="{css}" cx="[^"]*" cy="([^"]*)"', figure)}
+        for css in ("chart-point", "chart-absent")
+    }
+    assert rows["chart-absent"] == {"124.0"}, "a tick belongs on the axis"
+    assert "116.0" in rows["chart-point"], "the lowest placed point sits one _FLOOR_GAP up"
+    assert not rows["chart-absent"] & rows["chart-point"], (
+        "a below-floor tick shares a row with a real measurement, which is the "
+        "conflation _FLOOR_GAP exists to prevent"
+    )
 
 
 def test_a_gene_placed_at_one_stage_gets_markers_and_no_line(tmp_path: Path) -> None:
@@ -4341,13 +4375,42 @@ def test_a_gene_placed_at_one_stage_gets_markers_and_no_line(tmp_path: Path) -> 
     assert boundary.count('class="chart-point"') == 2
 
 
-def test_a_gene_never_above_the_floor_gets_a_sentence_and_no_chart(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("reason", "present", "absent"),
+    [
+        pytest.param(
+            "below_detection_floor",
+            ("detection floor at every", "not evidence that", "heart", "3 stages sampled"),
+            (),
+            id="below this dataset's own floor",
+        ),
+        pytest.param(
+            "no_quantile_grid",
+            ("no complete percentile grid is published for this organ at this stage",),
+            ("detection floor at every",),
+            id="a gap in the reference",
+        ),
+    ],
+)
+def test_nothing_placed_says_which_of_the_two_facts_it_is(
+    tmp_path: Path, reason: str, present: tuple[str, ...], absent: tuple[str, ...]
+) -> None:
     """D42, tier 4, and the reason it is not cosmetic.
 
     Measured 2026-08-20: seven published genes are below the floor in heart at
     every one of 19 stages -- SEMA3E, ZIC3, USP44, DAW1, FGF8, GDF1, NODAL.
     ZIC3 and NODAL are ClinGen definitive. An empty chart beside a definitive
     chip asserts the thing the bulk-dilution caveat denies.
+
+    **"Nothing placed" is not one fact, and only one of them is about the
+    gene.** `below_detection_floor` says this dataset measured the gene under
+    its own floor, which is what earns the dilution argument beside it. Every
+    other gap -- no percentile grid for this organ and stage, no floor
+    declared, the dataset unregistered -- is a hole in the *reference*, and
+    reporting it as a low reading asserts a measurement this dataset never
+    made. The two cases were two tests with identical bodies differing only
+    in this parameter, which the second's own docstring said; they are one
+    parametrised test.
 
     Asserted against literals, not against the constant that produced them: a
     test that imports the string it asserts on compares the module to itself
@@ -4357,7 +4420,7 @@ def test_a_gene_never_above_the_floor_gets_a_sentence_and_no_chart(tmp_path: Pat
     `_BULK_DILUTION_NOTICE` carries "not evidence that" over every gene page
     on this site, charted or not.
     """
-    profile = _heart_series(("4wpc", None), ("5wpc", None), ("6wpc", None))
+    profile = _heart_series(("4wpc", None), ("5wpc", None), ("6wpc", None), unplaced_reason=reason)
     section = _dataset_lede(
         _expression_section_text(
             _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
@@ -4365,38 +4428,10 @@ def test_a_gene_never_above_the_floor_gets_a_sentence_and_no_chart(tmp_path: Pat
     )
 
     assert "<svg" not in section
-    assert "detection floor at every" in section
-    assert "not evidence that" in section
-    assert "heart" in section
-    assert "3 stages sampled" in section
-
-
-def test_a_gap_in_the_reference_is_never_reported_as_a_low_reading(tmp_path: Path) -> None:
-    """ "Nothing placed" is not one fact, and only one of them is about the gene.
-
-    `below_detection_floor` says this dataset measured the gene under its own
-    floor, which is what earns the dilution argument beside it. Every other
-    gap -- no percentile grid published for this organ and stage, no floor
-    declared, the dataset unregistered -- is a hole in the *reference*, and
-    reporting it as a low reading asserts a measurement this dataset never
-    made. Shares its shape with the below-floor test above and differs only in
-    the recorded reason, which is the value the branch reads.
-    """
-    profile = _heart_series(
-        ("4wpc", None),
-        ("5wpc", None),
-        ("6wpc", None),
-        unplaced_reason="no_quantile_grid",
-    )
-    section = _dataset_lede(
-        _expression_section_text(
-            _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
-        )
-    )
-
-    assert "<svg" not in section
-    assert "detection floor at every" not in section
-    assert "no complete percentile grid is published for this organ at this stage" in section
+    for phrase in present:
+        assert phrase in section
+    for phrase in absent:
+        assert phrase not in section
 
 
 def test_a_chart_never_replaces_the_figures_it_summarises(tmp_path: Path) -> None:
@@ -4532,18 +4567,39 @@ _SPARK_PANEL = _organ_panel(
 
 
 def test_small_multiples_share_one_axis_across_organs(tmp_path: Path) -> None:
-    """The shared axis is the whole point.
+    """The shared axis is the whole point, and it has to be the *right* axis.
 
     Per-organ axes would rescale each line to its own range and show seven
     similar-looking traces; one axis is what makes heart-preference visible
     instead of asserted once per stage.
 
-    Asserts the property rather than the appearance: every panel must declare
-    the same axis maximum.
+    **"Every panel declares the same maximum" is satisfied by every wrong
+    maximum too**, which is what `len(set(scales)) == 1` was measuring.
+    Measured 2026-08-20: emitting `coordinate(scale.low)` in place of
+    `coordinate(scale.high)` published `data-scale-high="0.5"` on all five
+    TBX5 panels and passed -- an axis attribute naming the smallest value on
+    the page as its ceiling, which is the one number a consumer reading it
+    would use to rescale. So the value is asserted, not only its uniformity.
+
+    **And the fixture's tallest organ is not its first**, which is the axis
+    the assertion could otherwise not see. `drawn` is sorted, so with heart
+    both first and tallest, fitting the axis to `drawn[:1]` -- one organ's
+    range, the very thing the caption says a per-organ axis would do --
+    leaves `high` unchanged and survives. Here liver is tallest and heart is
+    first, so the shared maximum can only come from pooling every organ.
+
+    The printed range is asserted beside it because `high` alone does not pin
+    `low`: the caption is where a reader learns what the axis spans, and it
+    is the only place `low` is published at all.
     """
-    section = _expression_section_text(
-        _expression_page(tmp_path, {GATA4: _SPARK_PANEL}, _HEART_DATASET)
+    # heart first alphabetically, liver tallest, kidney lowest: no single
+    # organ carries both ends, so neither bound can come from one panel.
+    profile = _organ_panel(
+        ("heart", (50.0, 150.0, 180.0)),
+        ("kidney", (0.5, 1.0, 1.5)),
+        ("liver", (2.0, 40.0, 275.0)),
     )
+    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET))
 
     scales = re.findall(r'data-scale-high="([^"]+)"', section)
     assert len(scales) > 1
@@ -4551,29 +4607,33 @@ def test_small_multiples_share_one_axis_across_organs(tmp_path: Path) -> None:
     # One panel per organ, so a renderer that drew only the tallest -- and
     # therefore trivially shares one axis with itself -- fails here.
     assert len(scales) == 3
+    # The tallest placed median anywhere in the dataset, in `coordinate`'s
+    # fixed-precision form, and nothing else.
+    assert scales[0] == "275.0"
+    # Both ends, in `_fmt`'s form, from the caption that publishes them.
+    assert "(0.5 to 275 tpm, log scale)" in _spark_caption_text(section)
 
 
-def test_a_cardiac_organ_is_marked_as_one(tmp_path: Path) -> None:
+def test_only_the_declared_cardiac_organ_is_marked_as_one(tmp_path: Path) -> None:
     """Which organ is cardiac is this atlas's declaration, not the source's,
-    and it is what makes the panel non-redundant under D43."""
-    section = _expression_section_text(
-        _expression_page(tmp_path, {GATA4: _SPARK_PANEL}, _HEART_DATASET)
-    )
+    and it is what makes the panel non-redundant under D43.
 
-    assert "chart-cardiac" in section
-    assert "chart-cardiac" in _spark_panels(section)["heart"]
-
-
-def test_a_non_cardiac_organ_is_not_marked_as_cardiac(tmp_path: Path) -> None:
-    """The negative half. A fixture whose organs all render identically
-    measures nothing -- this repository has shipped four defects of exactly
-    that shape."""
+    Both directions, on one fixture and one page build. A fixture whose
+    organs all render identically measures nothing -- this repository has
+    shipped four defects of exactly that shape -- and the positive half was
+    its own test until 2026-08-20, when it was measured not to be the unique
+    killer of anything: `test_a_spark_line_never_spans_a_stage_the_atlas_did_
+    not_place` kills the all-control mutant too, matching on the same class
+    name. Only the negative half is unique, and it is worth nothing without
+    the positive beside it.
+    """
     section = _expression_section_text(
         _expression_page(tmp_path, {GATA4: _SPARK_PANEL}, _HEART_DATASET)
     )
     panels = _spark_panels(section)
 
     assert set(panels) == {"heart", "kidney", "liver"}
+    assert "chart-cardiac" in panels["heart"]
     assert "chart-cardiac" not in panels["liver"]
     assert "chart-control" in panels["liver"]
     assert "chart-cardiac" not in panels["kidney"]
@@ -4718,6 +4778,17 @@ def test_the_spark_caption_opens_with_a_claim_true_of_pages_that_drop_a_panel(
     is the assertion that fails when a deleted sentence comes back (CLAUDE.md
     section 4.35), and against literals rather than the constant that
     produced them (section 4.38).
+
+    **Absorbs `test_an_organ_with_nothing_placed_is_named_rather_than_
+    silently_dropped`**, measured 2026-08-20 not to be the unique killer of
+    anything: dropping the `undrawn` list entirely is caught here and by
+    `test_both_sentences_that_list_every_cardiac_organ_list_them_in_one_order`
+    as well. Its record is the evidence-loss argument and moves with it --
+    an organ sampled at every stage and placed at none has no line to draw
+    and D42 forbids an empty frame for it, so dropping it without a word
+    would leave the grid short of panels beside a tau sentence counting
+    every organ sampled: the page contradicting itself, and a reader
+    concluding this dataset never looked there.
     """
     opening = "One panel per organ with a placed measurement for this gene"
     false_opening = "One panel per organ this dataset sampled for this gene"
@@ -4776,28 +4847,6 @@ def test_a_spark_line_never_spans_a_stage_the_atlas_did_not_place(tmp_path: Path
     assert '<circle class="chart-cardiac"' in panels["heart"]
     assert len(re.findall(r"<polyline", panels["liver"])) == 1
     assert "<circle" not in panels["liver"]
-
-
-def test_an_organ_with_nothing_placed_is_named_rather_than_silently_dropped(
-    tmp_path: Path,
-) -> None:
-    """The evidence-loss mutant, in the form this panel can take it.
-
-    Kidney is sampled at every stage and placed at none, so it has no line to
-    draw and D42 forbids an empty frame for it. Dropping it without a word
-    would leave five panels beside a tau sentence reading "6 organs sampled"
-    -- the page contradicting itself, and a reader concluding this dataset
-    never looked at kidney.
-    """
-    profile = _organ_panel(
-        ("heart", (50.0, 150.0, 275.0)),
-        ("kidney", (None, None, None)),
-        ("liver", (0.5, 1.2, 2.0)),
-    )
-    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET))
-
-    assert set(_spark_panels(section)) == {"heart", "liver"}
-    assert "No panel is drawn for kidney" in section
 
 
 # --- The order every cardiac organ is named in (CLAUDE.md section 4.36) ------

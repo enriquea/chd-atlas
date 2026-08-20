@@ -254,24 +254,29 @@ def test_stage_tokens_are_unique_and_wpc_may_be_null_postnatally() -> None:
         )
 
 
-@pytest.mark.parametrize("wpc", [0, -1])
-def test_stage_wpc_must_be_positive(wpc: float) -> None:
-    """`gt=0` is the bound; nullability (a postnatal stage) is covered above."""
-    with pytest.raises(ValidationError):
-        Stage(token="x", wpc=wpc, order=1)
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"wpc": 0, "order": 1}, id="wpc of zero"),
+        pytest.param({"wpc": -1, "order": 1}, id="negative wpc"),
+        pytest.param({"wpc": None}, id="no order at all"),
+        pytest.param({"wpc": None, "order": 0}, id="order of zero"),
+        pytest.param({"wpc": None, "order": -1}, id="negative order"),
+    ],
+)
+def test_a_stage_refuses_a_position_it_cannot_place(fields: dict[str, object]) -> None:
+    """Both bounds and the requiredness, on one baseline.
 
+    `gt=0` is the bound on each of `wpc` and `order`; nullability (a postnatal
+    stage carrying no `wpc`) is covered above and is a fact about the stage,
+    not a missing value.
 
-def test_a_stage_without_an_order_is_refused() -> None:
-    """`order` is required, not defaulted.
-
-    A stage with no declared position cannot be placed on a time axis, and a
-    default would silently place every undeclared stage in the same slot --
-    reintroducing the alphabetical scramble this field exists to remove.
+    **`order` is required, not defaulted**, and that is the case with a
+    reason worth keeping: a stage with no declared position cannot be placed
+    on a time axis, and a default would silently put every undeclared stage
+    in the same slot -- reintroducing the alphabetical scramble this field
+    exists to remove. It was its own one-line test beside two more, all three
+    differing only in which field they moved off a valid baseline.
     """
     with pytest.raises(ValidationError):
-        Stage(token="neonate", wpc=None)  # type: ignore[call-arg]
-
-
-def test_order_must_be_positive() -> None:
-    with pytest.raises(ValidationError):
-        Stage(token="neonate", wpc=None, order=0)
+        Stage(token="neonate", **fields)  # type: ignore[arg-type]
