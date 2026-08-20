@@ -1,6 +1,7 @@
 # tests/test_built_site_is_consumable.py
 import gzip
 import json
+import math
 import posixpath
 import re
 import shutil
@@ -533,4 +534,89 @@ def test_the_curated_phase_vocabulary_reaches_the_pages_it_is_drawn_on(site: Pat
     assert banded, "bands were drawn with no phase named in any of them"
     assert not banded & unended, (
         f"a phase whose end the source never states is banded: {sorted(banded & unended)}"
+    )
+
+
+def _tau_denominator(method: str, n_organs: int) -> float:
+    """The divisor the published `method` string *names*, read out of the words.
+
+    Deliberately a parser and not a constant. D39(a)'s whole promise is that a
+    consumer who reads `method` and never opens this repository reproduces the
+    number; the only way to test that promise is to follow the sentence rather
+    than the source. A constant `n - 1` here would agree with `specificity`
+    for the same reason the code agrees with itself, and would have passed
+    unchanged while the string said "mean over organs" — which is what
+    happened, through four review passes.
+
+    Raises rather than defaulting on an unrecognised wording: a rewrite this
+    function cannot follow is a rewrite a consumer cannot follow either, and
+    silently picking a denominator would restore exactly the hole this closes.
+    """
+    if "divided by (n - 1)" in method:
+        return float(n_organs - 1)
+    if "mean over organs" in method:
+        return float(n_organs)
+    raise AssertionError(
+        f"the published tau method names no denominator this test can follow: {method!r}"
+    )
+
+
+def test_every_published_tau_is_reproducible_from_its_own_method_string(site: Path) -> None:
+    """D39(a) made executable: `method` + `medians` must reproduce `tau`.
+
+    `specificity` publishes the formula beside the number precisely so a
+    consumer can re-derive it without reading `build/profiles.py`. Nothing
+    checked that the sentence and the arithmetic agreed, and they did not:
+    the string said "mean over organs of (1 - x_i/x_max)" — a divisor of *n* —
+    while the code divides by *n − 1*, the standard Yanai τ. Measured
+    2026-08-20 over the committed corpus: all 1817 published specificity
+    blocks match `sum/(n − 1)` and 4 also match `sum/n`, those four being
+    coincidences of ties rather than agreement.
+
+    So this asserts equality *and* that the two candidate divisors are
+    distinguishable on this corpus — per section 4.30, two figures that are
+    equal in the fixture are one figure to the test. Without the second
+    assertion a corpus of two-organ stages (where n − 1 == 1 and the
+    difference is a factor of 2 on every block, but a degenerate one-organ
+    corpus would collapse) could let a wrong string pass.
+
+    `scale` is asserted alongside because `method` names the transform and the
+    two are separately published; a consumer following one and reading the
+    other must not get two different answers.
+    """
+    blocks = 0
+    also_matching_plain_mean = 0
+    for bundle in sorted((site / "genes").glob("HGNC_*.json")):
+        payload = json.loads(bundle.read_text(encoding="utf-8"))
+        for dataset in payload["expression_profile"]["datasets"]:
+            for stage in dataset["stages"]:
+                specificity = stage["specificity"]
+                if specificity is None:
+                    continue
+                blocks += 1
+                medians = specificity["medians"]
+                method = specificity["method"]
+
+                assert specificity["scale"] == "log2(x+1)"
+                assert "x = log2(median+1)" in method
+                assert "clamped to 0" in method
+
+                logged = {
+                    organ: math.log2(max(value, 0.0) + 1.0) for organ, value in medians.items()
+                }
+                x_max = max(logged.values())
+                total = sum(1.0 - value / x_max for value in logged.values())
+
+                derived = total / _tau_denominator(method, len(medians))
+                assert derived == pytest.approx(specificity["tau"], abs=1e-12), (
+                    f"{bundle.name}: tau {specificity['tau']} is not what the published "
+                    f"method reproduces ({derived}) from the published medians"
+                )
+                if total / len(medians) == pytest.approx(specificity["tau"], abs=1e-12):
+                    also_matching_plain_mean += 1
+
+    assert blocks, "no specificity block was published; this test measured nothing"
+    assert also_matching_plain_mean < blocks, (
+        "every published tau matches sum/n as well as sum/(n-1); this corpus "
+        "cannot distinguish the two divisors, so the assertion above is vacuous"
     )
