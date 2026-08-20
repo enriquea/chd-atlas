@@ -65,7 +65,10 @@ def _profile_dataset(**overrides: object) -> Dataset:
         "detection_floor": 1.0,
         "floor_source": "source methods, section 4",
         "quantile_estimator": "linear",
-        "stages": [{"token": "7wpc", "wpc": 7.0}, {"token": "senior", "wpc": None}],
+        "stages": [
+            {"token": "7wpc", "wpc": 7.0, "order": 1},
+            {"token": "senior", "wpc": None, "order": 2},
+        ],
     }
     base.update(overrides)
     return Dataset(**base)
@@ -243,11 +246,42 @@ def test_stage_tokens_are_unique_and_wpc_may_be_null_postnatally() -> None:
     assert stages["senior"] is None
 
     with pytest.raises(ValidationError, match="duplicate stage tokens"):
-        _profile_dataset(stages=[{"token": "7wpc", "wpc": 7.0}, {"token": "7wpc", "wpc": 9.0}])
+        _profile_dataset(
+            stages=[
+                {"token": "7wpc", "wpc": 7.0, "order": 1},
+                {"token": "7wpc", "wpc": 9.0, "order": 2},
+            ]
+        )
 
 
-@pytest.mark.parametrize("wpc", [0, -1])
-def test_stage_wpc_must_be_positive(wpc: float) -> None:
-    """`gt=0` is the bound; nullability (a postnatal stage) is covered above."""
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"wpc": 0, "order": 1}, id="wpc of zero"),
+        pytest.param({"wpc": -1, "order": 1}, id="negative wpc"),
+        pytest.param({"wpc": None}, id="no order at all"),
+        pytest.param({"wpc": None, "order": 0}, id="order of zero"),
+        pytest.param({"wpc": None, "order": -1}, id="negative order"),
+    ],
+)
+def test_a_stage_refuses_a_position_it_cannot_place(fields: dict[str, object]) -> None:
+    """Both bounds and the requiredness, on one baseline.
+
+    The two bounds are spelled differently and this docstring said they were
+    one: `wpc` is `gt=0` (a float, so any positive value) and `order` is
+    `ge=1` (an int, so 1-based). For an integer the two are the same set, and
+    that coincidence is exactly why the wrong name survived -- a reader
+    checking the model finds `ge=1` and a claim about `gt=0`.
+
+    Nullability (a postnatal stage carrying no `wpc`) is covered above and is
+    a fact about the stage, not a missing value.
+
+    **`order` is required, not defaulted**, and that is the case with a
+    reason worth keeping: a stage with no declared position cannot be placed
+    on a time axis, and a default would silently put every undeclared stage
+    in the same slot -- reintroducing the alphabetical scramble this field
+    exists to remove. It was its own one-line test beside two more, all three
+    differing only in which field they moved off a valid baseline.
+    """
     with pytest.raises(ValidationError):
-        Stage(token="x", wpc=wpc)
+        Stage(token="neonate", **fields)  # type: ignore[arg-type]

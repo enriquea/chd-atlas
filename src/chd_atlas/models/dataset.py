@@ -66,12 +66,32 @@ class Stage(BaseModel):
     `wpc` is null post-natally, which is not a gap: a post-natal stage is
     outside every cardiac morphogenetic phase by definition, and the page says
     so rather than dropping the row.
+
+    `order` is the curated chronological position, 1-based and ascending, and
+    is what every renderer sorts on. It is **required and not defaulted**,
+    because `wpc` cannot do this job: it is null for every post-natal stage,
+    so a dataset's post-natal tokens have no numeric order at all. Sorting
+    those tokens as strings is what published `elderly` second of eight and
+    `4 week post conception` after `19 week post conception` -- deterministic,
+    reproducible and wrong, under schema 2.11.
+
+    **2.11 and no other version**, measured rather than estimated: the
+    profiles mirror was first committed on 2026-08-19, and before it a gene
+    bundle's `expression_profile` was `{"datasets": []}` with no stage array
+    published at all. So the dictionary order reached published bytes under
+    exactly one schema version, promoted to `main` that same day and corrected
+    the next.
+
+    Chosen over sorting by position in the YAML file, which would make
+    declaration order silently load-bearing: a curator tidying the block would
+    change published output with nothing flagging it.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     token: str = Field(min_length=1)
     wpc: float | None = Field(default=None, gt=0)
+    order: int = Field(ge=1)
 
 
 class Dataset(BaseModel):

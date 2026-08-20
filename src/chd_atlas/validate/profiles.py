@@ -46,7 +46,9 @@ quietly green over it is a separate check, added together with the runner
 wiring that calls this module.
 
 Reference checks against other registries (a gene id, a declared cardiac
-tissue or stage token, a curated phase vocabulary) live in
+tissue or stage token, a curated phase vocabulary), and the two checks a
+curated dataset's own stage chronology needs (**PRF011**, **PRF012**,
+**PRF014**), live in
 `validate_profile_references` below, kept separate for the same reason
 `validate_burden_references` is separate from `validate_burden`: one
 unreadable registry must not be able to take these table-internal checks
@@ -205,7 +207,7 @@ def validate_profile_references(
     absent from a cell only matters to a reader once it has a page to be
     absent *from*.
 
-    Five codes:
+    Eight codes:
 
     - **PRF004** (ERROR) -- a dataset's declared `cardiac_tissues` token
       matched by no `profiles` row for that dataset.
@@ -218,14 +220,31 @@ def validate_profile_references(
     - **PRF009** (WARNING) -- a published gene missing a `profiles` row in a
       `(dataset, tissue, stage)` cell that `profile_quantiles` shows was
       actually assayed; see `_prf009_issues` for the grouping choice.
+    - **PRF011** (ERROR) -- two stages of one dataset claiming one `order`.
+    - **PRF012** (ERROR) -- a dataset's `order` contradicting its own `wpc`
+      about which of two stages is earlier.
+    - **PRF014** (ERROR) -- a stage with no `wpc` ordered before a stage that
+      has one; the half of the chronology PRF012 cannot reach, since it
+      compares only across stages carrying both.
+
+    PRF011, PRF012 and PRF014 read no mirror at all -- they compare a curated
+    dataset record against itself -- and are here rather than in
+    `validate_profiles` because this is the function that receives
+    `datasets`. Deliberately *one*
+    call site, added to the one the runner already reaches on both the
+    mirror-readable and mirrors-missing branches (see the runner's own
+    comment, and section 4.34): a second call site would be a second thing to
+    forget on one of them.
 
     PRF004/005/007 are errors because each names a claim the corpus makes
     that its own mirrors do not back up (a declaration with no data, data
-    with no declaration, an id naming nothing). PRF009 is a warning because a
-    gene missing from one source matrix is ordinary -- the burden layer's
-    nine registered genes absent from the Audain supplement are the
-    precedent -- and the point is to name the gap, not to block the build
-    over it.
+    with no declaration, an id naming nothing). PRF011, PRF012 and PRF014 are
+    errors for a different reason -- no mirror is involved at all: a curated
+    record contradicts itself, so there is no reading of it that is true. PRF009 is
+    a warning because a gene missing from one source matrix is ordinary --
+    the burden layer's nine registered genes absent from the Audain
+    supplement are the precedent -- and the point is to name the gap, not to
+    block the build over it.
     """
     # One pass over `profiles`: which tissues, stages and genes each dataset's
     # rows actually carry, and which shard (or its first-seen file) to blame.
@@ -273,6 +292,9 @@ def validate_profile_references(
     issues: list[ValidationIssue] = []
     issues.extend(_prf004_issues(root, datasets, tissues_by_dataset, shard_path_by_dataset))
     issues.extend(_prf005_issues(root, datasets, stages_by_dataset, shard_path_by_dataset))
+    issues.extend(_prf011_issues(root, datasets))
+    issues.extend(_prf012_issues(root, datasets))
+    issues.extend(_prf014_issues(root, datasets))
     issues.extend(_prf006_issues(root, phases))
     issues.extend(_prf007_issues(profile_genes, gene_path, known_genes))
     issues.extend(
@@ -521,6 +543,177 @@ def _prf005_issues(
                     f"that its own dataset record does not declare in 'stages'",
                 )
             )
+    return issues
+
+
+def _dataset_location(root: Path, dataset: Dataset) -> str:
+    """The curated file a stage-ordering issue belongs to.
+
+    By convention rather than by lookup: `corpus.py` loads every `*.yaml`
+    under `curation/datasets/` and does not record which file a record came
+    from, so this names the file a curator would open. Same convention
+    `_prf004_issues` uses for its shard-path fallback.
+    """
+    return str(root / "curation" / "datasets" / f"{dataset.id}.yaml")
+
+
+def _prf011_issues(root: Path, datasets: tuple[Dataset, ...]) -> list[ValidationIssue]:
+    """PRF011 -- two stages of one dataset claiming the same `order`.
+
+    An error, not a warning: with a duplicate position the sort's tie-break
+    (the token) decides the sequence, which is exactly the alphabetical
+    ordering `Stage.order` exists to remove -- reappearing inside one
+    dataset, silently, under a green build.
+
+    **Numbered PRF011, not PRF010.** `validate/runner.py` already issues
+    PRF010 for an unrelated failure (profiles rows present with no
+    `profile_quantiles` data), where it is PRF000's partner error. A skip
+    warning is only safe because it arrives with *the* error that caused it,
+    so one code must not name two failures.
+
+    Scanned in `(order, token)` order rather than in the curated list's own
+    order: which of a colliding pair gets named must not depend on which
+    record a curator happened to type first, and `Stage`'s own docstring says
+    the list's order is deliberately not load-bearing. Datasets are sorted by
+    id for the same reason `_prf004_issues` sorts them -- `corpus.datasets`
+    follows directory-listing order, not id.
+    """
+    issues: list[ValidationIssue] = []
+    for dataset in sorted(datasets, key=lambda item: item.id):
+        seen: dict[int, str] = {}
+        for stage in sorted(dataset.stages, key=lambda item: (item.order, item.token)):
+            first = seen.get(stage.order)
+            if first is None:
+                seen[stage.order] = stage.token
+                continue
+            issues.append(
+                ValidationIssue(
+                    "PRF011",
+                    Severity.ERROR,
+                    _dataset_location(root, dataset),
+                    f"dataset '{dataset.id}' stages {first!r} and {stage.token!r} both "
+                    f"declare order {stage.order}; a position must name one stage",
+                )
+            )
+    return issues
+
+
+def _prf012_issues(root: Path, datasets: tuple[Dataset, ...]) -> list[ValidationIssue]:
+    """PRF012 -- `order` disagrees with `wpc` about which stage is earlier.
+
+    This is the failure `Stage.order` introduces by existing: every record is
+    individually valid -- an integer and a positive float -- so pydantic
+    cannot see it, and a stage transcribed into the wrong slot would publish
+    a developmental trajectory with two of its points swapped.
+
+    Checked only across stages carrying **both** values. A post-natal stage's
+    null `wpc` is a fact about the stage, not a missing value, and comparing
+    against it would report every profile dataset this atlas will curate.
+
+    **It cannot check the post-natal block's internal order at all** -- those
+    eight stages have no `wpc`, which is precisely why they needed `order` --
+    so `tests/test_repository_validates.py` pins that sequence against a
+    literal instead. Do not read a clean PRF012 as "the chronology is
+    checked".
+
+    What it also could not check, until PRF014, is where that block sits
+    relative to the prenatal one: see `_prf014_issues`, which enforces the
+    one implication `Stage.wpc`'s own semantics already carry.
+
+    The comparison is `>=`, not `>`: two tokens at one `wpc` are two names for
+    one point in time, so `order` would be claiming a sequence its own
+    evidence does not support, and `wpc` is the key `assign_phase` joins on,
+    so both would resolve to identical phases while the axis drew them apart.
+    """
+    issues: list[ValidationIssue] = []
+    for dataset in sorted(datasets, key=lambda item: item.id):
+        dated = sorted(
+            (stage for stage in dataset.stages if stage.wpc is not None),
+            key=lambda item: item.order,
+        )
+        # Adjacent pairs, so the two sequences differ in length by design --
+        # `strict=False` is the intent, not a silenced B905.
+        for earlier, later in zip(dated, dated[1:], strict=False):
+            # The two `is not None` tests are already true of everything in
+            # `dated`; they are here so mypy can narrow `float | None` to
+            # `float`, not because a null can reach this line.
+            if earlier.wpc is not None and later.wpc is not None and earlier.wpc >= later.wpc:
+                issues.append(
+                    ValidationIssue(
+                        "PRF012",
+                        Severity.ERROR,
+                        _dataset_location(root, dataset),
+                        f"dataset '{dataset.id}' orders stage {earlier.token!r} "
+                        f"(order {earlier.order}, {earlier.wpc} wpc) before "
+                        f"{later.token!r} (order {later.order}, {later.wpc} wpc)",
+                    )
+                )
+    return issues
+
+
+def _prf014_issues(root: Path, datasets: tuple[Dataset, ...]) -> list[ValidationIssue]:
+    """PRF014 -- a stage with no `wpc` ordered before a stage that has one.
+
+    The half of the chronology PRF012 cannot reach. PRF012 compares `order`
+    against `wpc` only across stages carrying **both**, and every post-natal
+    stage has `wpc: null` by definition -- so nothing constrained where the
+    post-natal block sorted relative to the prenatal one, and the two checks
+    together left a hole exactly the shape of the defect `Stage.order` was
+    added to fix.
+
+    Measured 2026-08-20 on the committed corpus: renumbering E-MTAB-6814's
+    eight post-natal tokens to `order` 1-8 and its thirteen prenatal tokens
+    to 9-21 produced **0 errors, 4 warnings** -- codes byte-identical to the
+    clean baseline -- and TBX5's chart published "Median abundance in whole
+    heart, neonate to 19 week post conception", septation bands on the right
+    half of the axis. The only thing standing against it was one literal in
+    `tests/test_repository_validates.py` hardcoded to `id == "E-MTAB-6814"`
+    and the slice `ordered[13:]`; a second profile dataset inherited no pin
+    at all, and one with an inverted block also validated 0/4.
+
+    This asserts nothing new about the data -- it enforces what the model
+    already says. `Stage.wpc`'s docstring: a null is post-natal, "which is
+    not a gap: a post-natal stage is outside every cardiac morphogenetic
+    phase by definition". Post-natal is after prenatal, so a null-`wpc` stage
+    ordering before a dated one contradicts the record's own semantics. An
+    ERROR for PRF011/PRF012's reason: no mirror is involved, a curated record
+    contradicts itself, and there is no reading of it that is true.
+
+    One issue per offending post-natal stage rather than one per dataset, and
+    each names the **latest** dated stage it claims to precede: a curator
+    fixing this needs to know which token moved. Sorted by `order` within a
+    dataset and by dataset id across them, both comparison-based over tuples
+    and lists, so no PYTHONHASHSEED dependence is in play (section 4.42).
+
+    A dataset with no dated stage at all cannot violate this, and neither can
+    one with no post-natal stage -- both fall out of `max`/comparison rather
+    than needing a guard, and `test_prf014_is_silent_when_every_post_natal_
+    stage_orders_last` pins the ordinary shape.
+    """
+    issues: list[ValidationIssue] = []
+    for dataset in sorted(datasets, key=lambda item: item.id):
+        dated = [stage for stage in dataset.stages if stage.wpc is not None]
+        if not dated:
+            continue
+        latest = max(dated, key=lambda item: item.order)
+        undated = sorted(
+            (stage for stage in dataset.stages if stage.wpc is None),
+            key=lambda item: item.order,
+        )
+        for stage in undated:
+            if stage.order < latest.order:
+                issues.append(
+                    ValidationIssue(
+                        "PRF014",
+                        Severity.ERROR,
+                        _dataset_location(root, dataset),
+                        f"dataset '{dataset.id}' orders stage {stage.token!r} "
+                        f"(order {stage.order}, no wpc) before {latest.token!r} "
+                        f"(order {latest.order}, {latest.wpc} wpc); a stage with no "
+                        "wpc is post-natal by construction and must order after "
+                        "every stage that has one",
+                    )
+                )
     return issues
 
 

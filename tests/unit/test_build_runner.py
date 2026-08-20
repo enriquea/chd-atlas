@@ -270,12 +270,16 @@ def test_the_expression_census_reaches_the_manifest_and_the_page_unswapped(
 ) -> None:
     """`profile_census`'s own published-vs-registry restriction is proven by a
     hand-built fixture in `test_build_profiles.py`; this proves the *wiring*
-    `build_site` does with its answer, which no test reading a real build can
-    -- the committed corpus has no `profiles` mirror, so both figures are 0
-    there, and a transposed assignment (`profile_genes` reading `datasets`
-    and vice versa), or one hardcoded to a literal `0` that never reads
-    `profile_stats` at all, would publish exactly the same manifest and page
-    as a correct build. Genes and datasets are given different values here for
+    `build_site` does with its answer, which no test reading a real build can.
+    This said "the committed corpus has no `profiles` mirror, so both figures
+    are 0 there" until 2026-08-20; `mirrors/profiles/E-MTAB-6814.tsv` landed on
+    2026-08-19 and a real build now publishes `profile_genes: 92` and
+    `profile_datasets: 1`. That does make a *transposition* visible on a real
+    build, but nothing there asserts either value, and the mutant that matters
+    is still invisible: 92 is also `counts.genes` and 1 is also
+    `counts.datasets`, so an assignment reading the neighbouring count instead
+    of `profile_stats` publishes exactly the same manifest and page as a
+    correct build. Genes and datasets are given different values here for
     the same reason `BurdenCensus`'s three figures are all distinct in
     `test_the_burden_census_reaches_the_page_in_both_places_and_agrees_with_
     itself`: two figures equal to each other cannot catch a swap between their

@@ -1,6 +1,7 @@
 # tests/test_built_site_is_consumable.py
 import gzip
 import json
+import math
 import posixpath
 import re
 import shutil
@@ -11,6 +12,7 @@ import pytest
 
 from chd_atlas.build.render import RESEARCH_USE_NOTICE
 from chd_atlas.build.runner import build_site
+from chd_atlas.corpus import load_curation
 
 REPO = Path(__file__).parent.parent
 
@@ -385,3 +387,236 @@ def test_a_gene_an_authority_reported_no_association_for_says_so_in_both_payload
     for bundle_path in sorted((site / "genes").glob("HGNC_*.json")):
         payload = json.loads(bundle_path.read_text(encoding="utf-8"))
         assert payload["has_no_association_report"] == bool(payload["no_association_reported_by"])
+
+
+# Every attribute the chart renderers position anything with. `points` and
+# `viewBox` hold several numbers each and are split on whitespace and commas.
+_GEOMETRY_ATTRIBUTES = (
+    "data-scale-high",
+    "viewBox",
+    "height",
+    "points",
+    "width",
+    "x1",
+    "x2",
+    "y1",
+    "y2",
+    "cx",
+    "cy",
+    "x",
+    "y",
+    "r",
+)
+# Longest-first. Measured: the order is not load-bearing -- the alternation
+# backtracks, so `x` failing on the `1` of `x1="..."` lets `x1` match anyway --
+# but written this way so the scan does not depend on that.
+_GEOMETRY = re.compile(r"\b(?:" + "|".join(_GEOMETRY_ATTRIBUTES) + r')="([^"]*)"')
+
+# What `charts.coordinate` produces: an integer, or an integer and exactly one
+# decimal place. A raw `repr` reaches `0.30000000000000004` and `1e-05`.
+_FIXED_PRECISION = re.compile(r"^-?\d+(\.\d)?$")
+
+
+def test_every_geometry_the_pages_publish_has_coordinate_s_fixed_shape(site: Path) -> None:
+    """`coordinate` is pinned; that it is *used* was not, until 2026-08-20.
+
+    `test_build_charts.py::test_coordinates_are_fixed_precision_so_two_builds_
+    agree` proves the function rounds. It cannot prove any renderer calls it,
+    so a new chart interpolating a raw float -- the ordinary way to write an
+    SVG attribute -- passes every test in this repository while publishing
+    `y="43.33333333333333"`. That is the whole reason `coordinate` exists:
+    binary floating point is not identical across platforms at the last bits,
+    so a raw repr makes two builds of one commit differ by architecture while
+    every checksum still verifies against itself.
+
+    Scanned off the built pages rather than off the source, for the reason
+    CLAUDE.md section 4.35 gives: the question is what a reader's browser
+    receives, and `grep` over `src/` answers a different one -- these strings
+    are assembled from adjacent literals and f-strings that no source-level
+    search reconstructs.
+
+    Measured 2026-08-20 over a real build: 94 pages, 41,833 geometry tokens,
+    0 non-conforming.
+
+    **The count is derived, never pinned to a literal**, for the reason
+    `test_every_html_page_the_build_writes_carries_the_research_use_notice`
+    derives its own: a scan matching nothing satisfies a loop vacuously, and a
+    literal total is re-edited every time the population moves. Every gene page
+    must carry geometry -- measured, all 92 do, though not all for the same
+    reason: GDF1 draws three forest panels and no organ chart at all, and
+    CFC1's 138 tokens are the fewest. The landing and browse pages carry none
+    today and are scanned anyway, so a chart added to either is covered
+    without anyone remembering this test.
+    """
+    pages = sorted(site.rglob("*.html"))
+    gene_pages = sorted((site / "genes").glob("HGNC_*.html"))
+    assert len(gene_pages) > 1, "the build published no gene pages; the fixture is broken"
+
+    total = 0
+    for page in pages:
+        tokens = [
+            token
+            for value in _GEOMETRY.findall(page.read_text(encoding="utf-8"))
+            for token in value.replace(",", " ").split()
+        ]
+        if page in gene_pages:
+            assert tokens, f"{page.relative_to(site)} publishes no geometry at all"
+        total += len(tokens)
+        for token in tokens:
+            assert _FIXED_PRECISION.match(token), (
+                f"{page.relative_to(site)} publishes the geometry {token!r}, which did not "
+                "come through charts.coordinate -- two builds on two platforms can differ"
+            )
+
+    assert total > len(gene_pages), f"only {total} geometry tokens over {len(pages)} pages"
+
+
+# Each `<rect class="chart-band">` a trajectory draws, paired with the phase
+# label its own `<title>` names. Anchored on the `<rect>` rather than on the
+# bare class name, because `render.STYLESHEET` is inlined verbatim into every
+# page and carries `.chart-band { ... }` — a `"chart-band" in page` check
+# passes on all 94 pages with every band deleted (CLAUDE.md section 4.35).
+_BAND = re.compile(r'<rect class="chart-band"[^>]*><title>([^<]*)</title>')
+
+
+def test_the_curated_phase_vocabulary_reaches_the_pages_it_is_drawn_on(site: Path) -> None:
+    """The wiring, not the renderer: `build_gene_pages(phases=...)` in `runner.py`.
+
+    Every page test hands `phases=` a fixture explicitly, so the keyword
+    `runner.py` actually passes was exercised by nothing. Measured 2026-08-20,
+    changing that one argument to `None` passed all 1,053 tests while changing
+    86 of 198 published files: **85 pages lost their trajectory entirely** and
+    30 of them gained, in bold, "This gene reads *below this dataset's
+    detection floor at every stage sampled* in whole heart (19 stages
+    sampled)" — including HGNC:10249, whose own bundle places 18 of those 19
+    heart stages against the percentile grid with the percentiles printed in
+    the table directly below. A false claim, on 30 pages, in bold, under a
+    green build. This repository's characteristic defect exactly.
+
+    Three assertions, because the wiring can fail in three ways and only the
+    first is the mutant above:
+
+    * bands are drawn at all — `phases=None` publishes zero;
+    * every label drawn is one a curator wrote in
+      `curation/cardiac_phases.yaml` — a renderer inventing its own phase
+      names would satisfy the first;
+    * the one phase whose end the source never states is banded nowhere.
+      `_banded_phases` refuses it and `CardiacPhaseFile.phases_for` refuses
+      it, and this is the only check that either rule survives the real
+      pipeline rather than a fixture. A band has to run to an edge, so
+      drawing one for `heart_looping` would assert in the encoding a reader
+      takes at a glance the very boundary `end_basis: not_stated` exists to
+      refuse.
+
+    Measured 2026-08-20 on the committed corpus: 85 gene pages, 4 bands each,
+    4 distinct labels of the 5 the vocabulary makes eligible.
+    `embryonic_heart_tube_morphogenesis` ends before this dataset's first
+    sampled stage, so it is eligible and unbanded — which is why the labels
+    are asserted as a non-empty subset rather than pinned to a literal set
+    that a second dataset would falsify.
+    """
+    phases = load_curation(REPO)[0].cardiac_phases
+    assert phases is not None, "the committed corpus has no phase vocabulary; fixture is broken"
+    curated = {phase.label for phase in phases.phases}
+    unended = {phase.label for phase in phases.phases if phase.end_wpc is None}
+    assert unended, "no unended phase is curated; the third assertion below is vacuous"
+
+    banded: set[str] = set()
+    pages_with_a_band = 0
+    for page in sorted((site / "genes").glob("HGNC_*.html")):
+        labels = _BAND.findall(page.read_text(encoding="utf-8"))
+        if labels:
+            pages_with_a_band += 1
+        banded.update(labels)
+
+    assert pages_with_a_band, "no page carries a phase band; the vocabulary reached no page"
+    assert banded <= curated, f"a band names a phase no curator wrote: {sorted(banded - curated)}"
+    assert banded, "bands were drawn with no phase named in any of them"
+    assert not banded & unended, (
+        f"a phase whose end the source never states is banded: {sorted(banded & unended)}"
+    )
+
+
+def _tau_denominator(method: str, n_organs: int) -> float:
+    """The divisor the published `method` string *names*, read out of the words.
+
+    Deliberately a parser and not a constant. D39(a)'s whole promise is that a
+    consumer who reads `method` and never opens this repository reproduces the
+    number; the only way to test that promise is to follow the sentence rather
+    than the source. A constant `n - 1` here would agree with `specificity`
+    for the same reason the code agrees with itself, and would have passed
+    unchanged while the string said "mean over organs" — which is what
+    happened, through four review passes.
+
+    Raises rather than defaulting on an unrecognised wording: a rewrite this
+    function cannot follow is a rewrite a consumer cannot follow either, and
+    silently picking a denominator would restore exactly the hole this closes.
+    """
+    if "divided by (n - 1)" in method:
+        return float(n_organs - 1)
+    if "mean over organs" in method:
+        return float(n_organs)
+    raise AssertionError(
+        f"the published tau method names no denominator this test can follow: {method!r}"
+    )
+
+
+def test_every_published_tau_is_reproducible_from_its_own_method_string(site: Path) -> None:
+    """D39(a) made executable: `method` + `medians` must reproduce `tau`.
+
+    `specificity` publishes the formula beside the number precisely so a
+    consumer can re-derive it without reading `build/profiles.py`. Nothing
+    checked that the sentence and the arithmetic agreed, and they did not:
+    the string said "mean over organs of (1 - x_i/x_max)" — a divisor of *n* —
+    while the code divides by *n − 1*, the standard Yanai τ. Measured
+    2026-08-20 over the committed corpus: all 1817 published specificity
+    blocks match `sum/(n − 1)` and 4 also match `sum/n`, those four being
+    coincidences of ties rather than agreement.
+
+    So this asserts equality *and* that the two candidate divisors are
+    distinguishable on this corpus — per section 4.30, two figures that are
+    equal in the fixture are one figure to the test. Without the second
+    assertion a corpus of two-organ stages (where n − 1 == 1 and the
+    difference is a factor of 2 on every block, but a degenerate one-organ
+    corpus would collapse) could let a wrong string pass.
+
+    `scale` is asserted alongside because `method` names the transform and the
+    two are separately published; a consumer following one and reading the
+    other must not get two different answers.
+    """
+    blocks = 0
+    also_matching_plain_mean = 0
+    for bundle in sorted((site / "genes").glob("HGNC_*.json")):
+        payload = json.loads(bundle.read_text(encoding="utf-8"))
+        for dataset in payload["expression_profile"]["datasets"]:
+            for stage in dataset["stages"]:
+                specificity = stage["specificity"]
+                if specificity is None:
+                    continue
+                blocks += 1
+                medians = specificity["medians"]
+                method = specificity["method"]
+
+                assert specificity["scale"] == "log2(x+1)"
+                assert "x = log2(median+1)" in method
+                assert "clamped to 0" in method
+
+                logged = {
+                    organ: math.log2(max(value, 0.0) + 1.0) for organ, value in medians.items()
+                }
+                x_max = max(logged.values())
+                total = sum(1.0 - value / x_max for value in logged.values())
+
+                derived = total / _tau_denominator(method, len(medians))
+                assert derived == pytest.approx(specificity["tau"], abs=1e-12), (
+                    f"{bundle.name}: tau {specificity['tau']} is not what the published "
+                    f"method reproduces ({derived}) from the published medians"
+                )
+                if total / len(medians) == pytest.approx(specificity["tau"], abs=1e-12):
+                    also_matching_plain_mean += 1
+
+    assert blocks, "no specificity block was published; this test measured nothing"
+    assert also_matching_plain_mean < blocks, (
+        "every published tau matches sum/n as well as sum/(n-1); this corpus "
+        "cannot distinguish the two divisors, so the assertion above is vacuous"
+    )

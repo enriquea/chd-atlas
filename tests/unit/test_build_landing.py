@@ -43,9 +43,9 @@ TBX20 = "HGNC:11598"
 REPO = Path(__file__).parent.parent.parent
 
 # The parenthetical said "browsable once curated" until D21, which made it
-# false: 23 of these 154 genes are browsable today and 22 of those carry no
-# curation from this atlas at all. What decides is ClinGen's grade, and that is
-# what it now says. The row's placement and label are pinned below for the
+# false: 23 of these 154 genes were browsable then and 22 of those carried no
+# curation from this atlas at all. What decides is the upstream grade, and that
+# is what it now says. The row's placement and label are pinned below for the
 # reason they always were -- this number must never read as published coverage.
 #
 # It then said "(browsable once ClinGen grades it definitive)", which was false
@@ -452,12 +452,12 @@ def test_the_published_and_mirrored_counts_are_derived_not_hardcoded(tmp_path: P
     against one fixture and only that one; varying the fixture and checking the
     rendered counts move with it is what tells a literal from a derivation. Two
     assertions on two genes, three published genes and five mirrored ones --
-    none of which match the committed corpus's one assertion, its 23 published
-    genes or its 154 mirrored ones -- so a hardcoded "1"/"23"/"154" fails here.
+    none of which match the committed corpus's one assertion, its 92 published
+    genes or its 154 mirrored ones -- so a hardcoded "1"/"92"/"154" fails here.
 
     The three fixture values are deliberately all different, and `published` is
     deliberately not the asserted genes. Since D21 those are separate
-    populations -- 22 of the 23 genes the site publishes carry no assertion --
+    populations -- 91 of the 92 genes the site publishes carry no assertion --
     and the figure wired to the wrong one of the three is the mistake this
     catches: the page used to count `{assertion.gene for ...}` under this very
     label, which would render 2 here instead of 3.
@@ -493,7 +493,7 @@ def test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json(
     This is the regression the false "154 genes" claim was: `mirrored_gene_count
     = len(validity)` counted every gene either mirror curates, not the genes the
     build actually publishes. `genes/index.json` is keyed on `published`
-    (`derive.gene_facts`), which for the committed corpus is 23 genes — not 154,
+    (`derive.gene_facts`), which for the committed corpus is 92 genes — not 154,
     and no longer the 1 gene that carries an assertion either. Checked here
     against the real built file rather than against a literal, so it fails the
     same way the original bug would if it recurred, and so that widening the
@@ -511,9 +511,10 @@ def test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json(
 def test_the_landing_page_distinguishes_published_from_curated(tmp_path: Path) -> None:
     """The promotion review forced this distinction into prose once already.
 
-    23 genes are published on an expert panel's classification and 1 carries the
-    atlas's own evidence. A single "genes" count would read as coverage the site
-    does not have.
+    92 genes are published on an upstream authority's classification -- 76 on a
+    ClinGen expert panel's and 16 on two or more agreeing GenCC submitters --
+    and 1 carries the atlas's own evidence. A single "genes" count would read
+    as coverage the site does not have.
 
     The fixture separates all three numbers that could be wired to this row --
     two assertions, on one gene, against three published genes -- because the
@@ -611,13 +612,16 @@ def test_the_landing_card_names_the_layer_the_build_publishes(tmp_path: Path) ->
     against a literal, never against a constant a rewrite could carry along
     with it -- the same discipline `_MIRRORED_ROW_LABEL` is asserted with.
 
-    **Every profile count is 0 on the committed corpus** -- there is no
-    `profiles` mirror to derive one from -- so `genes=3, datasets=2` here is
-    what tells a real card from a hardcoded "0" that would also satisfy every
-    other assertion in this file. `test_the_page_and_the_manifest_publish_
-    one_census_of_a_real_build` is what proves this same wiring holds on the
-    real, zero-valued build; this is what proves it is not two zeros wired to
-    each other by coincidence.
+    **Neither profile count is distinguishable on the committed corpus.** This
+    said "every profile count is 0 -- there is no `profiles` mirror to derive
+    one from" until 2026-08-20; `mirrors/profiles/E-MTAB-6814.tsv` landed on
+    2026-08-19 and the real build now publishes `profile_genes: 92` and
+    `profile_datasets: 1`. Those are also `genes: 92` and `datasets: 1`, so a
+    card wired to the wrong count still reads correctly there. `genes=3,
+    datasets=2` here is what tells a real card from one reading a neighbour or
+    a literal. `test_the_page_and_the_manifest_publish_one_census_of_a_real_
+    build` is what proves this same wiring holds on the real build; this is
+    what proves it is not two coincidences wired to each other.
     """
     corpus = Corpus(root=Path("."), assertions=(_assertion(),))
 
@@ -718,10 +722,13 @@ def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
 
     `burden_rows` is checked against the gene bundles too, which is the claim
     that actually matters: the figure must count rows a consumer can *fetch*, not
-    rows in `mirrors/burden.tsv`. The mirror holds 1,475 rows over 150 genes and
-    127 of those genes publish no page, so a census counting the mirror would
-    advertise five times the evidence the site serves. Summed over the published
-    bundles rather than over the mirror for that reason.
+    rows in `mirrors/burden.tsv`. Measured 2026-08-20: the mirror holds 1,475
+    rows over 150 genes, 59 of those genes publish no page, and 915 rows reach
+    a bundle -- so a census counting the mirror would advertise 1.6 times the
+    evidence the site serves. Summed over the published bundles rather than
+    over the mirror for that reason. (This read "127 of those genes" and "five
+    times" until 2026-08-20: both were measured on the 23-gene corpus and both
+    moved when the gate widened to 92 on 2026-08-06.)
 
     **Every shared key, not a sample.** This checked three of the nine keys the
     page and the manifest both state until review 2026-08-06 pointed out that

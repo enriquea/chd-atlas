@@ -428,10 +428,10 @@ def test_a_degenerate_zero_floor_refuses_rather_than_dividing_by_zero() -> None:
 # deliberately absent from `_STAGES` so `assign_phase` is asked about a token
 # with no `Stage` behind it at all.
 _STAGES = (
-    Stage(token="2wpc", wpc=2.0),
-    Stage(token="7wpc", wpc=7.0),
-    Stage(token="20wpc", wpc=20.0),
-    Stage(token="senior", wpc=None),
+    Stage(token="2wpc", wpc=2.0, order=1),
+    Stage(token="7wpc", wpc=7.0, order=2),
+    Stage(token="20wpc", wpc=20.0, order=3),
+    Stage(token="senior", wpc=None, order=4),
 )
 
 
@@ -532,7 +532,7 @@ def test_a_matched_stage_names_every_overlapping_phase_not_just_the_first() -> N
             _phase("oft_septation", 6.0, 9.0),
         ],
     )
-    result = assign_phase("6.5wpc", (Stage(token="6.5wpc", wpc=6.5),), overlapping)
+    result = assign_phase("6.5wpc", (Stage(token="6.5wpc", wpc=6.5, order=1),), overlapping)
     assert result.outcome is PhaseOutcome.MATCHED
     assert result.phase_ids == ("looping", "atrial_septation", "oft_septation")
     assert result.reason is None
@@ -581,7 +581,7 @@ def test_a_stage_exactly_at_the_last_phase_boundary_reads_as_after() -> None:
     pinned test's own '20wpc' is far past this boundary and cannot
     distinguish the two operators.
     """
-    boundary = assign_phase("8wpc", (Stage(token="8wpc", wpc=8.0),), _PHASES)
+    boundary = assign_phase("8wpc", (Stage(token="8wpc", wpc=8.0, order=1),), _PHASES)
     assert boundary.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert boundary.reason == "after the curated window"
 
@@ -604,7 +604,7 @@ def test_an_open_ended_phase_is_ignored_by_the_after_boundary_not_crashed_on() -
         citation="PMID:1",
         phases=[_open_phase("looping", 1.0), _phase("septation", 3.0, 5.0)],
     )
-    stages = (Stage(token="early", wpc=0.5), Stage(token="late", wpc=6.0))
+    stages = (Stage(token="early", wpc=0.5, order=1), Stage(token="late", wpc=6.0, order=2))
 
     before = assign_phase("early", stages, mixed)
     after = assign_phase("late", stages, mixed)
@@ -626,7 +626,7 @@ def test_every_phase_open_ended_never_reads_as_after_the_curated_window() -> Non
         citation="PMID:1",
         phases=[_open_phase("looping", 1.0)],
     )
-    result = assign_phase("late", (Stage(token="late", wpc=1000.0),), all_open)
+    result = assign_phase("late", (Stage(token="late", wpc=1000.0, order=1),), all_open)
     assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert result.reason == "outside the curated window"
 
@@ -678,7 +678,7 @@ def test_an_interior_gap_is_outside_the_window_not_an_empty_vocabulary() -> None
             _phase("septation", 6.0, 8.0),
         ],
     )
-    result = assign_phase("7wpc", (Stage(token="7wpc", wpc=5.5),), gapped)
+    result = assign_phase("7wpc", (Stage(token="7wpc", wpc=5.5, order=1),), gapped)
     assert result.outcome is PhaseOutcome.OUTSIDE_WINDOW
     assert result.reason == "outside the curated window"
 
@@ -915,7 +915,7 @@ def _dataset(
     *,
     detection_floor: float = 1.0,
     cardiac_tissues: tuple[str, ...] = ("Heart",),
-    stages: tuple[Stage, ...] = (Stage(token="7wpc", wpc=7.0),),
+    stages: tuple[Stage, ...] = (Stage(token="7wpc", wpc=7.0, order=1),),
 ) -> Dataset:
     return Dataset(
         id=accession,
@@ -1296,7 +1296,7 @@ def test_tau_is_computed_per_stage_not_merged_across_stages(tmp_path: Path) -> N
         },
     )
     dataset = _dataset(
-        stages=(Stage(token="s1", wpc=1.0), Stage(token="s2", wpc=2.0)),
+        stages=(Stage(token="s1", wpc=1.0, order=1), Stage(token="s2", wpc=2.0, order=2)),
     )
 
     result = gene_expression_profiles(tmp_path, (dataset,), None, {})
@@ -1372,13 +1372,13 @@ def test_datasets_stages_and_tissues_are_all_sorted(tmp_path: Path) -> None:
     result = gene_expression_profiles(
         tmp_path,
         (
-            _dataset("E-ZZZZ-9", stages=(Stage(token="s1", wpc=1.0),)),
+            _dataset("E-ZZZZ-9", stages=(Stage(token="s1", wpc=1.0, order=1),)),
             _dataset(
                 "E-AAAA-1",
                 stages=(
-                    Stage(token="s3", wpc=3.0),
-                    Stage(token="s1", wpc=1.0),
-                    Stage(token="s2", wpc=2.0),
+                    Stage(token="s3", wpc=3.0, order=3),
+                    Stage(token="s1", wpc=1.0, order=1),
+                    Stage(token="s2", wpc=2.0, order=2),
                 ),
             ),
         ),
@@ -1394,6 +1394,92 @@ def test_datasets_stages_and_tissues_are_all_sorted(tmp_path: Path) -> None:
 
     tissues = next(entry for entry in stages if entry["stage"] == "s3")["tissues"]
     assert [entry["tissue"] for entry in tissues] == ["Alpha", "Zebra"]
+
+
+def test_stages_publish_in_curated_chronological_order_not_alphabetical(tmp_path: Path) -> None:
+    """The published stage array is ordered by `Stage.order`, not by token.
+
+    Pinned against a literal rather than against `sorted(...)` of anything --
+    a test that derives its expectation from the code under test compares the
+    module to itself. The four tokens are chosen so alphabetical and
+    chronological order DISAGREE in two independent places: alphabetically
+    "10wpc" precedes "4wpc" and "elderly" precedes "neonate", so a mutant
+    that drops the order lookup publishes a visibly different list. Both
+    disagreements are real ones this atlas shipped -- `4 week post
+    conception` rendered eighth, `elderly` second of eight post-natal
+    stages -- rather than invented ones.
+
+    Written to disk in a third order again, and DECLARED in a fourth, so
+    neither the encounter order of the mirror rows nor the position of a
+    record in the curated YAML list can pass this by accident.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", stage="elderly"),
+            _profile_row(gene="HGNC:1", stage="10wpc"),
+            _profile_row(gene="HGNC:1", stage="neonate"),
+            _profile_row(gene="HGNC:1", stage="4wpc"),
+        ],
+    )
+
+    result = gene_expression_profiles(
+        tmp_path,
+        (
+            _dataset(
+                stages=(
+                    Stage(token="neonate", wpc=None, order=3),
+                    Stage(token="4wpc", wpc=4.0, order=1),
+                    Stage(token="elderly", wpc=None, order=4),
+                    Stage(token="10wpc", wpc=10.0, order=2),
+                ),
+            ),
+        ),
+        None,
+        {},
+    )
+
+    stages = result["HGNC:1"]["datasets"][0]["stages"]
+    assert [entry["stage"] for entry in stages] == ["4wpc", "10wpc", "neonate", "elderly"]
+
+
+def test_a_stage_the_dataset_never_declared_sorts_after_every_declared_one(
+    tmp_path: Path,
+) -> None:
+    """An undeclared token keeps a defined position: last but one.
+
+    A mirror row naming a stage the dataset record does not list is a real
+    state -- `PRF005` reports it rather than the build assuming it away -- so
+    this sort must have an answer for it. It must not sort first by accident,
+    and it must not raise. The null-stage bucket still sorts last of all,
+    behind the undeclared token.
+
+    Alphabetically "4wpc" already precedes "aaa_undeclared" (digits beat
+    letters in ASCII), so token order alone would agree with the first two
+    entries here; what this pins is the *sentinel's* position. A
+    `_UNDECLARED_STAGE` of -1, or of `len(order)`, moves "aaa_undeclared"
+    ahead of the declared stage and fails.
+    """
+    _write_profiles(
+        tmp_path,
+        "E-MTAB-6814",
+        [
+            _profile_row(gene="HGNC:1", stage=None),
+            _profile_row(gene="HGNC:1", stage="aaa_undeclared"),
+            _profile_row(gene="HGNC:1", stage="4wpc"),
+        ],
+    )
+
+    result = gene_expression_profiles(
+        tmp_path,
+        (_dataset(stages=(Stage(token="4wpc", wpc=4.0, order=1),)),),
+        None,
+        {},
+    )
+
+    stages = result["HGNC:1"]["datasets"][0]["stages"]
+    assert [entry["stage"] for entry in stages] == ["4wpc", "aaa_undeclared", None]
 
 
 # --- percentile_annotations: the flat lookup build_omics ranks on (Task 8b) -
@@ -1447,7 +1533,9 @@ def test_build_omics_and_the_published_bundle_rank_on_the_same_percentile(
     two modules -- the one place a key-shape mismatch between the producer and
     the consumer would actually show up.
     """
-    dataset = _dataset(stages=(Stage(token="s1", wpc=1.0), Stage(token="s9", wpc=9.0)))
+    dataset = _dataset(
+        stages=(Stage(token="s1", wpc=1.0, order=1), Stage(token="s9", wpc=9.0, order=2))
+    )
     _write_profiles(
         tmp_path,
         "E-MTAB-6814",
@@ -1499,8 +1587,13 @@ def test_the_census_counts_published_genes_and_their_datasets_not_the_registry(
     """Two figures that are equal today are one figure to every test (CLAUDE.md
     section 4.15b/30/36) -- so this fixture is built to make `genes` and
     `datasets` each move independently under the `published` restriction,
-    rather than trusting a real build where every profile count is 0 to tell
-    a correct implementation apart from one that counts the mirror.
+    rather than trusting a real build to tell a correct implementation apart
+    from a wrong one. This said "a real build where every profile count is 0"
+    until 2026-08-20; measured that day, `mirrors/profiles/E-MTAB-6814.tsv`
+    covers 154 genes and the census reports 92 and 1. So a real build does now
+    separate this from a count of the mirror -- but 92 is `counts.genes` and 1
+    is `counts.datasets`, so it does not separate it from a read of the count
+    next door, and nothing asserts either figure there anyway.
 
     HGNC:1 and HGNC:2 are published and share one dataset (E-AAAA-1). HGNC:3
     is registered in the mirror -- `mirrors/profiles/*.tsv` can cover a gene
@@ -1546,10 +1639,19 @@ def test_a_gene_with_no_profile_row_at_all_does_not_count(tmp_path: Path) -> Non
 
     `_concordance_for` raises on exactly this shape of absence for burden
     concordance, because there every published gene is supposed to have an
-    entry. Here most published genes have no profile dataset covering them at
-    all -- there is no committed `profiles` mirror today -- so `profile_census`
-    must treat a missing key as "contributes nothing", the same reading
+    entry. A profile is not owed that way: `mirrors/profiles/*.tsv` is a
+    mirror of whatever a dataset measured, and a gene it never mentions is an
+    ordinary state, not a broken corpus. So `profile_census` must treat a
+    missing key as "contributes nothing", the same reading
     `bundles._expression_profile` gives it when assembling a bundle.
+
+    This said "most published genes have no profile dataset covering them at
+    all -- there is no committed `profiles` mirror today" until 2026-08-20.
+    Measured that day, `mirrors/profiles/E-MTAB-6814.tsv` covers all 154
+    registered genes, so **no published gene takes this branch on the
+    committed corpus** and this test is the only thing exercising it. That is
+    a reason to keep it, not to drop it: the first gene a second dataset does
+    not measure lands here.
     """
     _write_profiles(tmp_path, "E-AAAA-1", [_profile_row(gene="HGNC:1")])
     profiles = gene_expression_profiles(tmp_path, (), None, {})

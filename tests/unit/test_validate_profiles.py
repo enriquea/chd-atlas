@@ -167,7 +167,7 @@ def _profile_dataset(**overrides: object) -> Dataset:
         "detection_floor": 1.0,
         "floor_source": "test fixture",
         "quantile_estimator": "linear",
-        "stages": [{"token": "7wpc", "wpc": 7.0}],
+        "stages": [{"token": "7wpc", "wpc": 7.0, "order": 1}],
     }
     base.update(overrides)
     return Dataset(**base)
@@ -771,6 +771,271 @@ def test_prf004_and_prf005_are_reported_in_sorted_order_by_dataset_and_within_me
         "['cleavage', 'fetal', 'gastrula', 'limbbud', 'neonatal', "
         "'neurula', 'pharyngula', 'somite']" in prf005[4].message
     )
+
+
+def test_prf011_reports_two_stages_claiming_one_position() -> None:
+    """Duplicate `order` within one dataset.
+
+    Two stages at position 3 hand the sequence back to the sort's tie-break --
+    the token -- which is exactly the alphabetical ordering this field was
+    added to remove, reappearing silently inside one dataset.
+
+    **Numbered PRF011, not PRF010.** `validate/runner.py` already issues
+    PRF010 for a different failure (profiles rows present, no
+    `profile_quantiles` data), where it is PRF000's partner error. One code
+    naming two unrelated failures would let a lone skip warning pair with the
+    wrong error, which is the whole point of section 4.41.
+
+    **The colliding pair is listed `d` before `b`**, and that is the whole
+    reason the message is asserted as a sequence rather than as two
+    independent `in` checks. This check scans `sorted(stages, key=(order,
+    token))` precisely so that which of a pair is named first does not depend
+    on which record a curator happened to type first -- `Stage`'s own
+    docstring says the list's order is deliberately not load-bearing -- and
+    with the pair listed in already-sorted order the sort is unobservable:
+    dropping it left both `in` checks green. A list sort over a tuple, so it
+    is comparison-based and owes no seed probe (section 4.42); one
+    deliberately unsorted fixture is the whole guard.
+
+    **`wpc` still ascends in the order the pair is listed**, and that is not
+    incidental. `_prf012_issues` sorts on `order` alone, and Python's sort is
+    stable, so a tie inherits the curated list's order -- a fixture that
+    listed the later `wpc` first would provoke a real PRF012 as well and turn
+    a test about one check's scan order into a test about two.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="a")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    {"token": "a", "wpc": 1.0, "order": 1},
+                    {"token": "d", "wpc": 2.0, "order": 3},
+                    {"token": "b", "wpc": 3.0, "order": 3},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert [issue.code for issue in issues] == ["PRF011"]
+    assert issues[0].severity is Severity.ERROR
+    assert "3" in issues[0].message
+    assert "stages 'b' and 'd'" in issues[0].message
+
+
+def test_prf012_reports_an_order_that_contradicts_wpc() -> None:
+    """`order` and `wpc` disagree about which of two stages is earlier.
+
+    The failure `Stage.order` introduces by existing: each record is
+    individually valid -- an integer and a positive float -- so pydantic
+    cannot see it, and a stage transcribed into the wrong slot would publish
+    a trajectory with two of its points swapped.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="early")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    {"token": "early", "wpc": 4.0, "order": 2},
+                    {"token": "late", "wpc": 9.0, "order": 1},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert [issue.code for issue in issues] == ["PRF012"]
+    assert issues[0].severity is Severity.ERROR
+    assert "'late'" in issues[0].message
+    assert "'early'" in issues[0].message
+
+
+def test_prf012_refuses_two_stages_that_claim_the_same_wpc() -> None:
+    """The boundary is `>=`, not `>`, and that is a decision rather than an
+    off-by-one.
+
+    Two tokens at one `wpc` are two names for one point in time, so `order`
+    is claiming a sequence its own evidence does not support -- and `wpc` is
+    the key `assign_phase` joins on, so both tokens would resolve to
+    identical phases while the axis drew them apart. The likelier cause is a
+    transcription slip that duplicated a number.
+
+    Without this case the `>` mutant survives: every other PRF012 fixture
+    uses strictly decreasing values, which both operators catch.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="a")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    {"token": "a", "wpc": 4.0, "order": 1},
+                    {"token": "b", "wpc": 4.0, "order": 2},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert [issue.code for issue in issues] == ["PRF012"]
+
+
+def test_prf012_is_silent_when_only_post_natal_stages_lack_wpc() -> None:
+    """A null `wpc` is never evidence of a contradiction.
+
+    Every real profile dataset ends in post-natal stages that carry no `wpc`
+    at all, so a check that compared against the null would report every
+    dataset this atlas will ever curate. It is also why the post-natal block
+    of `curation/datasets/E-MTAB-6814.yaml` is pinned by a literal in
+    `tests/test_repository_validates.py` instead: PRF012 cannot reach it.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="19wpc")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    {"token": "19wpc", "wpc": 19.0, "order": 1},
+                    {"token": "neonate", "wpc": None, "order": 2},
+                    {"token": "elderly", "wpc": None, "order": 3},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert issues == []
+
+
+def test_prf014_refuses_a_post_natal_stage_ordered_before_a_prenatal_one() -> None:
+    """The half of the chronology PRF012 cannot reach, by construction.
+
+    PRF012 compares `order` against `wpc` only across stages carrying both,
+    and every post-natal stage has `wpc: null` by definition -- so nothing
+    constrained where the post-natal block sorted relative to the prenatal
+    one. Measured 2026-08-20 on the committed corpus: renumbering
+    E-MTAB-6814's eight post-natal tokens to `order` 1-8 and its thirteen
+    prenatal tokens to 9-21 validated **0 errors, 4 warnings**, codes
+    byte-identical to the clean baseline, and TBX5's chart then published
+    "Median abundance in whole heart, neonate to 19 week post conception"
+    with the septation bands on the right half of the axis.
+
+    An ERROR for PRF012's own reason: a curated record contradicts itself, so
+    there is no reading of it that is true. `Stage.wpc`'s documented meaning
+    is that a null is post-natal -- a fact about the stage, not a missing
+    value -- and post-natal is after prenatal. That implication was written in
+    the model's docstring and enforced nowhere.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="neonate")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    # Declared elderly-before-neonate on purpose: `order` and
+                    # declaration order disagree, so a dropped sort inside
+                    # `_prf014_issues` reverses the pair below rather than
+                    # merely reproducing it.
+                    {"token": "elderly", "wpc": None, "order": 2},
+                    {"token": "neonate", "wpc": None, "order": 1},
+                    {"token": "4wpc", "wpc": 4.0, "order": 3},
+                    {"token": "19wpc", "wpc": 19.0, "order": 4},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+
+    assert [issue.code for issue in issues] == ["PRF014", "PRF014"]
+    assert all(issue.severity is Severity.ERROR for issue in issues)
+    # One per offending post-natal stage, in `order` -- not in the record's
+    # declaration order, which the fixture deliberately disagrees with -- and
+    # each naming the latest dated stage it claims to precede: a curator
+    # fixing this needs to know which token moved, not merely that one did.
+    assert "'neonate'" in issues[0].message
+    assert "'elderly'" in issues[1].message
+    for issue in issues:
+        assert "'19wpc'" in issue.message
+        assert "19.0 wpc" in issue.message
+
+
+def test_prf014_is_silent_when_every_post_natal_stage_orders_last() -> None:
+    """The ordinary shape of every profile dataset this atlas will curate.
+
+    A check that fires on every correct input is a check a curator learns to
+    ignore -- `_prf006_issues`' own reason for reporting interior gaps only.
+    The fixture is the committed dataset's shape in miniature: prenatal
+    stages with `wpc`, then post-natal ones without.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="19wpc")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    {"token": "4wpc", "wpc": 4.0, "order": 1},
+                    {"token": "19wpc", "wpc": 19.0, "order": 2},
+                    {"token": "neonate", "wpc": None, "order": 3},
+                    {"token": "elderly", "wpc": None, "order": 4},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert issues == []
+
+
+def test_prf011_and_prf012_are_reported_in_dataset_id_order() -> None:
+    """All three curated-record checks re-sort `datasets` rather than trusting
+    caller order.
+
+    `corpus.datasets` follows `curation/datasets/`'s directory-listing order,
+    not id, and a direct caller -- this test, and `validate_repository`'s own
+    single call -- reads what these functions return, not a report that has
+    been re-sorted afterwards. Constructed Zebra-before-Alfa so a dropped
+    `sorted(datasets, ...)` in either function reverses the pair.
+
+    A list sort over a tuple, so it is comparison-based and carries no
+    PYTHONHASHSEED dependence (section 4.42) -- two datasets are enough, and
+    no seed probe is owed here.
+
+    PRF004 also fires twice (neither dataset has a profiles row behind its
+    declared tissue) and is filtered out: this test is about two orderings,
+    not about how many codes one fixture can provoke.
+    """
+    stages = [
+        {"token": "a", "wpc": 1.0, "order": 1},
+        {"token": "b", "wpc": 5.0, "order": 2},
+        {"token": "c", "wpc": 3.0, "order": 3},
+        {"token": "d", "wpc": 4.0, "order": 3},
+        # A post-natal token wedged in front of a later dated one, so PRF014
+        # fires exactly once per dataset alongside the other two.
+        {"token": "adult", "wpc": None, "order": 4},
+        {"token": "e", "wpc": 6.0, "order": 5},
+    ]
+    issues = validate_profile_references(
+        _root_with(),
+        datasets=(
+            _profile_dataset(id="E-ZEBR-1", archive="arrayexpress", stages=stages),
+            _profile_dataset(id="E-ALFA-1", archive="arrayexpress", stages=stages),
+        ),
+        known_genes=None,
+        published_genes=set(),
+        phases=None,
+    )
+
+    for code in ("PRF011", "PRF012", "PRF014"):
+        reported = [issue for issue in issues if issue.code == code]
+        assert len(reported) == 2, code
+        assert "E-ALFA-1" in reported[0].message, code
+        assert "E-ZEBR-1" in reported[1].message, code
+        # The location names the curated file a curator would open, not the
+        # mirror shard PRF004/PRF005 blame.
+        assert reported[0].location.endswith("curation/datasets/E-ALFA-1.yaml"), code
 
 
 def test_prf006_is_silent_on_contiguous_or_absent_phases() -> None:
