@@ -65,6 +65,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Final
 
 from chd_atlas.build.burden import BurdenRow, shared_cohorts
+from chd_atlas.build.charts import LogScale, coordinate, marker, polyline, svg_figure
 from chd_atlas.build.concordance import FamilyState, family_state
 from chd_atlas.build.derive import GeneFacts
 from chd_atlas.build.emit import Emitter, Json
@@ -101,6 +102,7 @@ from chd_atlas.models.assertion import LesionAssertion
 from chd_atlas.models.cohort import Cohort
 from chd_atlas.models.dataset import Dataset
 from chd_atlas.models.literature import Publication
+from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile
 from chd_atlas.vocab import AtlasCuration, Classification, ValiditySource, ValidityState
 
 # What the published set *is*, in one sentence, on both page kinds that show it.
@@ -1597,10 +1599,22 @@ def _names(ids: Sequence[str], cohorts: Mapping[str, Cohort]) -> str:
 # anything; it only chooses the English for a payload whose own module
 # docstring says exactly that is a later task's job.
 #
-# D32 governs this section absolutely: sentences and small per-organ tables,
-# never a plot. A future `<svg>`, `<canvas>` or `<img>` here would break the
-# one rule this layer exists to keep -- `test_the_section_never_renders_a_
-# chart_only_text_and_tables` is what watches for it.
+# D43 governs this section: **never a panel redundant with the source's own
+# browser**. That is D32's actual test -- "if a panel would look the same on
+# the Heart Cell Atlas, it does not belong here" -- and it replaces the proxy
+# this comment carried until 2026-08-20, which read "sentences and small
+# per-organ tables, never a plot".
+#
+# The proxy was wrong in both directions. It forbade the phase-banded
+# trajectory, which no external browser has, while permitting the rendering
+# that hid a live defect for three releases: stages published in alphabetical
+# order, 4 wpc eighth, because 21 individually-correct blocks cannot show a
+# trajectory and therefore cannot show a scrambled one.
+#
+# A bare heart curve IS what the source's own browser shows and remains
+# forbidden. The same curve banded by this atlas's own cardiac-phase
+# vocabulary is not. `test_every_chart_carries_an_atlas_specific_axis` is what
+# watches for the difference.
 
 # What each `ProfileGap` means, in English. Split into three maps rather than
 # one, because `ProfileGap`'s own docstring says only the first two members
@@ -1863,7 +1877,7 @@ def _stage_block(
     stage: StageProfileEntry, cardiac_tissues: frozenset[str], floor: float | None
 ) -> str:
     """One (dataset, stage) cross-section: its phase, its tau, its organs."""
-    label = html.escape(stage["stage"]) if stage["stage"] is not None else "no stage recorded"
+    label = html.escape(_stage_label(stage))
     spec = stage["specificity"]
     if spec is not None:
         specificity_html = _specificity_sentence(spec, cardiac_tissues)
@@ -1878,8 +1892,449 @@ def _stage_block(
     )
 
 
-def _dataset_block(entry: DatasetProfileEntry, dataset: Dataset | None) -> str:
-    """One dataset's whole contribution: its stages, and a link to its own grid.
+# --- The trajectory chart ----------------------------------------------------
+
+# Below this many placed stages a trajectory is not a trajectory. Two points
+# make a line segment, and a line segment is a claim about the interval
+# between them that two measurements do not support. Measured over the
+# committed corpus 2026-08-20: 82 of 92 published genes clear this in heart,
+# 3 fall to markers, and 7 have nothing placed at all.
+_STAGES_FOR_A_TRAJECTORY: Final = 3
+
+_CHART_WIDTH: Final = 560
+_CHART_HEIGHT: Final = 150
+_PLOT_LEFT: Final = 46.0
+_PLOT_RIGHT: Final = 550.0
+_PLOT_TOP: Final = 12.0
+_PLOT_BOTTOM: Final = 124.0
+
+# The lowest placed measurement stops this far above the axis, and the gap is
+# load-bearing rather than padding. `_trajectory` ticks a below-floor stage ON
+# the axis; without the gap, the atlas's weakest statement about a figure ("we
+# do not vouch for this one") and its lowest real one ("this is the smallest
+# number we measured") would land on the same pixel row, which is the exact
+# conflation `_percentile_cell` refuses to make in words.
+_FLOOR_GAP: Final = 8.0
+
+# A series whose placed values are all equal has no range, and `LogScale`
+# refuses a zero-span axis rather than silently placing every point on one
+# pixel. One decade centred on the value is the substitute: half a decade
+# either side puts a flat series in the middle of the plot, where it reads as
+# "one value, no range", instead of pinned to the floor or the ceiling, where
+# it would read as low or high against a scale nothing else occupies. Live
+# case, not hypothetical -- 3 of 92 published genes are placed at fewer than
+# two heart stages.
+_FLAT_SERIES_SPAN: Final = 10.0**0.5
+
+
+def _stage_x(index: int, count: int) -> float:
+    """Where the `index`-th of `count` stages sits on the horizontal axis.
+
+    The axis is the curated stage **order**, never `wpc`, and the two are
+    different claims. Eight of this dataset's 21 stages are post-natal and
+    carry no `wpc` at all, so a time-proportional axis could not place them;
+    and even among the prenatal ones the sampling is uneven (13, then 16, 18,
+    19 wpc). Evenly spaced positions say only "these came in this order",
+    which is the whole of what `Stage.order` supports. `_trajectory`'s caption
+    says so in words, because a reader cannot see it from the picture.
+    """
+    if count < 2:
+        return (_PLOT_LEFT + _PLOT_RIGHT) / 2
+    return _PLOT_LEFT + (_PLOT_RIGHT - _PLOT_LEFT) * index / (count - 1)
+
+
+def _half_step(count: int) -> float:
+    """Half the gap between two adjacent stages, in pixels.
+
+    A phase band runs half a step outside the first and last stage it covers,
+    so that a phase covering exactly one stage draws a visible band rather
+    than a zero-width rectangle nobody sees. One published phase does exactly
+    that: `outflow_tract_septum_morphogenesis` covers 6 wpc alone.
+    """
+    if count < 2:
+        return (_PLOT_RIGHT - _PLOT_LEFT) / 2
+    return (_PLOT_RIGHT - _PLOT_LEFT) / (count - 1) / 2
+
+
+def _axis_bounds(values: Sequence[float]) -> tuple[float, float]:
+    """A log axis wide enough to place every value, and never zero-wide."""
+    low, high = min(values), max(values)
+    if high > low:
+        return low, high
+    return low / _FLAT_SERIES_SPAN, high * _FLAT_SERIES_SPAN
+
+
+def _stage_label(stage: StageProfileEntry) -> str:
+    """A stage's own token, or the state a null one is in.
+
+    The same fallback `_stage_block` renders as its heading, taken from one
+    place so a chart's axis and the heading under it cannot spell a null stage
+    two different ways.
+    """
+    return stage["stage"] if stage["stage"] is not None else "no stage recorded"
+
+
+def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[tuple[int, str, float | None]]:
+    """One organ's series: `(stage index, stage label, plottable median)`.
+
+    `None` is a stage this dataset **sampled and did not place** -- below the
+    detection floor, or with no complete percentile grid behind it. Those
+    stages stay in the list rather than being filtered out, because a gap in
+    the sequence and a stage nobody sampled must not render the same way:
+    `_trajectory` ticks the first on the axis and the second is simply not
+    here at all.
+
+    A stage where this organ has no row is not in the list, for that reason.
+    Measured 2026-08-20 on the committed corpus: heart has a row at 19 of the
+    21 stages this dataset publishes, missing at `school age child` and
+    `elderly`, for all 92 published genes.
+
+    **What is plotted is exactly what the atlas placed.** A below-floor
+    figure has a median too, and plotting it would put a number this atlas
+    declines to vouch for on the same line as ones it does -- the discipline
+    `_percentile_cell` already keeps in words. A non-positive median folds
+    into the same `None` for a second, narrower reason: it cannot be located
+    on a log axis at all. Neither loses a figure; every one of them is in the
+    table inside the `<details>`.
+    """
+    series: list[tuple[int, str, float | None]] = []
+    for index, stage in enumerate(entry["stages"]):
+        for measured in stage["tissues"]:
+            if measured["tissue"] != tissue:
+                continue
+            plottable = measured["median_abundance"]
+            placed = measured["placement"] is not None and plottable > 0
+            series.append((index, _stage_label(stage), plottable if placed else None))
+    return series
+
+
+def _tissue_unit(entry: DatasetProfileEntry, tissue: str) -> str:
+    """The unit this organ's medians are quoted in, or `""` if it has none.
+
+    Read off the measurements rather than off the `Dataset`, for the same
+    reason `_abundance` reads it there: the unit is a property of the mirrored
+    row, and a page must not quote a floor in one unit beside a median in
+    another.
+    """
+    for stage in entry["stages"]:
+        for measured in stage["tissues"]:
+            if measured["tissue"] == tissue:
+                return measured["unit"]
+    return ""
+
+
+def _banded_phases(
+    entry: DatasetProfileEntry, phases: CardiacPhaseFile | None
+) -> list[tuple[CardiacPhase, int, int]]:
+    """Each curated phase this dataset's stages fall inside, and the span it covers.
+
+    **A phase whose `end_basis` is `NOT_STATED` is skipped, unconditionally.**
+    It has no curated width, so a band drawn for it would have to run to an
+    edge nobody stated -- asserting exactly the boundary that field exists to
+    refuse, and asserting it in the one encoding a reader takes at a glance
+    rather than reads. `heart_looping` is the live case: the source states
+    when it begins and never when it ends.
+
+    That duplicates a rule `CardiacPhaseFile.phases_for` already keeps, and
+    the duplication is deliberate. `phases_for` is why no stage the real
+    pipeline builds ever names an unended phase; this function is why that
+    stays true of the *picture* even if some later caller assembles
+    `phase_ids` another way. A guard added to one layer is not a guard.
+
+    Sorted by phase id so two builds of one commit emit the same bytes: this
+    walks a dict built from a nested loop, which `sort_keys` in the JSON
+    encoder has nothing to say about.
+    """
+    if phases is None:
+        return []
+    stated = {phase.id: phase for phase in phases.phases if phase.end_wpc is not None}
+    covered: dict[str, list[int]] = {}
+    for index, stage in enumerate(entry["stages"]):
+        for phase_id in stage["phase"]["phase_ids"]:
+            if phase_id in stated:
+                covered.setdefault(phase_id, []).append(index)
+    return [
+        (stated[phase_id], min(covered[phase_id]), max(covered[phase_id]))
+        for phase_id in sorted(covered)
+    ]
+
+
+def _phase_bands(entry: DatasetProfileEntry, phases: CardiacPhaseFile | None, count: int) -> str:
+    """The shaded stage ranges this atlas's own phase vocabulary names.
+
+    **This is what makes the chart admissible under D43.** The curve itself is
+    what the source's own browser already draws; the bands are a claim no
+    external browser makes, transcribed from PMID:32048790 into
+    `curation/cardiac_phases.yaml` and carried onto every gene page here.
+    `_trajectory` returns `""` when this returns `""`, so the rule is enforced
+    by construction rather than by a comment asking a later author to keep it.
+
+    Each band carries its own `<title>`, so a phase is nameable where several
+    overlap -- and they do overlap, deliberately: three cardiac processes run
+    concurrently at 6 wpc. Overlapping bands share one fill and merge into a
+    single shaded region marking the morphogenetic window; the caption below
+    the figure is what names each of them in text, which is also what a reader
+    who cannot hover gets.
+    """
+    edge = _half_step(count)
+    rects = []
+    for phase, first, last in _banded_phases(entry, phases):
+        left = max(_stage_x(first, count) - edge, 0.0)
+        right = min(_stage_x(last, count) + edge, float(_CHART_WIDTH))
+        rects.append(
+            f'<rect class="chart-band" x="{coordinate(left)}" y="{coordinate(_PLOT_TOP)}" '
+            f'width="{coordinate(right - left)}" '
+            f'height="{coordinate(_PLOT_BOTTOM - _PLOT_TOP)}">'
+            f"<title>{html.escape(phase.label)}</title></rect>"
+        )
+    return "".join(rects)
+
+
+def _band_caption(
+    entry: DatasetProfileEntry, phases: CardiacPhaseFile | None, tissue: str, floor: float | None
+) -> str:
+    """What the picture cannot say about itself, in words beside it.
+
+    Three things a reader would otherwise have to guess, and one of them is a
+    trap: the horizontal axis is stage *order*, not elapsed time, so the gap
+    between 13 and 16 wpc is drawn the same width as the gap between 4 and 5.
+    Saying so is the difference between an ordinal axis and a false linear
+    one.
+    """
+    named = ", ".join(html.escape(phase.label) for phase, _, _ in _banded_phases(entry, phases))
+    attribution = html.escape(phases.attributed_to) if phases is not None else ""
+    unit = html.escape(_tissue_unit(entry, tissue))
+    floor_clause = (
+        f" Below this dataset's detection floor ({_fmt(floor)} {unit}) no percentile is "
+        "published and the stage is ticked on the axis instead."
+        if floor is not None
+        else ""
+    )
+    stages = entry["stages"]
+    span = (
+        f"{html.escape(_stage_label(stages[0]))} to {html.escape(_stage_label(stages[-1]))}, "
+        f"all {len(stages)} of this dataset's stages"
+        if stages
+        else "this dataset's stages"
+    )
+    return (
+        f'<p class="method">Left to right: {span} in curated developmental '
+        "order, evenly spaced &mdash; the axis is <strong>order, not elapsed time</strong>. "
+        f"Vertical: median abundance in whole {html.escape(tissue)}, {unit}, on a log scale."
+        f"{floor_clause} Shaded: {named} ({attribution}).</p>"
+    )
+
+
+def _adjacent_runs(
+    placed: Sequence[tuple[int, float]], points: Sequence[tuple[float, float]]
+) -> list[list[tuple[float, float]]]:
+    """`points` split wherever the stages behind them are not consecutive.
+
+    A break is any stage the atlas did not place sitting between two it did --
+    below this dataset's detection floor, or with no percentile grid behind
+    it -- and also a stage where this organ has no row at all. The two are
+    different facts and `_trajectory` renders them differently (the first gets
+    an axis tick, the second nothing), but they are the same fact *for the
+    line*: there is no measurement here to draw through.
+
+    Takes the pixel points beside the stage indices rather than recomputing
+    them, so the run boundaries and the markers cannot come from two different
+    passes over the series.
+    """
+    runs: list[list[tuple[float, float]]] = []
+    previous: int | None = None
+    for (index, _), point in zip(placed, points, strict=True):
+        if previous is None or index != previous + 1:
+            runs.append([])
+        runs[-1].append(point)
+        previous = index
+    return runs
+
+
+def _trajectory(
+    entry: DatasetProfileEntry,
+    tissue: str,
+    dataset: Dataset | None,
+    phases: CardiacPhaseFile | None,
+) -> str:
+    """One organ's whole developmental series as a phase-banded figure.
+
+    Returns `""` -- the caller's cue to say something in words instead -- in
+    each of the three cases where a figure would assert more than the data
+    does: nothing sampled for this organ, nothing placed at any stage
+    (`_no_trajectory_sentence` is what a page shows then), and no curated
+    phase band to draw, which is the bare re-plot D43 forbids.
+
+    The line is drawn only from `_STAGES_FOR_A_TRAJECTORY` placed points up.
+    Below that the markers stand alone: `charts.polyline` refuses fewer than
+    two points outright, and two would draw a segment claiming something about
+    the interval between them that two measurements do not support.
+
+    **And it is drawn in runs of adjacent stages, never as one line through
+    every placed point.** Measured 2026-08-20: 20 of the 85 charted genes have
+    a below-floor stage sitting strictly between two plotted points, and TBX1
+    has 11 of them against 5 placed stages. One line through the placed points
+    would run smooth and high across exactly the stages where this dataset
+    measured below its own floor -- the picture asserting a continuity the
+    figures deny, which is the conflation `_percentile_cell` refuses in words
+    and `_no_trajectory_sentence` refuses for a whole gene.
+    """
+    series = _tissue_medians(entry, tissue)
+    placed = [(index, value) for index, _, value in series if value is not None]
+    if not placed:
+        return ""
+    count = len(entry["stages"])
+    bands = _phase_bands(entry, phases, count)
+    if not bands:
+        return ""
+
+    low, high = _axis_bounds([value for _, value in placed])
+    scale = LogScale(low=low, high=high, left=0.0, width=_PLOT_BOTTOM - _FLOOR_GAP - _PLOT_TOP)
+    points = [
+        (_stage_x(index, count), _PLOT_BOTTOM - _FLOOR_GAP - scale.x(value))
+        for index, value in placed
+    ]
+    axis = (
+        f'<line class="chart-axis" x1="{coordinate(_PLOT_LEFT)}" '
+        f'y1="{coordinate(_PLOT_BOTTOM)}" x2="{coordinate(_PLOT_RIGHT)}" '
+        f'y2="{coordinate(_PLOT_BOTTOM)}"/>'
+    )
+    ticks = "".join(
+        marker(_stage_x(index, count), _PLOT_BOTTOM, css_class="chart-absent")
+        for index, _, value in series
+        if value is None
+    )
+    enough = len(points) >= _STAGES_FOR_A_TRAJECTORY
+    lines = (
+        "".join(
+            polyline(run, css_class="chart-line")
+            for run in _adjacent_runs(placed, points)
+            if len(run) >= 2
+        )
+        if enough
+        else ""
+    )
+    markers = "".join(marker(x, y, css_class="chart-point") for x, y in points)
+    unit = _tissue_unit(entry, tissue)
+    floor = dataset.detection_floor if dataset is not None else None
+    floor_words = f", above a detection floor of {_fmt(floor)} {unit}" if floor is not None else ""
+    title = (
+        f"Median abundance in whole {tissue}, {series[0][1]} to {series[-1][1]}: "
+        f"{len(placed)} of {len(series)} sampled developmental stages placed against this "
+        f"dataset's percentile grid{floor_words}, banded by this atlas's own curated "
+        "cardiac phases."
+    )
+    figure = svg_figure(
+        width=_CHART_WIDTH,
+        height=_CHART_HEIGHT,
+        title=title,
+        body=bands + axis + ticks + lines + markers,
+    )
+    return figure + _band_caption(entry, phases, tissue, floor)
+
+
+def _sampled_cardiac(entry: DatasetProfileEntry, cardiac: frozenset[str]) -> list[tuple[str, int]]:
+    """Each cardiac organ this dataset sampled for this gene, and how often.
+
+    Sorted, because `cardiac` is a `frozenset` and an unsorted iteration would
+    reorder a published sentence between two builds of one commit.
+    """
+    return [
+        (tissue, len(_tissue_medians(entry, tissue)))
+        for tissue in sorted(cardiac)
+        if _tissue_medians(entry, tissue)
+    ]
+
+
+def _no_trajectory_sentence(
+    entry: DatasetProfileEntry, cardiac: frozenset[str], floor: float | None
+) -> str:
+    """D42: what a page says instead of drawing an empty chart.
+
+    Measured 2026-08-20 against a real build: seven published genes are below
+    the floor in every cardiac tissue at every sampled stage -- SEMA3E, ZIC3,
+    USP44, DAW1, FGF8, GDF1, NODAL. Their headline grades are `definitive`
+    (ZIC3, NODAL), `moderate` (DAW1, FGF8), `limited` (USP44) and none at all
+    (SEMA3E, GDF1). They are laterality and outflow-tract genes acting in rare
+    lineages, which is exactly the dilution `_BULK_DILUTION_NOTICE` describes.
+    An empty chart beside a definitive chip asserts the thing that caption
+    denies, so this tier states the fact and repeats the caveat rather than
+    showing a frame with nothing in it.
+
+    **Two branches, because "nothing placed" is not one fact.** All seven of
+    those genes are below the floor, and that is what earns the dilution
+    argument; a cell left unplaced because no percentile grid was published,
+    or because the dataset declares no floor, is a gap in the *reference*
+    rather than a low reading, and saying "below the detection floor" of it
+    would be false. The second branch names the recorded reason instead and
+    claims nothing about the gene.
+
+    Returns `""` when this dataset sampled no cardiac organ for this gene at
+    all: there is then no organ to make either statement about, and every
+    figure it did publish is in the table below regardless.
+    """
+    sampled = _sampled_cardiac(entry, cardiac)
+    if not sampled:
+        return ""
+    organs = ", ".join(
+        f"whole {html.escape(tissue)} ({count} stages sampled)" for tissue, count in sampled
+    )
+    named = {tissue for tissue, _ in sampled}
+    reasons = {
+        measured["not_placed_reason"]
+        for stage in entry["stages"]
+        for measured in stage["tissues"]
+        if measured["tissue"] in named and measured["placement"] is None
+    }
+    if reasons != {ProfileGap.BELOW_DETECTION_FLOOR.value}:
+        clauses = "; ".join(
+            _PLACEMENT_GAP_CLAUSE.get(reason or "", "no reason was recorded for this gap")
+            for reason in sorted(reason or "" for reason in reasons)
+        )
+        return (
+            f'<p class="notice-inline">No trajectory is drawn for {organs}: no measurement '
+            f"there is placed against this dataset's percentile grid &mdash; {clauses}. Every "
+            "per-stage figure is in the table below.</p>"
+        )
+    # The floor's own value is a separate sentence rather than a parenthesis
+    # inside the first, because the organ clause already ends in one -- "in
+    # whole heart (19 stages sampled) (detection floor 1 tpm)" is what nesting
+    # them produced, and a reader stops reading at the second bracket.
+    qualifier = (
+        f" This dataset's detection floor is {_fmt(floor)} "
+        f"{html.escape(_dominant_unit(entry, named))}."
+        if floor is not None
+        else ""
+    )
+    return (
+        f'<p class="notice-inline">This gene reads <strong>below this dataset\'s detection '
+        f"floor at every stage sampled</strong> in {organs}, so there is no trajectory to "
+        f"draw.{qualifier} That is "
+        "<strong>not evidence that</strong> the gene is unimportant to heart development, and it "
+        "is not a measured zero: every figure here is a whole-organ median, and a gene "
+        "transcribed intensely in one rare cardiac lineage still reads below a bulk floor once "
+        "diluted across the whole organ. Every per-stage figure is in the table below.</p>"
+    )
+
+
+def _dominant_unit(entry: DatasetProfileEntry, tissues: set[str]) -> str:
+    """The unit the named organs' medians are quoted in.
+
+    A floor quoted without one is the `_count`/`count_unit` defect in a new
+    place; the organs here all come from one dataset, so one unit answers for
+    all of them, and the first is read rather than a set assembled.
+    """
+    for tissue in sorted(tissues):
+        unit = _tissue_unit(entry, tissue)
+        if unit:
+            return unit
+    return ""
+
+
+def _dataset_block(
+    entry: DatasetProfileEntry, dataset: Dataset | None, phases: CardiacPhaseFile | None
+) -> str:
+    """One dataset's whole contribution: a chart per cardiac organ, then every figure.
 
     The link is D39(b)'s other half reaching a reader rather than only a
     program: `build_profile_quantiles` publishes the 101-point grid a
@@ -1894,6 +2349,15 @@ def _dataset_block(entry: DatasetProfileEntry, dataset: Dataset | None) -> str:
     raising: the gap is already stated on every cell it affects, and this
     function's job is to render what the payload says, not to police a
     registration mismatch a validator already reports elsewhere.
+
+    **The stage blocks move into a `<details>`; they do not leave.** This
+    section rendered 21 near-identical blocks per dataset, one per stage, and
+    59% of its text was verbatim repetition -- "below the detection floor in
+    whole liver at this stage (detection floor 1 tpm)" appeared 20 times on
+    the TBX5 page. A chart that *replaced* them would take every exact figure
+    out of the HTML, which is this repository's characteristic defect (curated
+    work reaching no page) wearing a redesign. The summary is what a reader
+    sees first; the record is one click away and still complete.
     """
     heading = f"<h3>{html.escape(entry['dataset'])}"
     shard = entry["quantile_shard"]
@@ -1902,8 +2366,18 @@ def _dataset_block(entry: DatasetProfileEntry, dataset: Dataset | None) -> str:
     heading += "</h3>"
     cardiac = frozenset(dataset.cardiac_tissues) if dataset is not None else frozenset()
     floor = dataset.detection_floor if dataset is not None else None
+    # Sorted: `cardiac` is a `frozenset`, and an unsorted iteration would put
+    # two organs' charts in a different order between two builds of one commit.
+    charts = "".join(_trajectory(entry, tissue, dataset, phases) for tissue in sorted(cardiac))
+    lede = charts or _no_trajectory_sentence(entry, cardiac, floor)
     stages = "".join(_stage_block(stage, cardiac, floor) for stage in entry["stages"])
-    return heading + stages
+    total = len(entry["stages"])
+    noun = "stage" if total == 1 else "stages"
+    folded = (
+        f'<details class="stage-figures"><summary>every figure, all {total} {noun}'
+        f"</summary>{stages}</details>"
+    )
+    return heading + lede + folded
 
 
 def _placement_count(entries: Sequence[DatasetProfileEntry]) -> int:
@@ -1921,7 +2395,11 @@ def _placement_count(entries: Sequence[DatasetProfileEntry]) -> int:
     )
 
 
-def _expression_section(profile: ExpressionProfile, datasets: Mapping[str, Dataset]) -> str:
+def _expression_section(
+    profile: ExpressionProfile,
+    datasets: Mapping[str, Dataset],
+    phases: CardiacPhaseFile | None,
+) -> str:
     """Developmental expression: percentile, tau and phase, per organ and stage.
 
     **Renders a section even for a gene with no data, unlike `_burden_
@@ -1945,7 +2423,9 @@ def _expression_section(profile: ExpressionProfile, datasets: Mapping[str, Datas
     if not entries:
         return "<h2>Developmental expression</h2>" + _NOT_CURATED_EXPRESSION
 
-    blocks = "".join(_dataset_block(entry, datasets.get(entry["dataset"])) for entry in entries)
+    blocks = "".join(
+        _dataset_block(entry, datasets.get(entry["dataset"]), phases) for entry in entries
+    )
     notes = _EXPRESSION_READING_NOTES
     if _placement_count(entries) > 1:
         notes += _PERCENTILE_COMPARABILITY_NOTICE
@@ -1970,6 +2450,7 @@ def build_gene_pages(
     axes: tuple[tuple[str, str], ...] = (),
     profiles: Mapping[str, ExpressionProfile] | None = None,
     datasets: Mapping[str, Dataset] | None = None,
+    phases: CardiacPhaseFile | None = None,
 ) -> None:
     """Emit one HTML page per gene in `facts`.
 
@@ -1998,6 +2479,14 @@ def build_gene_pages(
     accession to the curated record `_expression_section` reads
     `cardiac_tissues` and `detection_floor` from; see that function's docstring
     for why a missing dataset degrades rather than raises.
+
+    `phases` is the same `CardiacPhaseFile` the profiles were derived against,
+    threaded down rather than re-read, so a band on a chart and the phase
+    sentence under the stage it covers cannot name different vocabularies.
+    `None` -- no curated phase file at all -- costs the trajectory, not the
+    section: `_trajectory` refuses to draw an unbanded curve, because a curve
+    with no band is the panel the source's own browser already publishes, and
+    every figure it would have summarised is in the tables regardless.
 
     Sorted, like every loop in this build that iterates a mapping: `sort_keys`
     orders dict keys in a JSON payload and has nothing to say about the order
@@ -2043,7 +2532,7 @@ def build_gene_pages(
             # position, and therefore every existing test slicing this page by
             # position, unchanged.
             + _expression_section(
-                profile_by_gene.get(gene, EMPTY_EXPRESSION_PROFILE), dataset_registry
+                profile_by_gene.get(gene, EMPTY_EXPRESSION_PROFILE), dataset_registry, phases
             )
             + "</div></div>"
         )

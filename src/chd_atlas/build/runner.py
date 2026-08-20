@@ -417,6 +417,11 @@ def build_site(root: Path, out: Path) -> dict[str, str]:
         # data its own bundle does not carry, or vice versa.
         profiles=expression_profiles,
         datasets=dataset_registry,
+        # The same vocabulary `gene_expression_profiles` assigned each stage
+        # its phases from, a hundred lines above -- so a band drawn on a
+        # trajectory and the phase sentence under the stage it covers cannot
+        # come from two different readings of `curation/cardiac_phases.yaml`.
+        phases=corpus.cardiac_phases,
     )
     # `validity` again, and the same object `build_gene_pages` was handed: the
     # browse row's `definitive for` cell and the gene page's `definitive for`

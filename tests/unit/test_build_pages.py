@@ -38,6 +38,7 @@ from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
 from chd_atlas.models.dataset import Dataset, Stage
 from chd_atlas.models.literature import Publication
+from chd_atlas.models.phases import CardiacPhase, CardiacPhaseFile, EndBasis
 from chd_atlas.vocab import (
     AtlasCuration,
     Classification,
@@ -2633,12 +2634,51 @@ def _profile_dataset(
     )
 
 
+def _cardiac_phase(
+    phase_id: str = "atrial_septum_morphogenesis",
+    *,
+    label: str = "Atrial septum morphogenesis",
+    end_wpc: float | None = 6.29,
+) -> CardiacPhase:
+    """One curated phase, `end_basis` derived from whether an end is given.
+
+    Derived rather than passed, so a fixture cannot construct the state
+    `CardiacPhase.end_fields_match_end_basis` forbids and then be read as
+    evidence about a state the real vocabulary can hold. `end_wpc=None` is the
+    `NOT_STATED` case -- `heart_looping` in `curation/cardiac_phases.yaml`,
+    the one phase whose end the source never states.
+    """
+    stated = end_wpc is not None
+    return CardiacPhase(
+        id=phase_id,
+        go_id="GO:0060413",
+        label=label,
+        start_wpc=3.71,
+        end_wpc=end_wpc,
+        start_carnegie_stage="CS12",
+        end_carnegie_stage="CS17" if stated else None,
+        start_hsapdv_id="HsapDv:0000019",
+        end_hsapdv_id="HsapDv:0000024" if stated else None,
+        end_basis=EndBasis.STATED if stated else EndBasis.NOT_STATED,
+    )
+
+
+def _cardiac_phases(*phases: CardiacPhase) -> CardiacPhaseFile:
+    """The curated phase vocabulary a page bands its trajectory with."""
+    return CardiacPhaseFile(
+        attributed_to="Buijtendijk MFJ, Barnett P, van den Hoff MJB (2020)",
+        citation="PMID:32048790",
+        phases=list(phases or (_cardiac_phase(),)),
+    )
+
+
 def _expression_page(
     tmp_path: Path,
     profiles: dict[str, ExpressionProfile],
     datasets: dict[str, Dataset] | None = None,
     facts: dict[str, GeneFacts] | None = None,
     name: str = "HGNC_4173.html",
+    phases: CardiacPhaseFile | None = None,
 ) -> str:
     """One gene page, built only to exercise the expression section.
 
@@ -2646,6 +2686,12 @@ def _expression_page(
     burden, no curated assertions, one mirrored validity record. `facts`
     defaults to a single uncurated GATA4 so a caller testing one gene need not
     build a `GeneFacts` by hand.
+
+    `phases` defaults to `None` -- the corpus with no curated phase
+    vocabulary at all -- rather than to `_cardiac_phases()`, so a test that
+    wants a banded trajectory has to ask for one. Every expression test
+    written before the trajectory landed therefore still exercises exactly
+    what it exercised then.
     """
     emitter = Emitter(root=tmp_path)
     build_gene_pages(
@@ -2659,6 +2705,7 @@ def _expression_page(
         cohorts={},
         profiles=profiles,
         datasets=datasets or {},
+        phases=phases,
     )
     return _page(tmp_path, name)
 
@@ -3138,30 +3185,244 @@ def test_the_dataset_heading_links_to_its_own_percentile_grid(tmp_path: Path) ->
     assert '<a href="../omics/profile_quantiles/E-MTAB-6814.json">' in page
 
 
-def test_the_section_never_renders_a_chart_only_text_and_tables(tmp_path: Path) -> None:
-    """D32: this atlas never re-plots what the source's own browser already
-    shows. If this section ever grows an `<svg>`, a `<canvas>` or an `<img>`,
-    it has failed its governing design rule.
+# --- The phase-banded trajectory (D43) --------------------------------------
+#
+# Every fixture below differs from every other in the one value the code under
+# test reads: how many heart stages carry a percentile (three, one, none) and
+# whether the phase a stage names has a curated end. CLAUDE.md section 4.36 is
+# the reason that is spelled out here -- a page fixture whose genes all share
+# the value under test measures nothing, and it has cost this repository four
+# separate defects.
+
+_HEART_DATASET = {"E-MTAB-6814": _profile_dataset(cardiac_tissues=("heart",))}
+
+
+def _heart_series(
+    *stages: tuple[str, float | None],
+    phase_ids: tuple[str, ...] = ("atrial_septum_morphogenesis",),
+) -> ExpressionProfile:
+    """A heart series over `stages`, in the order given.
+
+    A `float` is a median this dataset placed against its percentile grid; a
+    `None` is a stage sampled and left below the detection floor. The order
+    given is the published order -- `gene_expression_profiles` emits stages
+    by `Stage.order`, so a fixture's own sequence is the trajectory's.
     """
-    profile = _expression_profile(
-        (
-            _dataset_profile_entry(
-                stages=(
-                    _stage_entry(
-                        specificity=_specificity(),
-                        tissues=(_tissue_entry(placement=_placement()),),
-                    ),
-                )
+    entries = [
+        _stage_entry(
+            stage=token,
+            phase=_phase_info(phase_ids=phase_ids),
+            tissues=(
+                _tissue_entry(
+                    tissue="heart",
+                    median=median if median is not None else 0.3,
+                    unit="tpm",
+                    placement=_placement() if median is not None else None,
+                    not_placed_reason=None if median is not None else "below_detection_floor",
+                ),
             ),
         )
+        for token, median in stages
+    ]
+    return _expression_profile((_dataset_profile_entry(stages=tuple(entries)),))
+
+
+def _dataset_lede(section: str) -> str:
+    """One dataset block's opening: its chart, or the sentence instead of one.
+
+    Sliced off the stage tables the way `_validity_table` is sliced, and for
+    the same reason (CLAUDE.md section 4.19). `_BULK_DILUTION_NOTICE` sits
+    above every dataset block and itself contains "not evidence that", so a
+    section-wide assertion on that phrase passes whether or not the sentence
+    under test was rendered at all.
+    """
+    return _slice_between(section, "</h3>", ("<details",))
+
+
+def test_every_chart_carries_an_atlas_specific_axis(tmp_path: Path) -> None:
+    """D43: a chart earns its place by an axis the source's browser lacks.
+
+    Replaces `test_the_section_never_renders_a_chart_only_text_and_tables`,
+    which asserted the proxy "never an `<svg>`". The proxy forbade this
+    trajectory -- which no external browser has -- while permitting the
+    rendering that hid the alphabetical-ordering defect for three releases.
+
+    A bare re-plot of the source's own curve, with no phase band, must fail
+    here.
+    """
+    profile = _heart_series(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", 275.0))
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
+    )
+
+    assert "<svg" in section
+    assert "chart-band" in section, "a trajectory with no phase band is the re-plot D43 forbids"
+
+    # The same three measurements with no curated phase vocabulary behind them
+    # are exactly the source's own curve, and are refused.
+    bare = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=None)
+    )
+    assert "<svg" not in bare
+
+
+def test_a_phase_the_source_never_ended_bands_nothing(tmp_path: Path) -> None:
+    """`end_basis: not_stated` has no curated width, so it has no band.
+
+    `heart_looping` is the live case: the review states when it starts and
+    never when it stops, so `CardiacPhaseFile.phases_for` excludes it at every
+    wpc. A band drawn to an invented edge would assert exactly the boundary
+    that field exists to refuse -- and would do it in the one encoding a
+    reader takes at a glance.
+
+    The guard is here rather than trusted to `phases_for` upstream: a stage
+    carrying an unended phase's id is a state the real pipeline never
+    produces, which is why this fixture builds one by hand. CLAUDE.md section
+    4.28 -- a guard added to one layer is not a guard.
+    """
+    vocabulary = _cardiac_phases(
+        _cardiac_phase(),
+        _cardiac_phase("heart_looping", label="Heart looping", end_wpc=None),
+    )
+    both = _heart_series(
+        ("4wpc", 5.0),
+        ("5wpc", 40.0),
+        ("6wpc", 275.0),
+        phase_ids=("atrial_septum_morphogenesis", "heart_looping"),
     )
     section = _expression_section_text(
-        _expression_page(
-            tmp_path,
-            {GATA4: profile},
-            {"E-MTAB-6814": _profile_dataset(cardiac_tissues=("Heart",))},
+        _expression_page(tmp_path, {GATA4: both}, _HEART_DATASET, phases=vocabulary)
+    )
+    assert section.count('class="chart-band"') == 1
+    assert "Atrial septum morphogenesis" in section
+    assert "Heart looping" not in section
+
+    # And with nothing else to band, there is no admissible chart at all.
+    alone = _heart_series(
+        ("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", 275.0), phase_ids=("heart_looping",)
+    )
+    unbanded = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: alone}, _HEART_DATASET, phases=vocabulary)
+    )
+    assert "<svg" not in unbanded
+
+
+def test_a_stage_below_the_floor_is_an_axis_tick_and_never_a_zero(tmp_path: Path) -> None:
+    """Below the floor, not sampled, and zero are three different claims.
+
+    Plotting a below-floor stage at zero would put it on the axis as the
+    lowest *measurement*; leaving a gap would make it indistinguishable from a
+    stage nobody sampled.
+
+    The counts are asserted, not only the class name: a renderer that ticked
+    every stage, or that ticked the below-floor stage *and* plotted it, would
+    satisfy a bare `in` check.
+    """
+    profile = _heart_series(("4wpc", 5.0), ("5wpc", None), ("6wpc", 40.0), ("7wpc", 275.0))
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
+    )
+
+    assert "chart-absent" in section
+    assert section.count('class="chart-absent"') == 1
+    assert section.count('class="chart-point"') == 3
+
+
+def test_the_line_never_spans_a_stage_the_atlas_did_not_place(tmp_path: Path) -> None:
+    """A below-floor stage breaks the line; it is not drawn straight over.
+
+    Measured 2026-08-20 on the committed corpus: 20 of the 85 charted genes
+    carry a below-floor stage strictly between two plotted points, and TBX1
+    has 11 of them against 5 placed stages. A single line through the placed
+    points runs smooth and high across exactly the stages where this dataset
+    measured below its own floor -- the picture asserting a continuity the
+    figures deny.
+
+    The fixture has two runs and a lone leading point, so "one line through
+    everything", "splits but drops a run" and "splits correctly" are three
+    distinguishable outcomes rather than two.
+    """
+    profile = _heart_series(
+        ("4wpc", 5.0),
+        ("5wpc", None),
+        ("6wpc", 40.0),
+        ("7wpc", 275.0),
+        ("8wpc", None),
+        ("9wpc", 60.0),
+        ("10wpc", 90.0),
+    )
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
+    )
+
+    drawn = re.findall(r'<polyline class="chart-line" points="([^"]+)"', section)
+    assert len(drawn) == 2, "one line per run of adjacent placed stages"
+    assert [len(run.split(" ")) for run in drawn] == [2, 2]
+    # The stage that broke the line is still a point on the page, and the two
+    # stages that broke it are still ticked.
+    assert section.count('class="chart-point"') == 5
+    assert section.count('class="chart-absent"') == 2
+
+
+def test_a_gene_placed_at_one_stage_gets_markers_and_no_line(tmp_path: Path) -> None:
+    """Tier 3. TFAP2B is placed at 1 of 19 stages in the committed corpus.
+
+    A polyline through one point draws a trend the data does not contain.
+    """
+    profile = _heart_series(("4wpc", 5.0), ("5wpc", None), ("6wpc", None))
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
+    )
+
+    assert "<polyline" not in section
+    assert "chart-point" in section
+
+
+def test_a_gene_never_above_the_floor_gets_a_sentence_and_no_chart(tmp_path: Path) -> None:
+    """D42, tier 4, and the reason it is not cosmetic.
+
+    Measured 2026-08-20: seven published genes are below the floor in heart at
+    every one of 19 stages -- SEMA3E, ZIC3, USP44, DAW1, FGF8, GDF1, NODAL.
+    ZIC3 and NODAL are ClinGen definitive. An empty chart beside a definitive
+    chip asserts the thing the bulk-dilution caveat denies.
+
+    Asserted against literals, not against the constant that produced them: a
+    test that imports the string it asserts on compares the module to itself
+    and passes for any rewording.
+
+    Sliced to the dataset block's own lede before asserting, because
+    `_BULK_DILUTION_NOTICE` carries "not evidence that" over every gene page
+    on this site, charted or not.
+    """
+    profile = _heart_series(("4wpc", None), ("5wpc", None), ("6wpc", None))
+    section = _dataset_lede(
+        _expression_section_text(
+            _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
         )
     )
 
-    for banned in ("<svg", "<canvas", "<img"):
-        assert banned not in section
+    assert "<svg" not in section
+    assert "detection floor at every" in section
+    assert "not evidence that" in section
+    assert "heart" in section
+    assert "3 stages sampled" in section
+
+
+def test_a_chart_never_replaces_the_figures_it_summarises(tmp_path: Path) -> None:
+    """The evidence-loss mutant.
+
+    A chart that removed the table would take every exact figure out of the
+    HTML -- this repository's characteristic defect, curated work reaching no
+    page. The table moves into `<details>`; it does not leave.
+    """
+    profile = _heart_series(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", 275.0))
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
+    )
+
+    assert "<svg" in section
+    assert "<details" in section
+    assert "<table" in section
+    # Not merely present: every figure the 21 blocks carried is still there.
+    assert "275 tpm (n=3 samples)" in section
+    assert "97 of 19,842 genes" in section
