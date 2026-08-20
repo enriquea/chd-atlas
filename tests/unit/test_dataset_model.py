@@ -267,9 +267,14 @@ def test_stage_tokens_are_unique_and_wpc_may_be_null_postnatally() -> None:
 def test_a_stage_refuses_a_position_it_cannot_place(fields: dict[str, object]) -> None:
     """Both bounds and the requiredness, on one baseline.
 
-    `gt=0` is the bound on each of `wpc` and `order`; nullability (a postnatal
-    stage carrying no `wpc`) is covered above and is a fact about the stage,
-    not a missing value.
+    The two bounds are spelled differently and this docstring said they were
+    one: `wpc` is `gt=0` (a float, so any positive value) and `order` is
+    `ge=1` (an int, so 1-based). For an integer the two are the same set, and
+    that coincidence is exactly why the wrong name survived -- a reader
+    checking the model finds `ge=1` and a claim about `gt=0`.
+
+    Nullability (a postnatal stage carrying no `wpc`) is covered above and is
+    a fact about the stage, not a missing value.
 
     **`order` is required, not defaulted**, and that is the case with a
     reason worth keeping: a stage with no declared position cannot be placed

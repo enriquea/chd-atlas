@@ -934,8 +934,19 @@ def _stage_entry(
 
 
 # Where a token the dataset never declared sorts: after every declared stage,
-# before the null-stage bucket. Not `len(order)`, which would collide with a
-# declared position whenever a curator numbers from 0 or leaves a gap.
+# before the null-stage bucket.
+#
+# Not `len(order)`. This comment said that would collide "whenever a curator
+# numbers from 0 or leaves a gap", and both halves were wrong -- `Stage.order`
+# is `ge=1`, so 0-based numbering cannot happen, and a gap is the one shape
+# that is safe. Measured: `{a:1, b:2, c:3}` gives `len(order) == 3`, which is
+# `c`'s own position, while `{a:1, b:2, c:5}` gives 3 and collides with
+# nothing. On the committed corpus `len(order)` is 21, which is `elderly`.
+#
+# So the sentinel collides in the **ordinary** case -- contiguous 1..N, where
+# `len(order)` is always the last declared position -- and an undeclared token
+# would tie with the final stage and fall back to the token tie-break, which
+# is the alphabetical ordering this whole field exists to remove.
 _UNDECLARED_STAGE: Final = sys.maxsize
 
 
