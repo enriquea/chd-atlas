@@ -309,9 +309,10 @@ def test_an_index_row_is_exactly_what_the_browser_filters_on(tmp_path: Path) -> 
 def test_a_published_gene_the_atlas_has_not_curated_gets_a_row_and_a_bundle(
     tmp_path: Path,
 ) -> None:
-    """The other 22 of the 23 genes published today, end to end.
+    """The other 91 of the 92 genes published today, end to end.
 
-    D21 publishes a gene on a ClinGen panel's definitive call, which is not the
+    D21 publishes a gene on an upstream authority's call -- a ClinGen record at
+    or above `Limited`, or two agreeing GenCC submitters -- which is not the
     atlas's own work; `atlas_curation` is the one key a consumer filtering a
     browse list reads to tell the two apart. Both genes here are published and
     only TBX5 is asserted, so a `_headline` that hardcoded either value — or

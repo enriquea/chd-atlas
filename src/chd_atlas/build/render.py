@@ -283,6 +283,51 @@ STYLESHEET: Final = """
     padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 4px;
     background: var(--bg); color: var(--fg);
   }
+  /* Charts (build/charts.py). Every colour resolves through a custom property,
+     so the dark palette above governs charts with no second definition to
+     drift. `charts.py` emits no colour of its own -- a hex baked into a shape
+     would render a light chart on a dark page, and it is the class names below
+     that make that constraint enforceable in one place. */
+  .chart { width: 100%; height: auto; max-width: 40rem; overflow: visible; }
+  .chart-line { fill: none; stroke: var(--link); stroke-width: 2; }
+  .chart-point { fill: var(--link); }
+  .chart-point-open { fill: var(--bg); stroke: var(--link); stroke-width: 1.6; }
+  .chart-axis { stroke: var(--border); }
+  .chart-band { fill: var(--notice-bg); }
+  .chart-absent { fill: var(--border); }
+  .chart-control { stroke: var(--muted); fill: none; }
+  .chart-control-point { fill: var(--muted); }
+  .chart-nointerval { stroke: var(--border); stroke-width: 4; stroke-dasharray: 2 3; }
+  .chart-cardiac { stroke: var(--link); stroke-width: 2; fill: none; }
+  .chart-arrow { fill: var(--link); }
+  .chart-arrow-open { fill: var(--bg); stroke: var(--link); stroke-width: 1.6; }
+  .chart-control-arrow { fill: var(--muted); }
+  .chart-union { fill: var(--muted); font-size: 0.55rem; }
+  /* SVG `<text>` takes no `color`, only `fill`, so a label with neither
+     renders black on a dark page. Every `<text>` the charts emit carries this
+     class; the `<tspan>` rule above is the other one that sets a text fill. */
+  .chart-label { fill: var(--fg); font-size: 0.6rem; }
+  /* One marker a forest plot might want is deliberately absent from the list
+     above; `build/charts.py` names it and says why, and says it there rather
+     than here on purpose. **This stylesheet is inlined verbatim into every
+     page, so a sentence in this comment is a sentence in the published
+     bytes.** This block stated the reason in full for one revision and thereby
+     reintroduced a phrase that
+     `test_the_pooling_notice_is_the_matrix_caption_and_no_longer_conditional`
+     asserts is absent from a one-study page -- and naming the class here would
+     put the very token a page-wide check greps for onto all 94 pages. Reason
+     and class name both live in the module that emits the geometry. */
+  .sparks {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
+    gap: 0.3rem;
+  }
+  .spark {
+    margin: 0; border: 1px solid var(--border); border-radius: 4px;
+    padding: 0.2rem;
+  }
+  .spark figcaption { font-size: 0.6rem; color: var(--muted); }
+  .forest { margin: 0.6rem 0; }
+  .forest figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
 """
 
 # The one piece of client-side behaviour on the site, and a literal so it does

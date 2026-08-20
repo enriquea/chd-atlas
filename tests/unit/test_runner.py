@@ -133,6 +133,7 @@ quantile_estimator: linear
 stages:
   - token: 7wpc
     wpc: 7.0
+    order: 1
 """
 
 

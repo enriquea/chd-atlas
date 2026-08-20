@@ -54,7 +54,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.11",
+  "schema_version": "2.12",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -158,10 +158,29 @@ wrong by the next one.
   `2.11` added `profile_datasets` and `profile_genes` to `counts`, restricted
   to `published` for the same reason `genes` and `burden_rows` already are,
   plus a "Developmental expression" pair of cards on `index.html`. Additive:
-  both keys are always present, and both are `0` in this example because no
-  `profiles` mirror has been committed yet. See
+  both keys are always present, and both were `0` when the version was minted,
+  because no `profiles` mirror had been committed yet. `E-MTAB-6814` has
+  landed since, and the example above carries the figures a build produces
+  today. See
   [`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
   for the whole layer these two counts summarise.
+  `2.12` added `order` to every entry of a dataset record's
+  [`stages`](#datasetsjson) array, and **changed the order of the
+  `expression_profile.datasets[].stages[]` array in every gene bundle from
+  alphabetical to chronological**. The added key is additive and always
+  present, so a 2.11 parser keeps working; the reordering is a correction to
+  data that was already published, and it is the release. Through `2.11` a
+  gene's developmental series came back in dictionary order — `4 week post
+  conception` eighth, *after* `19 week post conception`, and `elderly` second
+  of the eight post-natal stages. It was deterministic and reproducible and it
+  was not a chronology. **If you plotted `stages` in array order you drew an
+  axis in the wrong sequence, and you will now draw a different picture; that
+  is the fix arriving, not a regression.** If you worked around it by sorting
+  the stage tokens yourself, remove the workaround — sorting the tokens is
+  exactly what the bug did. Like `2.2`'s and `2.8`'s population changes this is
+  MINOR by the rule above, because no field is added, removed or reshaped and
+  every entry still carries every key `2.11` published; the display obligation
+  is real regardless of the letter.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -918,7 +937,11 @@ readability (a real gene's `stages` runs to a dozen or more entries, one per
 token the dataset declares) rather than copied verbatim from one bundle — but
 every value in its `phase` block is real: it is `assign_phase`'s actual,
 reproducible answer for a 7-elapsed-week stage against the boundaries
-`curation/cardiac_phases.yaml` curates today.
+`curation/cardiac_phases.yaml` curates today. The `stage` token, the `unit`
+and `n_genes` are real too: stage tokens are the dataset's own long-form
+strings, this dataset reports `tpm`, and its grids were built from a 58,735-gene
+transcriptome. The `tau`, the abundances and the percentiles are the invented
+part.
 
 ```json
 {
@@ -929,7 +952,7 @@ reproducible answer for a 7-elapsed-week stage against the boundaries
         "quantile_shard": "omics/profile_quantiles/E-MTAB-6814.json",
         "stages": [
           {
-            "stage": "7wpc",
+            "stage": "7 week post conception",
             "phase": { "outcome": "matched",
                        "phase_ids": ["ventricular_septum_morphogenesis",
                                      "heart_valve_morphogenesis"],
@@ -940,11 +963,11 @@ reproducible answer for a 7-elapsed-week stage against the boundaries
                               "medians": { "heart": 42.0, "kidney": 8.0, "liver": 6.0 } },
             "specificity_unavailable_reason": null,
             "tissues": [
-              { "tissue": "heart", "median_abundance": 42.0, "unit": "rpkm",
+              { "tissue": "heart", "median_abundance": 42.0, "unit": "tpm",
                 "n_samples": 3,
                 "placement": { "q25_percentile": 44, "median_percentile": 50,
                                 "q75_percentile": 56, "median_abundance": 42.0,
-                                "unit": "rpkm", "n_samples": 3, "n_genes": 19842,
+                                "unit": "tpm", "n_samples": 3, "n_genes": 58735,
                                 "method": "lowest percentile of a tied breakpoint (bisect_left)" },
                 "not_placed_reason": null }
             ]
@@ -976,6 +999,23 @@ never goes through that mechanism at all: it has no gene column, so
 - `stages` is one entry per stage token the mirror's rows use for this
   (gene, dataset) pair — `stage` is `null` for a measurement with no
   developmental stage recorded at all.
+
+  **The array is in chronological order, and was not before schema `2.12`.**
+  It is sorted on the dataset record's own curated
+  [`order`](#datasetsjson) — not on `wpc`, which is `null` for every
+  post-natal stage, and not on the stage token. A token the dataset does not
+  declare sorts after every one it does; the `null` stage sorts last. The
+  entries themselves do not carry `order`; the array's sequence is what
+  publishes it, so read the series as it arrives.
+
+  Through schema `2.11` this array came back **alphabetically**: `4 week post
+  conception` published eighth, after `19 week post conception`, and `elderly`
+  second of the eight post-natal stages. That was deterministic and
+  reproducible between builds — and it was not a chronology. If you plotted
+  these entries in array order against an earlier release you drew a
+  developmental trajectory with its axis shuffled, and the same code now draws
+  a different, correct picture. If you sorted the stage tokens yourself to
+  work around it, stop: sorting the tokens is what the defect did.
 - `phase` places the stage in the curated cardiac morphogenetic window
   (`curation/cardiac_phases.yaml`):
 
@@ -1269,8 +1309,9 @@ sibling path under `omics/`.
 {
   "table": "profile_quantiles",
   "rows": [
-    { "dataset": "E-MTAB-6814", "tissue": "heart", "stage": "7wpc",
-      "percentile": 50, "value": 0.9, "unit": "rpkm", "n_genes": 19842 }
+    { "dataset": "E-MTAB-6814", "tissue": "heart",
+      "stage": "7 week post conception", "percentile": 50,
+      "value": 0.0, "unit": "tpm", "n_genes": 58735 }
   ]
 }
 ```
@@ -1373,8 +1414,31 @@ the same guarantee every cardiac term gets.
 ## `datasets.json`
 
 ```json
-{ "datasets": [] }
+{
+  "datasets": [
+    {
+      "id": "E-MTAB-6814", "archive": "arrayexpress", "design": "profile",
+      "technology": "bulk_rnaseq", "organism": "NCBITaxon:9606",
+      "tissue": "forebrain, heart, hindbrain, kidney, liver, ovary, testis",
+      "developmental_stage": "4 weeks post conception to elderly adult (13 prenatal, 8 post-natal stages)",
+      "n_samples": 287, "licence": "EMBL-EBI Terms of Use",
+      "publication": "PMID:31243369", "contrasts": [],
+      "cardiac_tissues": ["heart"],
+      "detection_floor": 1.0, "floor_source": "…", "quantile_estimator": "linear",
+      "stages": [
+        { "token": "4 week post conception", "wpc": 4.0, "order": 1 },
+        { "token": "19 week post conception", "wpc": 19.0, "order": 13 },
+        { "token": "neonate", "wpc": null, "order": 14 },
+        { "token": "elderly", "wpc": null, "order": 21 }
+      ]
+    }
+  ]
+}
 ```
+
+`stages` and `floor_source` are abridged above — the real record declares all
+21 stage tokens and spells the floor's provenance out in full. Every other
+value is copied from a build of the committed corpus.
 
 One record per omics dataset, serialised generically from the curated model
 (`build/literature.py`'s `_dump`, the same function `publications.json`,
@@ -1395,12 +1459,43 @@ above). `cardiac_tissues` and `stages` are `[]` and
 `detection_floor`/`floor_source`/`quantile_estimator` are `null` on a
 `"contrast"` record — never omitted — so every record has one shape whichever
 design it declares. `cardiac_tissues` names which of a profile dataset's own
-tissue tokens this atlas reads as "the heart" for that dataset; `stages` names
-its developmental-stage tokens together with each one's age in weeks
-post-conception (`wpc`), `null` for a post-natal stage.
+tissue tokens this atlas reads as "the heart" for that dataset.
 
-Empty in the committed corpus today: no dataset of either design has been
-mirrored yet.
+`stages` is one entry per developmental stage the dataset declares. Each
+carries the stage's own `token` — the literal string the mirror's rows use,
+which is what an `expression_profile` stage joins against — and two positions
+on the developmental axis:
+
+- `wpc` is the stage's age in weeks post conception, and is `null` for every
+  post-natal stage — 8 of E-MTAB-6814's 21. That null is not a gap in the
+  curation; a stage after birth has no such age.
+- `order` (added in schema `2.12`) is the **curated chronological position**:
+  1-based, ascending, and unique within a dataset. It covers the post-natal
+  stages, which is the whole reason it exists — `wpc` is `null` for all of
+  them, so those tokens carry no other chronology, and the only remaining way
+  to sequence them is the stage *string*, which puts `elderly` before
+  `infant`. It is what orders the developmental series published on every gene
+  bundle: see
+  [`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
+  above.
+
+**Sort on `order` rather than trusting this array's own sequence.** The
+records in `datasets.json` are serialised straight from the curated file, so
+`stages` here arrives in the order a curator declared it. That matches `order`
+today and nothing enforces it to — the atlas checks that `order` is unique
+(`PRF011`) and does not contradict a stage's own `wpc` (`PRF012`), not that
+the block was typed in sequence. The gene bundle's stage array *is* sorted by
+`order`; this one is a curated record printed as written.
+
+Which is not academic: **this array's own sequence also moved in `2.12`.** The
+same commit that numbered the stages re-sequenced the eight post-natal ones in
+the curated file, so they now arrive `neonate` first rather than `adolescent`
+first. Every token and every `wpc` is unchanged — only the order is different,
+and only for the post-natal block.
+
+The committed corpus holds one dataset today, the `"profile"`-design
+`E-MTAB-6814` shown above. No `"contrast"`-design dataset has been curated
+yet, so every `contrasts` array a consumer meets here is empty.
 
 ## `cohorts.json`
 

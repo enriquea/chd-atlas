@@ -59,45 +59,70 @@ quantile_estimator: linear
 stages:
   - token: "4 week post conception"
     wpc: 4.0
+    order: 1
   - token: "5 week post conception"
     wpc: 5.0
+    order: 2
   - token: "6 week post conception"
     wpc: 6.0
+    order: 3
   - token: "7 week post conception"
     wpc: 7.0
+    order: 4
   - token: "8 week post conception"
     wpc: 8.0
+    order: 5
   - token: "9 week post conception"
     wpc: 9.0
+    order: 6
   - token: "10 week post conception"
     wpc: 10.0
+    order: 7
   - token: "11 week post conception"
     wpc: 11.0
+    order: 8
   - token: "12 week post conception"
     wpc: 12.0
+    order: 9
   - token: "13 week post conception"
     wpc: 13.0
+    order: 10
   - token: "16 week post conception"
     wpc: 16.0
+    order: 11
   - token: "18 week post conception"
     wpc: 18.0
+    order: 12
   - token: "19 week post conception"
     wpc: 19.0
+    order: 13
   # Post-natal: outside every cardiac morphogenetic phase by definition,
-  # which is a fact about the stage, not a missing value.
-  - token: "adolescent"
-    wpc: null
-  - token: "elderly"
-    wpc: null
-  - token: "infant"
-    wpc: null
-  - token: "middle adult"
-    wpc: null
+  # which is a fact about the stage, not a missing value. `wpc` is null for
+  # all eight, so `order` is the ONLY thing that puts them in time. The
+  # sequence below is ordinary human developmental order; it was published
+  # alphabetically -- adolescent, elderly, infant, middle adult, neonate,
+  # school age child, toddler, young adult -- until 2026-08-20.
   - token: "neonate"
     wpc: null
-  - token: "school age child"
+    order: 14
+  - token: "infant"
     wpc: null
+    order: 15
   - token: "toddler"
     wpc: null
+    order: 16
+  - token: "school age child"
+    wpc: null
+    order: 17
+  - token: "adolescent"
+    wpc: null
+    order: 18
   - token: "young adult"
     wpc: null
+    order: 19
+  - token: "middle adult"
+    wpc: null
+    order: 20
+  - token: "elderly"
+    wpc: null
+    order: 21
