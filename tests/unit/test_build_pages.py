@@ -2792,39 +2792,38 @@ def test_marker_fill_encodes_survival_of_the_studys_own_correction(
     The fixture carries one surviving and one non-surviving row, because a
     fixture whose rows all share the value under test measures nothing.
     """
-    section = _burden_section_text(
-        _burden_page(
-            tmp_path,
-            facts_uncurated,
-            [
-                _burden_row(
-                    cohort_stratum="all",
-                    effect=2.45,
-                    effect_bound=None,
-                    ci_low=1.2,
-                    ci_high=8.1,
-                    pvalue_adjusted=0.0037,
-                    pvalue_adjustment="benjamini_hochberg",
-                ),
-                _burden_row(
-                    cohort_stratum="syndromic",
-                    effect=3.1,
-                    effect_bound=None,
-                    ci_low=1.4,
-                    ci_high=9.0,
-                    pvalue_adjusted=0.42,
-                    pvalue_adjustment="benjamini_hochberg",
-                ),
-                _burden_row(
-                    cohort_stratum="nonsyndromic",
-                    effect=4.2,
-                    effect_bound=None,
-                    ci_low=1.9,
-                    ci_high=11.0,
-                ),
-            ],
-        )
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            _burden_row(
+                cohort_stratum="all",
+                effect=2.45,
+                effect_bound=None,
+                ci_low=1.2,
+                ci_high=8.1,
+                pvalue_adjusted=0.0037,
+                pvalue_adjustment="benjamini_hochberg",
+            ),
+            _burden_row(
+                cohort_stratum="syndromic",
+                effect=3.1,
+                effect_bound=None,
+                ci_low=1.4,
+                ci_high=9.0,
+                pvalue_adjusted=0.42,
+                pvalue_adjustment="benjamini_hochberg",
+            ),
+            _burden_row(
+                cohort_stratum="nonsyndromic",
+                effect=4.2,
+                effect_bound=None,
+                ci_low=1.9,
+                ci_high=11.0,
+            ),
+        ],
     )
+    section = _burden_section_text(page)
 
     assert "chart-point-open" in section
     assert 'class="chart-point"' in section
@@ -2834,6 +2833,14 @@ def test_marker_fill_encodes_survival_of_the_studys_own_correction(
     assert figure.count('class="chart-point"') == 1
     assert figure.count('class="chart-point-open"') == 2
     assert "did not survive" in figure
+    # And the hollow form resolves to a visibly different paint, asserted on
+    # the published stylesheet exactly as the arrow half asserts its own
+    # (CLAUDE.md section 4.31: a guard on one of a pair is evidence about
+    # one). `.chart-arrow-open` was pinned here and `.chart-point-open` was
+    # not, in the release that cites this rule -- and pointing it at
+    # `var(--link)` leaves all 604 hollow circles on the site indistinguishable
+    # from the 250 filled ones.
+    assert ".chart-point-open { fill: var(--bg); stroke: var(--link); stroke-width: 1.6; }" in page
 
 
 def test_a_gene_with_no_plottable_row_gets_a_sentence_and_no_chart(

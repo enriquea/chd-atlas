@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from typing import Final
 
 import pytest
 
@@ -150,3 +151,94 @@ def test_the_chart_stylesheet_names_no_colour_of_its_own() -> None:
     assert chart_rules, "no chart rules found; this guard would pass vacuously"
     offenders = [rule for rule in chart_rules if re.search(r"#[0-9a-fA-F]{3,8}\b", rule)]
     assert offenders == [], f"chart CSS hardcodes a colour instead of a token: {offenders}"
+
+
+# Which declarations carry an encoding a reader can see. `stroke-width` and
+# `stroke-dasharray` are deliberately absent: they are shape, and a chart may
+# distinguish two marks by weight alone without either resolving a colour.
+_PAINT: Final = ("fill", "stroke")
+_COLOURED: Final = (*_PAINT, "color", "background")
+
+_RULE = re.compile(r"(\.(?:chart|spark|forest)[^{}]*)\{([^}]*)\}")
+_TOKEN = re.compile(r"var\((--[a-z-]+)\)")
+
+
+def _chart_rules() -> dict[str, dict[str, str]]:
+    """Every chart rule in `STYLESHEET`, as `{selector: {property: value}}`."""
+    rules: dict[str, dict[str, str]] = {}
+    for selector, body in _RULE.findall(STYLESHEET):
+        declarations = {}
+        for declaration in body.split(";"):
+            name, sep, value = declaration.partition(":")
+            if sep:
+                declarations[name.strip()] = value.strip()
+        rules[selector.strip()] = declarations
+    return rules
+
+
+def test_every_chart_mark_resolves_a_paint_and_no_two_meanings_share_one() -> None:
+    """The stylesheet *is* the encoding, and only its hex-freedom was guarded.
+
+    `test_the_chart_stylesheet_names_no_colour_of_its_own` above greps for a
+    literal `#`, so every rule below it can be gutted or collapsed into its
+    neighbour and the suite stays green. Two measurements from 2026-08-20, on
+    a build of the committed corpus:
+
+    * `.chart-point-open { fill: var(--bg) }` changed to `var(--link)` erases
+      the "did not survive its own study's correction" encoding for **all 604
+      hollow circles on the site**, leaving them identical to the 250 filled
+      ones. Its sibling `.chart-arrow-open` *is* pinned against a literal by
+      `test_an_arrow_carries_the_same_correction_fill_as_a_circle` -- guarded
+      on one of a pair, in the release that cites the other (CLAUDE.md
+      section 4.31).
+    * `.chart-label` losing its `fill` gives black text on a dark page for all
+      **2,289 labels**, which is precisely the defect the comment beside that
+      rule names: SVG `<text>` takes no `color`, only `fill`.
+
+    Four rules, structural rather than per-declaration, so a chart class added
+    later is covered without anyone remembering this test:
+
+    1. every paint resolves through a custom property or is `none` -- the
+       positive form of the hex grep, which a `fill: black` would satisfy;
+    2. every token named is one the palette actually declares, since a
+       misspelt `var(--lnk)` renders as nothing at all and no hex check sees
+       it;
+    3. every mark class declares a paint, which is what `.chart-label` lost;
+    4. the two hollow/solid pairs differ from their solid partners, which is
+       what makes the encoding impossible to collapse.
+    """
+    rules = _chart_rules()
+    assert rules, "no chart rules found; this guard would pass vacuously"
+    declared = set(re.findall(r"(--[a-z-]+):", STYLESHEET))
+
+    for selector, declarations in rules.items():
+        for name, value in declarations.items():
+            if name in _COLOURED and value != "none":
+                assert "var(" in value, f"{selector} sets {name} to a literal colour: {value}"
+            for token in _TOKEN.findall(value):
+                assert token in declared, f"{selector} resolves {token}, which no palette declares"
+
+    # `.chart` itself is layout only -- width, height, overflow -- and paints
+    # nothing; every other chart class names a mark and must colour it.
+    marks = {
+        selector: declarations
+        for selector, declarations in rules.items()
+        if selector.startswith(".chart-")
+    }
+    assert len(marks) > 8, f"only {len(marks)} mark classes found; the pattern has drifted"
+    for selector, declarations in marks.items():
+        assert any(name in declarations for name in _PAINT), (
+            f"{selector} declares no fill and no stroke, so it inherits the browser's black"
+        )
+
+    # A hollow mark is hollow: filled with the page's own background, never
+    # with the colour its solid partner uses. Both pairs, because a guard on
+    # one of a pair is evidence about one.
+    for solid, hollow in (
+        (".chart-point", ".chart-point-open"),
+        (".chart-arrow", ".chart-arrow-open"),
+    ):
+        assert rules[hollow]["fill"] == "var(--bg)", f"{hollow} is not drawn hollow"
+        assert rules[solid]["fill"] != rules[hollow]["fill"], (
+            f"{solid} and {hollow} are the same paint; the correction encoding is gone"
+        )
