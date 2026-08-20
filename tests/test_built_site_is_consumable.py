@@ -11,6 +11,7 @@ import pytest
 
 from chd_atlas.build.render import RESEARCH_USE_NOTICE
 from chd_atlas.build.runner import build_site
+from chd_atlas.corpus import load_curation
 
 REPO = Path(__file__).parent.parent
 
@@ -467,3 +468,69 @@ def test_every_geometry_the_pages_publish_has_coordinate_s_fixed_shape(site: Pat
             )
 
     assert total > len(gene_pages), f"only {total} geometry tokens over {len(pages)} pages"
+
+
+# Each `<rect class="chart-band">` a trajectory draws, paired with the phase
+# label its own `<title>` names. Anchored on the `<rect>` rather than on the
+# bare class name, because `render.STYLESHEET` is inlined verbatim into every
+# page and carries `.chart-band { ... }` — a `"chart-band" in page` check
+# passes on all 94 pages with every band deleted (CLAUDE.md section 4.35).
+_BAND = re.compile(r'<rect class="chart-band"[^>]*><title>([^<]*)</title>')
+
+
+def test_the_curated_phase_vocabulary_reaches_the_pages_it_is_drawn_on(site: Path) -> None:
+    """The wiring, not the renderer: `build_gene_pages(phases=...)` in `runner.py`.
+
+    Every page test hands `phases=` a fixture explicitly, so the keyword
+    `runner.py` actually passes was exercised by nothing. Measured 2026-08-20,
+    changing that one argument to `None` passed all 1,053 tests while changing
+    86 of 198 published files: **85 pages lost their trajectory entirely** and
+    30 of them gained, in bold, "This gene reads *below this dataset's
+    detection floor at every stage sampled* in whole heart (19 stages
+    sampled)" — including HGNC:10249, whose own bundle places 18 of those 19
+    heart stages against the percentile grid with the percentiles printed in
+    the table directly below. A false claim, on 30 pages, in bold, under a
+    green build. This repository's characteristic defect exactly.
+
+    Three assertions, because the wiring can fail in three ways and only the
+    first is the mutant above:
+
+    * bands are drawn at all — `phases=None` publishes zero;
+    * every label drawn is one a curator wrote in
+      `curation/cardiac_phases.yaml` — a renderer inventing its own phase
+      names would satisfy the first;
+    * the one phase whose end the source never states is banded nowhere.
+      `_banded_phases` refuses it and `CardiacPhaseFile.phases_for` refuses
+      it, and this is the only check that either rule survives the real
+      pipeline rather than a fixture. A band has to run to an edge, so
+      drawing one for `heart_looping` would assert in the encoding a reader
+      takes at a glance the very boundary `end_basis: not_stated` exists to
+      refuse.
+
+    Measured 2026-08-20 on the committed corpus: 85 gene pages, 4 bands each,
+    4 distinct labels of the 5 the vocabulary makes eligible.
+    `embryonic_heart_tube_morphogenesis` ends before this dataset's first
+    sampled stage, so it is eligible and unbanded — which is why the labels
+    are asserted as a non-empty subset rather than pinned to a literal set
+    that a second dataset would falsify.
+    """
+    phases = load_curation(REPO)[0].cardiac_phases
+    assert phases is not None, "the committed corpus has no phase vocabulary; fixture is broken"
+    curated = {phase.label for phase in phases.phases}
+    unended = {phase.label for phase in phases.phases if phase.end_wpc is None}
+    assert unended, "no unended phase is curated; the third assertion below is vacuous"
+
+    banded: set[str] = set()
+    pages_with_a_band = 0
+    for page in sorted((site / "genes").glob("HGNC_*.html")):
+        labels = _BAND.findall(page.read_text(encoding="utf-8"))
+        if labels:
+            pages_with_a_band += 1
+        banded.update(labels)
+
+    assert pages_with_a_band, "no page carries a phase band; the vocabulary reached no page"
+    assert banded <= curated, f"a band names a phase no curator wrote: {sorted(banded - curated)}"
+    assert banded, "bands were drawn with no phase named in any of them"
+    assert not banded & unended, (
+        f"a phase whose end the source never states is banded: {sorted(banded & unended)}"
+    )
