@@ -4294,15 +4294,18 @@ def test_a_chart_never_replaces_the_figures_it_summarises(tmp_path: Path) -> Non
 
 
 def _organ_panel(
-    *organs: tuple[str, tuple[float | None, ...]],
+    *organs: tuple[str, tuple[float | None | EllipsisType, ...]],
     stages: tuple[str, ...] = ("4wpc", "5wpc", "6wpc"),
     highest_in: str | None = "heart",
 ) -> ExpressionProfile:
     """Several organs measured across the same stages, each at its own magnitude.
 
-    A `float` is a median this dataset placed against its percentile grid; a
+    The same three states `_heart_series` carries, for the same reason. A
+    `float` is a median this dataset placed against its percentile grid; a
     `None` is a stage this organ was sampled at and not placed, below the
-    detection floor.
+    detection floor; `...` is a stage this dataset has **no row for that
+    organ** at, which is a third fact and breaks a panel's line with nothing
+    to show for it -- E-MTAB-6814's real shape, identically for every gene.
 
     Every stage carries a real `specificity`, unlike `_heart_series`: tau is
     what this panel exists to make visible, and `_small_multiples` draws
@@ -4316,14 +4319,15 @@ def _organ_panel(
             tissues=tuple(
                 _tissue_entry(
                     tissue=name,
-                    median=values[index] if values[index] is not None else 0.3,
+                    median=values[index] if isinstance(values[index], float) else 0.3,
                     unit="tpm",
-                    placement=_placement() if values[index] is not None else None,
+                    placement=_placement() if isinstance(values[index], float) else None,
                     not_placed_reason=(
-                        None if values[index] is not None else "below_detection_floor"
+                        None if isinstance(values[index], float) else "below_detection_floor"
                     ),
                 )
                 for name, values in organs
+                if values[index] is not ...
             ),
         )
         for index, token in enumerate(stages)
@@ -4434,6 +4438,102 @@ def test_small_multiples_are_absent_when_tau_is_undefined(tmp_path: Path) -> Non
     assert "chart-cardiac" not in section
     assert 'class="sparks"' not in section, "an empty frame is what D42 forbids"
     assert "only one organ was sampled" in section
+
+
+def test_the_spark_caption_names_both_ways_a_panel_line_breaks(tmp_path: Path) -> None:
+    """One of the two causes was named; the other is the commoner one.
+
+    The caption said a line breaks because "a stage below the floor" is not
+    drawn. A line also breaks where this dataset has **no row for that organ
+    at that stage**, and in a spark there is no tick, so the two are
+    pixel-for-pixel identical. Measured 2026-08-20 on the built corpus: **87
+    of the 92 genes have at least one panel split by a no-row stage** --
+    testis on 82 pages, heart on 72, forebrain on 69 -- and the caption
+    attributed every one of those gaps to the detection floor.
+
+    Both clauses conditional on the cause being in *this* gene's panels, and
+    four fixtures so no clause is measured only in the state where it fires.
+    """
+
+    def caption(*organs: tuple[str, tuple[float | None | EllipsisType, ...]]) -> str:
+        return _expression_section_text(
+            _expression_page(
+                tmp_path,
+                {GATA4: _organ_panel(*organs, stages=("4wpc", "5wpc", "6wpc", "7wpc"))},
+                _HEART_DATASET,
+            )
+        )
+
+    floor = "below this dataset's detection floor</strong>, which this atlas does not place"
+    no_row = "no row for that organ</strong> and nothing was measured to place"
+
+    below = caption(("heart", (50.0, None, 150.0, 275.0)), ("liver", (0.5, 1.2, 2.0, 2.4)))
+    assert floor in below
+    assert no_row not in below
+
+    missing = caption(("heart", (50.0, ..., 150.0, 275.0)), ("liver", (0.5, 1.2, 2.0, 2.4)))
+    assert no_row in missing
+    assert floor not in missing
+
+    both = caption(("heart", (50.0, None, 150.0, 275.0)), ("liver", (0.5, ..., 2.0, 2.4)))
+    assert floor in both
+    assert no_row in both
+
+    unbroken = caption(("heart", (50.0, 90.0, 150.0, 275.0)), ("liver", (0.5, 1.2, 2.0, 2.4)))
+    assert floor not in unbroken
+    assert no_row not in unbroken
+    # The sentence the two clauses hang off stays regardless: what is drawn
+    # is what this atlas placed, whether or not anything is missing.
+    assert "Only medians this dataset placed against its percentile grid are drawn" in unbroken
+
+
+def test_the_spark_caption_opens_with_a_claim_true_of_pages_that_drop_a_panel(
+    tmp_path: Path,
+) -> None:
+    """ "One panel per organ this dataset sampled for this gene" was false on
+    exactly the pages that then said so three sentences later.
+
+    Measured 2026-08-20 on the built corpus: the opening clause is on 91
+    pages and **25 of them also say "No panel is drawn for ..."**. The page
+    corrected itself, which is not the same as being right: the first
+    sentence is what a reader takes the grid to mean, and an organ dropped
+    for having nothing placed is exactly the organ they would otherwise
+    conclude was never looked at.
+
+    Asserted as a **negative on the built page** as well as a positive, which
+    is the assertion that fails when a deleted sentence comes back (CLAUDE.md
+    section 4.35), and against literals rather than the constant that
+    produced them (section 4.38).
+    """
+    opening = "One panel per organ with a placed measurement for this gene"
+    false_opening = "One panel per organ this dataset sampled for this gene"
+
+    complete = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: _SPARK_PANEL}, _HEART_DATASET)
+    )
+    dropped = _expression_section_text(
+        _expression_page(
+            tmp_path,
+            {
+                GATA4: _organ_panel(
+                    ("heart", (50.0, 150.0, 275.0)),
+                    ("kidney", (0.8, 1.0, 1.5)),
+                    # Sampled at every stage and placed at none: no panel.
+                    ("liver", (None, None, None)),
+                )
+            },
+            _HEART_DATASET,
+        )
+    )
+
+    assert "No panel is drawn for" not in complete
+    assert "No panel is drawn for liver" in dropped
+    assert opening in complete and opening in dropped
+    assert false_opening not in complete and false_opening not in dropped
+    # And the grid really did drop the panel, so the opening is being read
+    # against a page that has one fewer panel than the dataset has organs.
+    assert set(_spark_panels(complete)) == {"heart", "kidney", "liver"}
+    assert set(_spark_panels(dropped)) == {"heart", "kidney"}
 
 
 def test_a_spark_line_never_spans_a_stage_the_atlas_did_not_place(tmp_path: Path) -> None:

@@ -3161,9 +3161,16 @@ def _small_multiples(entry: DatasetProfileEntry, dataset: Dataset | None) -> str
 
     series: dict[str, list[tuple[int, float]]] = {}
     sampled_at: dict[str, int] = {}
+    # Kept whole, not just counted: `_spark_caption` has to tell a stage this
+    # dataset sampled and did not place from one it has no row for at all,
+    # and by the time a series is filtered to its placed points the two are
+    # the same absence. Handed down rather than re-derived, the reason
+    # `_adjacent_runs` takes its points beside its indices.
+    wholes: dict[str, list[tuple[int, str, float | None]]] = {}
     for tissue in _sampled_tissues(entry):
         whole = _tissue_medians(entry, tissue)
         sampled_at[tissue] = len(whole)
+        wholes[tissue] = whole
         series[tissue] = [(index, value) for index, _, value in whole if value is not None]
     drawn = [tissue for tissue in series if series[tissue]]
     if not drawn:
@@ -3201,7 +3208,7 @@ def _small_multiples(entry: DatasetProfileEntry, dataset: Dataset | None) -> str
             + f"<figcaption>{html.escape(tissue)}</figcaption></figure>"
         )
     undrawn = [tissue for tissue in series if not series[tissue]]
-    caption = _spark_caption(entry, drawn, undrawn, cardiac, low, high)
+    caption = _spark_caption(entry, drawn, undrawn, cardiac, low, high, wholes)
     return f'<div class="sparks">{panels}</div>{caption}'
 
 
@@ -3212,6 +3219,7 @@ def _spark_caption(
     cardiac: frozenset[str],
     low: float,
     high: float,
+    wholes: Mapping[str, Sequence[tuple[int, str, float | None]]],
 ) -> str:
     """What the grid of panels cannot say about itself, in words beside it.
 
@@ -3221,6 +3229,25 @@ def _spark_caption(
     figure makes and the one a reader cannot check by looking. The highlighted
     organ is this atlas's own declaration and not the source's, which is what
     admits the panel under D43. And an organ with no panel was still sampled.
+
+    **The opening clause said "one panel per organ this dataset sampled for
+    this gene", and 25 of the 91 pages carrying it went on to say "No panel is
+    drawn for ..." three sentences later.** A page that corrects itself is not
+    a page that is right: the first sentence is what a reader takes the grid
+    to mean, and an organ dropped for having nothing placed is exactly the
+    organ they would otherwise conclude was never looked at. It now says what
+    the grid actually is -- one panel per organ with a *placed* measurement --
+    so the sentence naming the dropped organs adds to it rather than
+    contradicting it.
+
+    **A line breaks for two reasons and only one was named.** The caption
+    attributed every gap to the detection floor; a panel's line also breaks
+    where this dataset has no row for that organ at that stage, and in a
+    spark there is no tick, so the two are pixel-for-pixel identical.
+    Measured 2026-08-20 on the built corpus: 87 of the 92 genes have at least
+    one panel split by a no-row stage -- testis on 82 pages, heart on 72,
+    forebrain on 69. Each cause is now its own clause, conditional on
+    occurring in this gene's panels, which is `_line_breaks`' whole purpose.
 
     **The cardiac clause has three positions and no blank one.** A panel where
     the declared cardiac tissue has nothing placed carries no highlight, and
@@ -3233,6 +3260,25 @@ def _spark_caption(
     conclude the atlas never declared one.
     """
     unit = html.escape(_dominant_unit(entry, set(drawn)))
+    below_floor = any(_line_breaks(wholes[tissue])[0] for tissue in drawn)
+    no_row = any(_line_breaks(wholes[tissue])[1] for tissue in drawn)
+    causes = []
+    if below_floor:
+        causes.append(
+            "a stage measured <strong>below this dataset's detection floor</strong>, which "
+            "this atlas does not place"
+        )
+    if no_row:
+        causes.append(
+            "a stage where this dataset has <strong>no row for that organ</strong> and "
+            "nothing was measured to place"
+        )
+    breaks = (
+        " Only medians this dataset placed against its percentile grid are drawn, so a line "
+        "breaks rather than running through " + ", and through ".join(causes) + "."
+        if causes
+        else " Only medians this dataset placed against its percentile grid are drawn."
+    )
     cardiac_drawn = [tissue for tissue in drawn if tissue in cardiac]
     if cardiac_drawn:
         marked = ", ".join(html.escape(tissue) for tissue in cardiac_drawn)
@@ -3260,15 +3306,13 @@ def _spark_caption(
     else:
         missing = ""
     return (
-        '<p class="method">One panel per organ this dataset sampled for this gene, each '
+        '<p class="method">One panel per organ with a placed measurement for this gene, each '
         "drawn left to right in curated developmental order &mdash; the horizontal axis is "
         "<strong>order, not elapsed time</strong>. <strong>Every panel shares one abundance "
         f"axis</strong> ({_fmt(low)} to {_fmt(high)} {unit}, log scale), which is what makes "
         "a gene concentrated in one organ look different from a broadly expressed one; a "
         "per-organ axis would rescale every line to its own range and hide exactly that "
-        f"difference.{highlight} Only medians this dataset placed against its percentile "
-        "grid are drawn, so a stage below the floor breaks a line rather than being drawn "
-        f"through.{missing} Every figure is in the table below.</p>"
+        f"difference.{highlight}{breaks}{missing} Every figure is in the table below.</p>"
     )
 
 
