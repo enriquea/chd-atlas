@@ -4448,6 +4448,65 @@ def test_a_gene_placed_at_one_stage_gets_markers_and_no_line(tmp_path: Path) -> 
     assert boundary.count('class="chart-point"') == 2
 
 
+def test_both_figures_hold_one_rule_about_a_line_through_two_points(
+    tmp_path: Path,
+) -> None:
+    """The trajectory and the sparkline must not contradict each other.
+
+    `_trajectory` refuses a line below `_STAGES_FOR_A_TRAJECTORY` because
+    "two would draw a segment claiming something about the interval between
+    them that two measurements do not support". `_small_multiples` drew that
+    segment anyway. Measured on the committed corpus 2026-08-21: **13 organ
+    series have exactly two placed points**, so the two figures published
+    opposite claims about the same two numbers -- TBX20/forebrain,
+    CRIPTO/liver, CRIPTO/forebrain, GATA5/hindbrain, CFC1/heart, DAW1/ovary,
+    MESP1/liver, FOXH1/kidney, MYBPC3/forebrain, MYBPC3/hindbrain,
+    MYH6/liver, MYH7/ovary, PRDM6/liver.
+
+    CFC1 was the sharp case: the trajectory drew 2 markers and no line, while
+    the heart panel -- drawn heavier as the declared cardiac tissue -- drew
+    `points="4.0,5.0 8.4,35.0"` from those same two medians.
+
+    **The fixture is the point.** Its predecessor asserted `"<polyline" not
+    in section` section-wide, which looks like it covers both figures; but it
+    declared one organ, so tau was undefined, `_small_multiples` returned
+    `""`, and the second figure was never in the string being asserted on.
+    This one samples two organs so both figures render, which is the only
+    reason the assertion means anything (CLAUDE.md 4.36).
+    """
+    two_placed = _organ_panel(
+        ("aorta", (5.0, 40.0, None)),
+        ("liver", (1.0, 2.0, 4.0)),
+        highest_in="aorta",
+        phase=_phase_info(phase_ids=("atrial_septum_morphogenesis",)),
+    )
+    section = _expression_section_text(
+        _expression_page(
+            tmp_path, {GATA4: two_placed}, _MANY_CARDIAC_DATASET, phases=_cardiac_phases()
+        )
+    )
+
+    assert 'class="sparks"' in section, "the second figure did not render; the fixture is blind"
+
+    # Scoped to the organ under test, never page-wide: liver has three placed
+    # medians and *should* draw a line, so a section-wide "no polyline" check
+    # would fail for the right reason on the wrong panel (CLAUDE.md 4.19).
+    panels = _spark_panels(section)
+    assert "<polyline" not in panels["aorta"], (
+        "the panel drew a line through two points while the trajectory beside "
+        "it refused; see the 13 organ series named above"
+    )
+    assert panels["aorta"].count("<circle") == 2, (
+        "aorta's two placed medians should be two marks, not one segment"
+    )
+    assert "<polyline" in panels["liver"], (
+        "three placed points is a trajectory; gating them too would be the opposite defect"
+    )
+    assert "<polyline" not in _trajectory_figure(section), (
+        "the trajectory's own rule must be unchanged by this fix"
+    )
+
+
 @pytest.mark.parametrize(
     ("reason", "present", "absent"),
     [

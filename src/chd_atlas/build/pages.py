@@ -3454,10 +3454,24 @@ def _small_multiples(entry: DatasetProfileEntry, dataset: Dataset | None) -> str
             (_spark_x(index, count), _SPARK_BOTTOM - scale.x(value)) for index, value in placed
         ]
         css = "chart-cardiac" if tissue in cardiac else "chart-control"
+        # The same floor `_trajectory` applies, and for the same stated
+        # reason: two measurements do not support a claim about the interval
+        # between them. This panel drew that segment anyway until 2026-08-21,
+        # so the two figures on one page published opposite claims about one
+        # pair of numbers -- measured, 13 organ series, and on CFC1 the
+        # trajectory drew two bare markers while the heart panel beside it,
+        # drawn heavier as the declared cardiac tissue, joined them.
+        #
+        # Gated on the organ's whole placed series rather than per run, again
+        # matching `_trajectory`: a run of two inside a longer series is a
+        # segment between two adjacent measurements of a trend the series
+        # already evidences, which is a different claim from a two-point
+        # series being a trend on its own.
+        enough = len(placed) >= _STAGES_FOR_A_TRAJECTORY
         body = "".join(
             polyline(run, css_class=css)
-            if len(run) >= 2
-            else marker(run[0][0], run[0][1], css_class=css)
+            if enough and len(run) >= 2
+            else "".join(marker(x, y, css_class=css) for x, y in run)
             for run in _adjacent_runs(placed, points)
         )
         role = (
