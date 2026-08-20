@@ -4670,8 +4670,11 @@ def _trajectory_organs(section: str) -> list[str]:
 
     Matched on the trajectory's own 560x150 `viewBox` rather than on `<svg`,
     for the reason `_trajectory_figure` is (CLAUDE.md section 4.19): the organ
-    small multiples are 96x40 `<svg>`s in the same section, carry titles
-    beginning with the same six words, and would answer an unscoped search.
+    small multiples are 96x40 `<svg>`s in the same section, and a *cardiac*
+    organ's panel opens `Median abundance in whole <organ>,` exactly as its
+    trajectory does -- identical through the comma this pattern stops at. An
+    unscoped search would return every cardiac organ twice, interleaved in an
+    order the trajectories do not decide.
     """
     return re.findall(
         r'<svg class="chart" viewBox="0 0 560 150"[^>]*><title>'
