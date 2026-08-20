@@ -2274,9 +2274,12 @@ def _names(ids: Sequence[str], cohorts: Mapping[str, Cohort]) -> str:
 #
 # The proxy was wrong in both directions. It forbade the phase-banded
 # trajectory, which no external browser has, while permitting the rendering
-# that hid a live defect for three releases: stages published in alphabetical
-# order, 4 wpc eighth, because 21 individually-correct blocks cannot show a
-# trajectory and therefore cannot show a scrambled one.
+# that hid a live defect for the whole life of schema 2.11: stages published
+# in alphabetical order, 4 wpc eighth, because 21 individually-correct blocks
+# cannot show a trajectory and therefore cannot show a scrambled one. (This
+# read "for three releases" until 2026-08-21; the profiles mirror landed on
+# 2026-08-19 and nothing published a stage array before it, so 2.11 is the
+# only version that ever carried the defect. See `manifest.py`'s 2.12 note.)
 #
 # A bare heart curve IS what the source's own browser shows and remains
 # forbidden. The same curve banded by this atlas's own cardiac-phase

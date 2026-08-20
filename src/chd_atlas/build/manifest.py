@@ -295,9 +295,20 @@ from chd_atlas.corpus import Corpus
 # alphabetically: `4 week post conception` published eighth, after `19 week post
 # conception`, and `elderly` second of the eight post-natal stages.
 # Deterministic, reproducible, byte-identical between builds, and wrong -- a
-# developmental time series published in dictionary order. It survived three
-# releases because nothing asserted a chronology and no published artifact drew
-# one.
+# developmental time series published in dictionary order.
+#
+# **Through 2.11 means under 2.11 and no other version.** This paragraph read
+# "it survived three releases" until 2026-08-21, in the same breath as the
+# sentence above that names the single version. Measured: the profiles mirror
+# was first committed on 2026-08-19 (`git log --diff-filter=A -- mirrors/
+# profile*`), at which commit `SCHEMA_VERSION` was already 2.11; before it,
+# every gene bundle's `expression_profile` was `{"datasets": []}` and no stage
+# array was published at all. The order was wrong for one schema version,
+# promoted to `main` on the day the mirror landed and corrected the next.
+#
+# It survived that version because nothing asserted a chronology and no
+# published artifact drew one -- which is the part worth keeping, and does not
+# need an inflated count to be alarming.
 #
 # MINOR by the rule, for the reason 2.2's population change was MINOR: no field
 # is added, removed or reshaped, every entry still carries every key 2.11
