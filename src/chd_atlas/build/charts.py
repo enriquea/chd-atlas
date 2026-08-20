@@ -138,9 +138,11 @@ def polyline(points: Sequence[tuple[float, float]], *, css_class: str) -> str:
 
     Refuses fewer than two points. One point is not a line, and a renderer that
     quietly emitted a zero-length polyline for a gene measured at a single
-    stage would draw a trend from one measurement -- one published gene is
-    placed at 1 of 19 stages in the committed corpus, so this is a live case
-    and not a hypothetical.
+    stage would draw a trend from one measurement. Live case, not
+    hypothetical: measured 2026-08-20 on the committed corpus, FOXH1 and
+    TFAP2B are each placed in heart at 1 of the 19 stages this dataset samples
+    heart at, and 18 of the 581 (gene, organ) series with anything placed at
+    all have exactly one placed point.
     """
     if len(points) < 2:
         raise ValueError(f"a polyline needs at least two points, got {len(points)}")

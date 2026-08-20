@@ -304,7 +304,8 @@ STYLESHEET: Final = """
   .chart-control-arrow { fill: var(--muted); }
   .chart-union { fill: var(--muted); font-size: 0.55rem; }
   /* SVG `<text>` takes no `color`, only `fill`, so a label with neither
-     renders black on a dark page. The one text class the charts use. */
+     renders black on a dark page. Every `<text>` the charts emit carries this
+     class; the `<tspan>` rule above is the other one that sets a text fill. */
   .chart-label { fill: var(--fg); font-size: 0.6rem; }
   /* One marker a forest plot might want is deliberately absent from the list
      above; `build/charts.py` names it and says why, and says it there rather

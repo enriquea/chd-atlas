@@ -1530,8 +1530,11 @@ def _effect_compact(row: BurdenRow) -> str:
 # rows: PMID:42230622 publishes an interval on 100% of its 704 rows and
 # PMID:40127276 on 0% of its 150 -- and PMID:40127276 is the study with the
 # findings that survive correction. On TBX5 it reports de novo loss-of-function
-# enriched 297x at q 5.6e-08, while all eight of PMID:42230622's TBX5 intervals
-# cross 1 and none survives any correction. Drawing only where an interval
+# enriched 297x at q 5.6e-08, while none of PMID:42230622's eight TBX5 rows
+# carries a corrected p at all: seven of their intervals cross 1, and the
+# eighth is the study's own negative control running the wrong way -- the
+# non-syndromic synonymous row, OR 0.251 (95% CI 0.030-0.924, p 0.0375),
+# entirely below 1. Drawing only where an interval
 # exists would put a picture of the null result on the page and leave the
 # surviving finding as text -- curated evidence visually demoted, which is this
 # repository's characteristic failure in a new medium.
@@ -1856,10 +1859,18 @@ def _forest_interval(row: BurdenRow, y: float, scale: LogScale) -> str:
     """The row's published interval, or the statement that there is none.
 
     A row with neither bound gets a hatched bar spanning the whole axis, not a
-    short one and not nothing: 150 of the 915 published rows are in that state
-    and they include every finding that survives a correction. A short bar
-    would invent a precision the study never claimed, and no bar at all would
-    make the strongest rows on the site the faintest marks on it.
+    short one and not nothing. Measured 2026-08-20 over the 915 published rows:
+    211 publish neither bound, and every one of the 55 rows carrying an
+    adjusted p below 0.05 is among them. A short bar would invent a precision
+    the study never claimed, and no bar at all would make the strongest rows on
+    the site the faintest marks on it.
+
+    Only 150 of those 211 reach a panel at all -- the other 61 are
+    PMID:34324492's, which publish no effect measure either, so `_plottable`
+    refuses them before this is called. The two figures are not the same
+    quantity and must not be written as one: 10 of the 55 surviving rows are in
+    the 61, so "the plottable subset holds every surviving finding" is false
+    while "the rows with no interval do" is true.
 
     A bound that is absent or zero resolves to the axis edge, where
     `_forest_estimate` has already drawn the arrow that says the row runs past
@@ -2543,9 +2554,17 @@ _AXIS_LABEL_DROP: Final = 3.4
 # pixel. One decade centred on the value is the substitute: half a decade
 # either side puts a flat series in the middle of the plot, where it reads as
 # "one value, no range", instead of pinned to the floor or the ceiling, where
-# it would read as low or high against a scale nothing else occupies. Live
-# case, not hypothetical -- 3 of 92 published genes are placed at fewer than
-# two heart stages.
+# it would read as low or high against a scale nothing else occupies.
+#
+# **The condition is equal values, not few of them**, and the two are easy to
+# write as one because they overlap. Measured 2026-08-20 on the committed
+# corpus, three genes reach this branch on their heart trajectory: FOXH1 (one
+# placed stage, 2 tpm), TFAP2B (one placed stage, 1 tpm) and MMP21 -- which is
+# placed at *three* stages, all of them 1.0 tpm. A count of genes with few
+# placed stages would be a different set: 9 of the 92 are placed at fewer than
+# two heart stages, and 7 of those 9 place nothing at all and draw no chart to
+# scale. No gene reaches this branch through `_small_multiples`, whose axis
+# pools every drawn organ.
 _FLAT_SERIES_SPAN: Final = 10.0**0.5
 
 
@@ -2690,9 +2709,20 @@ def _banded_phases(
     stays true of the *picture* even if some later caller assembles
     `phase_ids` another way. A guard added to one layer is not a guard.
 
-    Sorted by phase id so two builds of one commit emit the same bytes: this
-    walks a dict built from a nested loop, which `sort_keys` in the JSON
-    encoder has nothing to say about.
+    Sorted by phase id -- and **not as a determinism guard**, which is what
+    this sentence claimed until it was measured. `covered` is a dict, filled
+    by walking a list of stages and, inside each, `phase_ids` in the
+    `(start_wpc, id)` order `phases_for` fixes; no `set` is iterated anywhere,
+    so its own key order is already reproducible. Measured 2026-08-20 over six
+    explicit `PYTHONHASHSEED` values (0, 1, 7, 42, 12345, 99991): one distinct
+    build with the sort and one without.
+
+    What the sort does buy is that the band order is a function of the covered
+    ids alone rather than of the stage walk that found them, so it does not
+    move when a dataset's stage list does. The two orders are genuinely
+    different: dropping the sort changed 85 gene pages and the manifest, and
+    reversing this dataset's 21 stages reorders the unsorted one while leaving
+    the sorted one alone.
     """
     if phases is None:
         return []
@@ -3113,14 +3143,20 @@ def _small_multiples(entry: DatasetProfileEntry, dataset: Dataset | None) -> str
 
     **The shared axis is the whole point.** τ answers "is this gene
     concentrated in one organ, and which" -- and this section stated it as a
-    number restated once per stage, 19 times on the TBX5 page with only the
-    figure changing. Per-organ axes would rescale each line to its own range
-    and draw seven similar-looking traces, which is the same non-answer in a
-    picture. One axis is what makes τ = 0.96 legible: measured 2026-08-20 on
-    the committed corpus, TBX5's heart medians run 5 to 275 tpm while the six
-    other organs it places at all reach 3.0, so heart sits a decade and a half
-    above everything else on a shared scale and nowhere in particular on seven
-    private ones.
+    number restated once per stage, 19 times on the TBX5 page (its other two
+    stages carry no τ) with only the figure changing. Per-organ axes would
+    rescale each line to its own range and draw five similar-looking traces,
+    which is the same non-answer in a picture.
+
+    One axis is what makes a τ of 0.80 to 1.00 -- TBX5's range across those 19
+    stages -- legible as a place rather than a number. Measured 2026-08-20 on
+    the committed corpus: TBX5's heart medians run 5 to 275 tpm, and the four
+    non-heart organs it places anything in peak at forebrain 2, ovary 3,
+    testis 4 and liver 12, so heart's peak sits 22.9x -- 1.36 decades -- above
+    the highest of them. **Not "above everything else": heart's own minimum,
+    5 tpm at middle adult, is below liver's 12.** The panels are what shows
+    that, and seven private axes would show none of it. TBX5 draws five of
+    them; hindbrain and kidney place nothing and the caption names them.
 
     `data-scale-high` is emitted from the axis itself rather than recomputed,
     so a build that gave each organ its own scale would publish a different
@@ -3348,7 +3384,20 @@ def _dataset_block(
     section rendered 21 near-identical blocks per dataset, one per stage, and
     59% of its text was verbatim repetition -- "below the detection floor in
     whole liver at this stage (detection floor 1 tpm)" appeared 20 times on
-    the TBX5 page. A chart that *replaced* them would take every exact figure
+    the TBX5 page.
+
+    **A bare percentage is not reproducible, so here is the method that
+    produced that one.** Build `dev`, take the TBX5 page from
+    `<h2>Developmental expression</h2>` to the end, replace every tag with a
+    newline (which puts each table cell on its own line), strip and drop
+    blanks, and count the words in lines that duplicate an earlier line:
+    1,854 of 3,136 words over 513 lines, 146 of them distinct -- 59.1%. Other
+    ways of asking the same page give very different answers, none of them
+    wrong: 12% of its characters sit inside a repeated *sentence*, and 89% of
+    its tokens sit inside a repeated 4-gram. The figure is about *lines*, and
+    the lines are mostly table cells.
+
+    A chart that *replaced* them would take every exact figure
     out of the HTML, which is this repository's characteristic defect (curated
     work reaching no page) wearing a redesign. The summary is what a reader
     sees first; the record is one click away and still complete.
