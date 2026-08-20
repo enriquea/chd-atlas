@@ -385,3 +385,83 @@ def test_a_gene_an_authority_reported_no_association_for_says_so_in_both_payload
     for bundle_path in sorted((site / "genes").glob("HGNC_*.json")):
         payload = json.loads(bundle_path.read_text(encoding="utf-8"))
         assert payload["has_no_association_report"] == bool(payload["no_association_reported_by"])
+
+
+# Every attribute the chart renderers position anything with. `points` and
+# `viewBox` hold several numbers each and are split on whitespace and commas.
+_GEOMETRY_ATTRIBUTES = (
+    "data-scale-high",
+    "viewBox",
+    "height",
+    "points",
+    "width",
+    "x1",
+    "x2",
+    "y1",
+    "y2",
+    "cx",
+    "cy",
+    "x",
+    "y",
+    "r",
+)
+# Longest-first, so `x1="..."` is never half-matched as `x`.
+_GEOMETRY = re.compile(r"\b(?:" + "|".join(_GEOMETRY_ATTRIBUTES) + r')="([^"]*)"')
+
+# What `charts.coordinate` produces: an integer, or an integer and exactly one
+# decimal place. A raw `repr` reaches `0.30000000000000004` and `1e-05`.
+_FIXED_PRECISION = re.compile(r"^-?\d+(\.\d)?$")
+
+
+def test_every_geometry_the_pages_publish_has_coordinate_s_fixed_shape(site: Path) -> None:
+    """`coordinate` is pinned; that it is *used* was not, until 2026-08-20.
+
+    `test_build_charts.py::test_coordinates_are_fixed_precision_so_two_builds_
+    agree` proves the function rounds. It cannot prove any renderer calls it,
+    so a new chart interpolating a raw float -- the ordinary way to write an
+    SVG attribute -- passes every test in this repository while publishing
+    `y="43.33333333333333"`. That is the whole reason `coordinate` exists:
+    binary floating point is not identical across platforms at the last bits,
+    so a raw repr makes two builds of one commit differ by architecture while
+    every checksum still verifies against itself.
+
+    Scanned off the built pages rather than off the source, for the reason
+    CLAUDE.md section 4.35 gives: the question is what a reader's browser
+    receives, and `grep` over `src/` answers a different one -- these strings
+    are assembled from adjacent literals and f-strings that no source-level
+    search reconstructs.
+
+    Measured 2026-08-20 over a real build: 94 pages, 41,833 geometry tokens,
+    0 non-conforming.
+
+    **The count is derived, never pinned to a literal**, for the reason
+    `test_every_html_page_the_build_writes_carries_the_research_use_notice`
+    derives its own: a scan matching nothing satisfies a loop vacuously, and a
+    literal total is re-edited every time the population moves. Every gene page
+    must carry geometry -- measured, all 92 do, though not all for the same
+    reason: GDF1 draws three forest panels and no organ chart at all, and
+    CFC1's 138 tokens are the fewest. The landing and browse pages carry none
+    today and are scanned anyway, so a chart added to either is covered
+    without anyone remembering this test.
+    """
+    pages = sorted(site.rglob("*.html"))
+    gene_pages = sorted((site / "genes").glob("HGNC_*.html"))
+    assert len(gene_pages) > 1, "the build published no gene pages; the fixture is broken"
+
+    total = 0
+    for page in pages:
+        tokens = [
+            token
+            for value in _GEOMETRY.findall(page.read_text(encoding="utf-8"))
+            for token in value.replace(",", " ").split()
+        ]
+        if page in gene_pages:
+            assert tokens, f"{page.relative_to(site)} publishes no geometry at all"
+        total += len(tokens)
+        for token in tokens:
+            assert _FIXED_PRECISION.match(token), (
+                f"{page.relative_to(site)} publishes the geometry {token!r}, which did not "
+                "come through charts.coordinate -- two builds on two platforms can differ"
+            )
+
+    assert total > len(gene_pages), f"only {total} geometry tokens over {len(pages)} pages"
