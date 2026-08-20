@@ -4313,6 +4313,7 @@ def _organ_panel(
     *organs: tuple[str, tuple[float | None | EllipsisType, ...]],
     stages: tuple[str, ...] = ("4wpc", "5wpc", "6wpc"),
     highest_in: str | None = "heart",
+    phase: PhaseInfo | None = None,
 ) -> ExpressionProfile:
     """Several organs measured across the same stages, each at its own magnitude.
 
@@ -4326,11 +4327,17 @@ def _organ_panel(
     Every stage carries a real `specificity`, unlike `_heart_series`: tau is
     what this panel exists to make visible, and `_small_multiples` draws
     nothing for a dataset that reports none.
+
+    `phase` defaults to `_phase_info()`, whose id is not in `_cardiac_phases()`
+    -- so a panel built here draws no trajectory unless a caller asks for a
+    phase the vocabulary actually names. That default is what every test
+    written before the trajectory landed relies on; pass one to get bands.
     """
     names = tuple(name for name, _ in organs)
     entries = tuple(
         _stage_entry(
             stage=token,
+            phase=phase,
             specificity=_specificity(tissues=names, highest_in=highest_in),
             tissues=tuple(
                 _tissue_entry(
@@ -4600,3 +4607,153 @@ def test_an_organ_with_nothing_placed_is_named_rather_than_silently_dropped(
 
     assert set(_spark_panels(section)) == {"heart", "liver"}
     assert "No panel is drawn for kidney" in section
+
+
+# --- The order every cardiac organ is named in (CLAUDE.md section 4.36) ------
+#
+# `_stage_details` builds `cardiac` as a `frozenset`, and three places walk it:
+# the trajectory charts, `_sampled_cardiac`'s sentence and `_spark_caption`'s
+# "this atlas declares" clause. All three sort it, and until 2026-08-20 nothing
+# could tell. `Dataset.cardiac_tissues` has exactly one member on the committed
+# corpus and every fixture above declares one, so a one-element set iterates in
+# one order under every seed: replacing all three `sorted(cardiac)` calls with
+# a bare `cardiac` left the build byte-identical under two seeds and the whole
+# suite green.
+#
+# **Seven organs, and the number is measured rather than chosen.** A `frozenset`
+# of *two* names iterates in sorted order about half the time, so a two-organ
+# fixture would catch a dropped sort on roughly half of CI's random seeds --
+# which is not a guard (section 4.12). Measured 2026-08-20 by constructing
+# `frozenset(names)` under 400 explicit `PYTHONHASHSEED` values and counting how
+# often it iterates pre-sorted:
+#
+#     2 names (atrium, ventricle)                 197/400   49.2%
+#     3 names (aorta, heart, ventricle)            53/400   13.2%
+#     4 names (+ atrium)                           17/400    4.2%
+#     5 names (+ myocardium, endocardium)           6/400    1.5%
+#     6 names (+ septum)                            2/400    0.5%
+#     7 names (+ epicardium)   <- these seven       0/400    0.0%
+#
+# Widening the fixture is the cheap half of section 4.42's remedy and the whole
+# of it here, because the rate reaches zero at a size a real dataset could
+# plausibly declare. Re-measure rather than cite this if the names change: the
+# rate is a property of the exact strings, not of the count.
+_CARDIAC_ORGANS: tuple[str, ...] = (
+    "ventricle",
+    "aorta",
+    "septum",
+    "myocardium",
+    "endocardium",
+    "atrium",
+    "epicardium",
+)
+
+# Declared above in a deliberately unsorted order, so a renderer walking
+# `Dataset.cardiac_tissues` itself rather than the sorted frozenset fails too.
+_CARDIAC_ORGANS_SORTED: tuple[str, ...] = (
+    "aorta",
+    "atrium",
+    "endocardium",
+    "epicardium",
+    "myocardium",
+    "septum",
+    "ventricle",
+)
+
+_MANY_CARDIAC_DATASET = {"E-MTAB-6814": _profile_dataset(cardiac_tissues=_CARDIAC_ORGANS)}
+
+
+def _trajectory_organs(section: str) -> list[str]:
+    """Every trajectory's organ, in the order the section draws them.
+
+    Matched on the trajectory's own 560x150 `viewBox` rather than on `<svg`,
+    for the reason `_trajectory_figure` is (CLAUDE.md section 4.19): the organ
+    small multiples are 96x40 `<svg>`s in the same section, carry titles
+    beginning with the same six words, and would answer an unscoped search.
+    """
+    return re.findall(
+        r'<svg class="chart" viewBox="0 0 560 150"[^>]*><title>'
+        r"Median abundance in whole ([^,]+),",
+        section,
+    )
+
+
+def test_the_trajectories_are_drawn_in_one_order_whatever_the_frozenset_does(
+    tmp_path: Path,
+) -> None:
+    """Seven cardiac organs, every one of them charted, pinned to a literal.
+
+    Against a literal rather than `sorted(_CARDIAC_ORGANS)`, for the reason
+    `test_build_landing.py` pins published wording against literals (section
+    4.38): a test that computes its own expectation from the same expression
+    the code uses compares the module to itself and passes for any ordering
+    both agree on.
+    """
+    profile = _organ_panel(
+        *((organ, (5.0, 40.0, 275.0)) for organ in _CARDIAC_ORGANS),
+        highest_in="ventricle",
+        phase=_phase_info(phase_ids=("atrial_septum_morphogenesis",)),
+    )
+    section = _expression_section_text(
+        _expression_page(
+            tmp_path, {GATA4: profile}, _MANY_CARDIAC_DATASET, phases=_cardiac_phases()
+        )
+    )
+
+    assert _trajectory_organs(section) == [
+        "aorta",
+        "atrium",
+        "endocardium",
+        "epicardium",
+        "myocardium",
+        "septum",
+        "ventricle",
+    ]
+
+
+def test_both_sentences_that_list_every_cardiac_organ_list_them_in_one_order(
+    tmp_path: Path,
+) -> None:
+    """The two orders a page states in words rather than in geometry.
+
+    One fixture, because the two sentences are published together and only
+    together: `_no_trajectory_sentence` renders exactly when no cardiac organ
+    has a trajectory, and `_spark_caption`'s "this atlas declares" clause
+    exactly when no cardiac organ has a panel either. Every cardiac organ here
+    is sampled and below the floor; liver is placed, so the small multiples
+    still draw and the caption still has something to caption.
+
+    Both are asserted as one substring apiece rather than as a set of names,
+    because the defect is the *order* and a membership check cannot see it.
+    """
+    profile = _organ_panel(
+        *((organ, (None, None, None)) for organ in _CARDIAC_ORGANS),
+        ("liver", (0.5, 1.2, 2.0)),
+        highest_in="liver",
+    )
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: profile}, _MANY_CARDIAC_DATASET)
+    )
+
+    assert (
+        "whole aorta (3 stages sampled), whole atrium (3 stages sampled), "
+        "whole endocardium (3 stages sampled), whole epicardium (3 stages sampled), "
+        "whole myocardium (3 stages sampled), whole septum (3 stages sampled), "
+        "whole ventricle (3 stages sampled)"
+    ) in section
+    assert (
+        "this atlas declares aorta, atrium, endocardium, epicardium, myocardium, "
+        "septum, ventricle this dataset's cardiac tissues"
+    ) in section
+    assert sorted(_spark_panels(section)) == ["liver"], (
+        "a cardiac organ drew a panel, so the caption's other branch was taken"
+    )
+
+    # The third list in the same caption, from `_sampled_tissues`' own sort
+    # over a `set` of the organs the payload names -- a different frozen
+    # collection with the same failure mode, and the same eight-name fixture
+    # measures 0/400 pre-sorted.
+    assert (
+        "No panel is drawn for aorta, atrium, endocardium, epicardium, myocardium, "
+        "septum, ventricle:"
+    ) in section
