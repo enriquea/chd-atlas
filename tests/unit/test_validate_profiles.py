@@ -909,8 +909,89 @@ def test_prf012_is_silent_when_only_post_natal_stages_lack_wpc() -> None:
     assert issues == []
 
 
+def test_prf014_refuses_a_post_natal_stage_ordered_before_a_prenatal_one() -> None:
+    """The half of the chronology PRF012 cannot reach, by construction.
+
+    PRF012 compares `order` against `wpc` only across stages carrying both,
+    and every post-natal stage has `wpc: null` by definition -- so nothing
+    constrained where the post-natal block sorted relative to the prenatal
+    one. Measured 2026-08-20 on the committed corpus: renumbering
+    E-MTAB-6814's eight post-natal tokens to `order` 1-8 and its thirteen
+    prenatal tokens to 9-21 validated **0 errors, 4 warnings**, codes
+    byte-identical to the clean baseline, and TBX5's chart then published
+    "Median abundance in whole heart, neonate to 19 week post conception"
+    with the septation bands on the right half of the axis.
+
+    An ERROR for PRF012's own reason: a curated record contradicts itself, so
+    there is no reading of it that is true. `Stage.wpc`'s documented meaning
+    is that a null is post-natal -- a fact about the stage, not a missing
+    value -- and post-natal is after prenatal. That implication was written in
+    the model's docstring and enforced nowhere.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="neonate")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    # Declared elderly-before-neonate on purpose: `order` and
+                    # declaration order disagree, so a dropped sort inside
+                    # `_prf014_issues` reverses the pair below rather than
+                    # merely reproducing it.
+                    {"token": "elderly", "wpc": None, "order": 2},
+                    {"token": "neonate", "wpc": None, "order": 1},
+                    {"token": "4wpc", "wpc": 4.0, "order": 3},
+                    {"token": "19wpc", "wpc": 19.0, "order": 4},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+
+    assert [issue.code for issue in issues] == ["PRF014", "PRF014"]
+    assert all(issue.severity is Severity.ERROR for issue in issues)
+    # One per offending post-natal stage, in `order` -- not in the record's
+    # declaration order, which the fixture deliberately disagrees with -- and
+    # each naming the latest dated stage it claims to precede: a curator
+    # fixing this needs to know which token moved, not merely that one did.
+    assert "'neonate'" in issues[0].message
+    assert "'elderly'" in issues[1].message
+    for issue in issues:
+        assert "'19wpc'" in issue.message
+        assert "19.0 wpc" in issue.message
+
+
+def test_prf014_is_silent_when_every_post_natal_stage_orders_last() -> None:
+    """The ordinary shape of every profile dataset this atlas will curate.
+
+    A check that fires on every correct input is a check a curator learns to
+    ignore -- `_prf006_issues`' own reason for reporting interior gaps only.
+    The fixture is the committed dataset's shape in miniature: prenatal
+    stages with `wpc`, then post-natal ones without.
+    """
+    issues = validate_profile_references(
+        _root_with(profiles=[_p(tissue="Heart", stage="19wpc")]),
+        datasets=(
+            _profile_dataset(
+                stages=[
+                    {"token": "4wpc", "wpc": 4.0, "order": 1},
+                    {"token": "19wpc", "wpc": 19.0, "order": 2},
+                    {"token": "neonate", "wpc": None, "order": 3},
+                    {"token": "elderly", "wpc": None, "order": 4},
+                ]
+            ),
+        ),
+        known_genes={"HGNC:11604"},
+        published_genes=set(),
+        phases=None,
+    )
+    assert issues == []
+
+
 def test_prf011_and_prf012_are_reported_in_dataset_id_order() -> None:
-    """Both checks re-sort `datasets` rather than trusting caller order.
+    """All three curated-record checks re-sort `datasets` rather than trusting
+    caller order.
 
     `corpus.datasets` follows `curation/datasets/`'s directory-listing order,
     not id, and a direct caller -- this test, and `validate_repository`'s own
@@ -931,6 +1012,10 @@ def test_prf011_and_prf012_are_reported_in_dataset_id_order() -> None:
         {"token": "b", "wpc": 5.0, "order": 2},
         {"token": "c", "wpc": 3.0, "order": 3},
         {"token": "d", "wpc": 4.0, "order": 3},
+        # A post-natal token wedged in front of a later dated one, so PRF014
+        # fires exactly once per dataset alongside the other two.
+        {"token": "adult", "wpc": None, "order": 4},
+        {"token": "e", "wpc": 6.0, "order": 5},
     ]
     issues = validate_profile_references(
         _root_with(),
@@ -943,7 +1028,7 @@ def test_prf011_and_prf012_are_reported_in_dataset_id_order() -> None:
         phases=None,
     )
 
-    for code in ("PRF011", "PRF012"):
+    for code in ("PRF011", "PRF012", "PRF014"):
         reported = [issue for issue in issues if issue.code == code]
         assert len(reported) == 2, code
         assert "E-ALFA-1" in reported[0].message, code

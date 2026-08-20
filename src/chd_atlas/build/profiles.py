@@ -189,8 +189,27 @@ TAU_SCALE: Final = "log2(x+1)"
 # organ contributes once it is, so re-deriving tau needs nothing but
 # `medians` itself. Same one-level guarantee `LOOKUP_RULE` documents for the
 # percentile side (see the module docstring).
+#
+# **It said "mean over organs" until 2026-08-21, and that is a different
+# number.** A mean over organs divides by *n*; Yanai's tau -- what
+# `specificity` below has always computed -- divides by *n - 1*. Measured over
+# the committed corpus: all 1817 published specificity blocks match
+# `sum/(n - 1)`, and the 4 that also match `sum/n` do so by coincidence. The
+# code was right and the sentence was wrong, which is the worse way round for
+# the one artifact whose entire purpose is letting a consumer re-derive the
+# figure without reading this module. `docs/data-api.md` quoted the wrong
+# string beside its own correct prose ("tau's denominator is n - 1"), and that
+# self-consistency is why four review passes read past it.
+#
+# The denominator is now spelled out as an operation rather than named by a
+# statistic ("divided by (n - 1)", not "mean"), so following the sentence and
+# running the code cannot diverge again without the words visibly changing.
+# `test_every_published_tau_is_reproducible_from_its_own_method_string` reads
+# the divisor back out of this string and re-derives every published tau from
+# `medians`; it fails on the old wording.
 TAU_METHOD: Final = (
-    "tau (Yanai et al. 2005): mean over organs of (1 - x_i/x_max), "
+    "tau (Yanai et al. 2005): the sum over organs of (1 - x_i/x_max) "
+    "divided by (n - 1), where n is the number of organs and "
     "x = log2(median+1); a negative median is clamped to 0 before the "
     "transform, and every organ's raw median is used even below the "
     "dataset's detection floor"

@@ -2880,6 +2880,79 @@ def test_a_gene_with_no_plottable_row_gets_a_sentence_and_no_chart(
     assert "<table" in re.sub(r"<details.*?</details>", "", section, flags=re.S)
 
 
+@pytest.mark.parametrize(
+    ("measure", "label", "gloss"),
+    [
+        ("odds_ratio", "OR", "no association"),
+        ("enrichment_ratio", "enrichment", "no enrichment"),
+        ("rate_ratio", "rate ratio", "no difference in rate"),
+        ("hazard_ratio", "hazard_ratio", "no difference between the arms"),
+    ],
+)
+def test_the_axis_key_glosses_the_null_line_in_its_own_panels_vocabulary(
+    tmp_path: Path,
+    facts_uncurated: dict[str, GeneFacts],
+    measure: str,
+    label: str,
+    gloss: str,
+) -> None:
+    """What 1 means depends on what is on the axis, and the key said one thing.
+
+    `_forest_caption` made the measure label dynamic and then hardcoded the
+    gloss as "no enrichment". Measured 2026-08-20 on the built site: 112 of
+    the 137 panels, across 88 gene pages, read "Axis: **OR** ... the vertical
+    line is **1**, no enrichment" -- and for an odds ratio 1 is *no
+    association*. "No enrichment" is the de-novo-against-expectation
+    vocabulary that belongs to the 25 `enrichment_ratio` panels. That is the
+    conflation `effect_measure` exists to prevent (`_effect`'s docstring: an
+    odds ratio of 3.1 and an enrichment of 3.1 are different claims), stated
+    in the sentence whose whole job is telling the reader how to read the
+    axis. The sibling `<title>` on the same figure already varied correctly.
+
+    Each gloss is pinned against a **literal**, never against
+    `_NULL_LINE_GLOSS`, per CLAUDE.md section 4.38: asserting the constant
+    would pass for any rewording including a reintroduction of the single
+    hardcoded gloss. `rate_ratio` is in `EffectMeasure` and carries 0 rows
+    today; it is parametrised so the third vocabulary is written before a
+    study needs it rather than after. The fourth case is an unrecognised
+    token, which must still be glossed -- `_effect` has no branch that omits
+    its label and this has none that omits its gloss -- with a phrase true of
+    any ratio rather than one borrowed from a vocabulary the token may not
+    belong to.
+
+    Scoped to the `<figure class="forest">` and then to the axis sentence
+    inside it (section 4.19): "no enrichment" also appears in this section's
+    prose elsewhere, so a section-wide or even figure-wide assertion is
+    answered by a sentence that is not the one under test.
+    """
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(
+                    effect=2.45,
+                    effect_measure=measure,
+                    effect_bound=None,
+                    ci_low=1.2,
+                    ci_high=8.1,
+                )
+            ],
+        )
+    )
+
+    figure = _forest_figures(section)[0]
+    axis = re.search(r"Axis: .*?\. ", figure, re.S)
+    assert axis is not None, "the panel prints no axis sentence"
+    sentence = axis.group(0)
+
+    assert f"<strong>{label}</strong>" in sentence
+    assert f"the vertical line is <strong>1</strong>, {gloss}." in sentence
+    for other in ("no association", "no enrichment", "no difference in rate"):
+        if other != gloss:
+            assert other not in sentence, f"the {measure} axis also claims 1 is {other!r}"
+
+
 def test_the_forest_carries_no_summary_diamond(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
@@ -4373,6 +4446,65 @@ def test_a_gene_placed_at_one_stage_gets_markers_and_no_line(tmp_path: Path) -> 
 
     assert "<polyline" not in boundary
     assert boundary.count('class="chart-point"') == 2
+
+
+def test_both_figures_hold_one_rule_about_a_line_through_two_points(
+    tmp_path: Path,
+) -> None:
+    """The trajectory and the sparkline must not contradict each other.
+
+    `_trajectory` refuses a line below `_STAGES_FOR_A_TRAJECTORY` because
+    "two would draw a segment claiming something about the interval between
+    them that two measurements do not support". `_small_multiples` drew that
+    segment anyway. Measured on the committed corpus 2026-08-21: **13 organ
+    series have exactly two placed points**, so the two figures published
+    opposite claims about the same two numbers -- TBX20/forebrain,
+    CRIPTO/liver, CRIPTO/forebrain, GATA5/hindbrain, CFC1/heart, DAW1/ovary,
+    MESP1/liver, FOXH1/kidney, MYBPC3/forebrain, MYBPC3/hindbrain,
+    MYH6/liver, MYH7/ovary, PRDM6/liver.
+
+    CFC1 was the sharp case: the trajectory drew 2 markers and no line, while
+    the heart panel -- drawn heavier as the declared cardiac tissue -- drew
+    `points="4.0,5.0 8.4,35.0"` from those same two medians.
+
+    **The fixture is the point.** Its predecessor asserted `"<polyline" not
+    in section` section-wide, which looks like it covers both figures; but it
+    declared one organ, so tau was undefined, `_small_multiples` returned
+    `""`, and the second figure was never in the string being asserted on.
+    This one samples two organs so both figures render, which is the only
+    reason the assertion means anything (CLAUDE.md 4.36).
+    """
+    two_placed = _organ_panel(
+        ("aorta", (5.0, 40.0, None)),
+        ("liver", (1.0, 2.0, 4.0)),
+        highest_in="aorta",
+        phase=_phase_info(phase_ids=("atrial_septum_morphogenesis",)),
+    )
+    section = _expression_section_text(
+        _expression_page(
+            tmp_path, {GATA4: two_placed}, _MANY_CARDIAC_DATASET, phases=_cardiac_phases()
+        )
+    )
+
+    assert 'class="sparks"' in section, "the second figure did not render; the fixture is blind"
+
+    # Scoped to the organ under test, never page-wide: liver has three placed
+    # medians and *should* draw a line, so a section-wide "no polyline" check
+    # would fail for the right reason on the wrong panel (CLAUDE.md 4.19).
+    panels = _spark_panels(section)
+    assert "<polyline" not in panels["aorta"], (
+        "the panel drew a line through two points while the trajectory beside "
+        "it refused; see the 13 organ series named above"
+    )
+    assert panels["aorta"].count("<circle") == 2, (
+        "aorta's two placed medians should be two marks, not one segment"
+    )
+    assert "<polyline" in panels["liver"], (
+        "three placed points is a trajectory; gating them too would be the opposite defect"
+    )
+    assert "<polyline" not in _trajectory_figure(section), (
+        "the trajectory's own rule must be unchanged by this fix"
+    )
 
 
 @pytest.mark.parametrize(

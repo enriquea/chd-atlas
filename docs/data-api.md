@@ -1085,10 +1085,11 @@ never goes through that mechanism at all: it has no gene column, so
   of them would be arbitrary.
 - `scale` (`"log2(x+1)"`) and `method` travel beside every τ so a consumer can
   re-derive it without reading this atlas's source rather than trusting a
-  paraphrase of it. `method` reads exactly: tau (Yanai et al. 2005): mean over
-  organs of (1 - x_i/x_max), x = log2(median+1); a negative median is clamped
-  to 0 before the transform, and every organ's raw median is used even below
-  the dataset's detection floor. `medians` is τ's own input, published exactly
+  paraphrase of it. `method` reads exactly: tau (Yanai et al. 2005): the sum
+  over organs of (1 - x_i/x_max) divided by (n - 1), where n is the number of
+  organs and x = log2(median+1); a negative median is clamped to 0 before the
+  transform, and every organ's raw median is used even below the dataset's
+  detection floor. `medians` is τ's own input, published exactly
   as measured — including any organ a gene bundle's own `omics` preview may
   have already dropped from `top` — so τ's inputs stay reachable from the one
   payload that publishes τ (design decision D39(b)).

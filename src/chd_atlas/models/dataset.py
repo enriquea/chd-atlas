@@ -73,7 +73,14 @@ class Stage(BaseModel):
     so a dataset's post-natal tokens have no numeric order at all. Sorting
     those tokens as strings is what published `elderly` second of eight and
     `4 week post conception` after `19 week post conception` -- deterministic,
-    reproducible and wrong, for three releases.
+    reproducible and wrong, under schema 2.11.
+
+    **2.11 and no other version**, measured rather than estimated: the
+    profiles mirror was first committed on 2026-08-19, and before it a gene
+    bundle's `expression_profile` was `{"datasets": []}` with no stage array
+    published at all. So the dictionary order reached published bytes under
+    exactly one schema version, promoted to `main` that same day and corrected
+    the next.
 
     Chosen over sorting by position in the YAML file, which would make
     declaration order silently load-bearing: a curator tidying the block would

@@ -11,6 +11,7 @@ from chd_atlas.build.validity import gene_validity, published_genes
 from chd_atlas.corpus import Corpus, load_curation, unexpected_curation_entries
 from chd_atlas.genes import GeneRegistry
 from chd_atlas.issues import Severity, ValidationIssue
+from chd_atlas.models.dataset import Dataset
 from chd_atlas.tables import (
     PROFILE_QUANTILES,
     PROFILES,
@@ -296,6 +297,45 @@ def _mirror_has_rows(root: Path, schema_name: str, schema: TableSchema) -> bool:
         if frame is not None and frame.height > 0:
             return True
     return False
+
+
+def _phase_matchable_stages(root: Path, datasets: tuple[Dataset, ...]) -> set[tuple[str, str]]:
+    """Every `(dataset, stage)` in `profiles` that a cardiac phase could match.
+
+    "Could match" is narrower than "is a profiles row", and the difference is
+    section 4.41's whole point. A stage with a null `wpc` is post-natal *by
+    construction* (`Stage.wpc`) and falls outside every cardiac morphogenetic
+    phase whether or not a vocabulary is curated; a stage token the dataset's
+    own record never declares has no `wpc` to compare at all and is PRF005's
+    to report. Neither is work a phase vocabulary would have done, so neither
+    may trigger the skip below -- a lone PRF000 in an otherwise clean report
+    is exactly the failure `test_every_skip_warning_arrives_with_the_error_
+    that_caused_it` exists to catch, and `GEN000` broke this on its first run
+    by asking only whether the registry was absent.
+
+    Returns the pairs rather than a bool so PRF013's message can say how much
+    is at stake; the count is what tells a curator whether they are looking at
+    a whole layer or one stray row.
+    """
+    wpc_by_dataset: dict[str, set[str]] = {
+        dataset.id: {stage.token for stage in dataset.stages if stage.wpc is not None}
+        for dataset in datasets
+    }
+    matchable: set[tuple[str, str]] = set()
+    for path, name in mirror_paths(root):
+        if name != "profiles":
+            continue
+        frame, _ = read_table(path, PROFILES)
+        if frame is None:
+            continue
+        for dataset, stage in zip(
+            frame["dataset"].to_list(), frame["stage"].to_list(), strict=True
+        ):
+            if dataset is None or stage is None:
+                continue
+            if stage in wpc_by_dataset.get(dataset, frozenset()):
+                matchable.add((dataset, stage))
+    return matchable
 
 
 def _gate_published_genes(root: Path, corpus: Corpus) -> set[str]:
@@ -632,6 +672,59 @@ def validate_repository(root: Path) -> ValidationReport:
                 phases=corpus.cardiac_phases,
             )
         )
+
+        # PRF013/PRF000 -- the same pairing PRF010/PRF000 gives the quantile
+        # mirror, for the reference vocabulary rather than the reference
+        # table, and here for the same reason: distinguishing "the data is
+        # wrong" from "the reference data never loaded" is this project's
+        # core rule, and the phase vocabulary was the one input that had no
+        # such guard.
+        #
+        # `_prf006_issues` returns `[]` the moment `phases is None`, so an
+        # absent `curation/cardiac_phases.yaml` skipped every phase check in
+        # silence. Measured on the committed corpus: deleting the file took
+        # `validate` from 4 warnings to **3** -- the count went *down* -- and
+        # the build stayed green while 460 stage entries flipped from
+        # `matched` to `outside_window` and all 85 charted pages printed
+        # "none of this dataset's developmental stages falls inside a curated
+        # cardiac phase this atlas can band". That sentence's subject is the
+        # dataset's stages, and its cause was the atlas's own vocabulary.
+        #
+        # An empty `phases` list is treated identically and is not the same
+        # input as a malformed file: `phases: []` alone fails
+        # `CardiacPhaseFile`'s required `attributed_to`/`citation` and is
+        # already SCHEMA001, but a file carrying both and declaring no phases
+        # parses cleanly and is exactly as silent as an absent one. A guard
+        # written as `is None` would catch only the first.
+        #
+        # Conditioned on `_phase_matchable_stages`, per section 4.41: a corpus
+        # whose profiles rows are all post-natal (or all undeclared) has no
+        # phase assignment to lose, and firing there would put a lone PRF000
+        # in a report `ValidationReport.ok` calls clean.
+        phases = corpus.cardiac_phases
+        if phases is None or not phases.phases:
+            matchable = _phase_matchable_stages(root, corpus.datasets)
+            if matchable:
+                issues.append(
+                    ValidationIssue(
+                        "PRF013",
+                        Severity.ERROR,
+                        str(root / "curation" / "cardiac_phases.yaml"),
+                        f"{len(matchable)} profiles (dataset, stage) pair(s) carry a "
+                        "wpc that a cardiac phase would be matched against, but no "
+                        "phase vocabulary is curated; every one would publish as "
+                        "'outside_window' and every chart would lose its bands",
+                    )
+                )
+                issues.append(
+                    ValidationIssue(
+                        "PRF000",
+                        Severity.WARNING,
+                        str(root / "curation" / "cardiac_phases.yaml"),
+                        "skipped cardiac phase checks: profiles rows would be "
+                        "phase-matched but no phase vocabulary is curated",
+                    )
+                )
 
         # Same branch, same reasoning again: a corpus that failed to load empties
         # `corpus.chd_scope`, and every scope term would then look absent.

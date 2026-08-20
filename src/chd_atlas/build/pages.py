@@ -330,6 +330,35 @@ _MEASURE_LABEL: Final[dict[str, str]] = {
     "rate_ratio": "rate ratio",
 }
 
+# What the value 1 *means*, which is not the same sentence for every measure --
+# and `_forest_caption` printed one of them on all of them.
+#
+# Measured 2026-08-20 on the built site: 112 of the 137 forest panels, across
+# 88 gene pages, read "Axis: **OR** ... the vertical line is **1**, no
+# enrichment". For an odds ratio 1 is *no association*; "no enrichment" is the
+# de-novo-against-expectation vocabulary belonging to the 25
+# `enrichment_ratio` panels. That is exactly the merge `effect_measure` exists
+# to prevent (see `_effect`), committed in the one sentence whose job is
+# telling a reader how to read the axis.
+#
+# Keyed on the same token as `_MEASURE_LABEL` and consulted in the same place,
+# so the label and its gloss cannot drift apart again: a fourth measure that
+# lands here with a label and no gloss gets `_NULL_LINE_DEFAULT`, which is
+# true of any ratio, rather than one vocabulary's words applied to another's
+# number. `rate_ratio` carries 0 rows today and is written anyway, for the
+# reason `_effect` has no branch that omits its measure.
+_NULL_LINE_GLOSS: Final[dict[str, str]] = {
+    "odds_ratio": "no association",
+    "enrichment_ratio": "no enrichment",
+    "rate_ratio": "no difference in rate",
+}
+
+# Deliberately not a blank and not a refusal. `_effect` renders an unknown
+# measure's raw token rather than nothing, on the rule that a missing label is
+# worse than an unfamiliar one; the same rule applies to the gloss, and every
+# member of `EffectMeasure` is a ratio, for which 1 is the arms agreeing.
+_NULL_LINE_DEFAULT: Final = "no difference between the arms"
+
 # The partition columns that reached no page until 2026-08-05. Without them a
 # section headed "Rare variant burden" never says what *rare* means and a
 # case-control count of rare inherited variants reads exactly like a trio's de
@@ -1967,6 +1996,15 @@ def _forest_caption(
     The filled clause excludes a surviving *synonymous* row, which is drawn
     muted rather than in the result colour and has its own clause below.
 
+    **The axis clause was wrong in a different way: it named a mark that is
+    on the panel and then said the wrong thing about it.** The measure label
+    was already dynamic; the gloss beside it was the literal "no enrichment"
+    for every measure, so 112 of the 137 panels told the reader that 1 on an
+    odds-ratio axis means no enrichment. Both halves now resolve from the same
+    token -- see `_NULL_LINE_GLOSS` for the measurement and the third
+    vocabulary. The sibling `<title>` on the same figure had always varied
+    correctly, which is why reading the panel did not show it.
+
     **The union clause is conditional twice**: once on a union being shown as
     one at all, and once more on whether every tagged row is fully split.
     Measured 2026-08-20: 10 panels tag a row with only one of its two
@@ -1984,10 +2022,14 @@ def _forest_caption(
     """
     low, high = bounds
     label = _MEASURE_LABEL.get(measure, measure)
+    # Both halves resolve from the same token. The gloss was hardcoded beside
+    # this already-dynamic label, which is how 112 odds-ratio panels came to
+    # call 1 "no enrichment" -- see `_NULL_LINE_GLOSS`.
+    gloss = _NULL_LINE_GLOSS.get(measure, _NULL_LINE_DEFAULT)
     parts = [
         f"Axis: <strong>{html.escape(label)}</strong> on a logarithmic scale, "
         f"{_fmt(low)} to {_fmt(high)}; the vertical line is <strong>1</strong>, "
-        "no enrichment. ",
+        f"{html.escape(gloss)}. ",
     ]
     if any(_survived_correction(row) and row.consequence_class != "synonymous" for row in rows):
         parts.append(
@@ -2232,9 +2274,12 @@ def _names(ids: Sequence[str], cohorts: Mapping[str, Cohort]) -> str:
 #
 # The proxy was wrong in both directions. It forbade the phase-banded
 # trajectory, which no external browser has, while permitting the rendering
-# that hid a live defect for three releases: stages published in alphabetical
-# order, 4 wpc eighth, because 21 individually-correct blocks cannot show a
-# trajectory and therefore cannot show a scrambled one.
+# that hid a live defect for the whole life of schema 2.11: stages published
+# in alphabetical order, 4 wpc eighth, because 21 individually-correct blocks
+# cannot show a trajectory and therefore cannot show a scrambled one. (This
+# read "for three releases" until 2026-08-21; the profiles mirror landed on
+# 2026-08-19 and nothing published a stage array before it, so 2.11 is the
+# only version that ever carried the defect. See `manifest.py`'s 2.12 note.)
 #
 # A bare heart curve IS what the source's own browser shows and remains
 # forbidden. The same curve banded by this atlas's own cardiac-phase
@@ -3409,10 +3454,24 @@ def _small_multiples(entry: DatasetProfileEntry, dataset: Dataset | None) -> str
             (_spark_x(index, count), _SPARK_BOTTOM - scale.x(value)) for index, value in placed
         ]
         css = "chart-cardiac" if tissue in cardiac else "chart-control"
+        # The same floor `_trajectory` applies, and for the same stated
+        # reason: two measurements do not support a claim about the interval
+        # between them. This panel drew that segment anyway until 2026-08-21,
+        # so the two figures on one page published opposite claims about one
+        # pair of numbers -- measured, 13 organ series, and on CFC1 the
+        # trajectory drew two bare markers while the heart panel beside it,
+        # drawn heavier as the declared cardiac tissue, joined them.
+        #
+        # Gated on the organ's whole placed series rather than per run, again
+        # matching `_trajectory`: a run of two inside a longer series is a
+        # segment between two adjacent measurements of a trend the series
+        # already evidences, which is a different claim from a two-point
+        # series being a trend on its own.
+        enough = len(placed) >= _STAGES_FOR_A_TRAJECTORY
         body = "".join(
             polyline(run, css_class=css)
-            if len(run) >= 2
-            else marker(run[0][0], run[0][1], css_class=css)
+            if enough and len(run) >= 2
+            else "".join(marker(x, y, css_class=css) for x, y in run)
             for run in _adjacent_runs(placed, points)
         )
         role = (
