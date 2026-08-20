@@ -1927,6 +1927,20 @@ _FLOOR_GAP: Final = 8.0
 _FLAT_SERIES_SPAN: Final = 10.0**0.5
 
 
+def _even_x(index: int, count: int, left: float, right: float) -> float:
+    """The `index`-th of `count` evenly spaced positions between `left` and `right`.
+
+    One implementation for both pictures on this page. The trajectory and the
+    organ small multiples plot the *same* stage sequence at different widths,
+    and a reader reads down from one to the other; two copies of this
+    arithmetic could put stage 5 four-ninths of the way along in one and
+    five-ninths in the other, with nothing failing.
+    """
+    if count < 2:
+        return (left + right) / 2
+    return left + (right - left) * index / (count - 1)
+
+
 def _stage_x(index: int, count: int) -> float:
     """Where the `index`-th of `count` stages sits on the horizontal axis.
 
@@ -1938,9 +1952,7 @@ def _stage_x(index: int, count: int) -> float:
     which is the whole of what `Stage.order` supports. `_trajectory`'s caption
     says so in words, because a reader cannot see it from the picture.
     """
-    if count < 2:
-        return (_PLOT_LEFT + _PLOT_RIGHT) / 2
-    return _PLOT_LEFT + (_PLOT_RIGHT - _PLOT_LEFT) * index / (count - 1)
+    return _even_x(index, count, _PLOT_LEFT, _PLOT_RIGHT)
 
 
 def _half_step(count: int) -> float:
@@ -2331,10 +2343,215 @@ def _dominant_unit(entry: DatasetProfileEntry, tissues: set[str]) -> str:
     return ""
 
 
+# --- The organ small multiples ----------------------------------------------
+
+# Small on purpose: this is a grid of up to seven panels side by side
+# (`.sparks` in `render.STYLESHEET`), and the *comparison between* them is the
+# figure. No panel here is meant to be read on its own -- the trajectory above
+# is what reads one organ in detail.
+_SPARK_WIDTH: Final = 96
+_SPARK_HEIGHT: Final = 40
+_SPARK_LEFT: Final = 4.0
+_SPARK_RIGHT: Final = 92.0
+_SPARK_TOP: Final = 5.0
+_SPARK_BOTTOM: Final = 35.0
+
+
+def _spark_x(index: int, count: int) -> float:
+    """Where the `index`-th of `count` stages sits inside one small panel.
+
+    The same ordinal axis `_stage_x` documents, at a twentieth of the width.
+    """
+    return _even_x(index, count, _SPARK_LEFT, _SPARK_RIGHT)
+
+
+def _sampled_tissues(entry: DatasetProfileEntry) -> list[str]:
+    """Every organ this dataset sampled for this gene, sorted.
+
+    Sorted because it is derived from a `set`: `sort_keys` in the JSON encoder
+    has nothing to say about the order panels are laid out in, and two builds
+    of one commit must emit the same bytes.
+    """
+    return sorted({cell["tissue"] for stage in entry["stages"] for cell in stage["tissues"]})
+
+
+def _small_multiples(entry: DatasetProfileEntry, dataset: Dataset | None) -> str:
+    """One sparkline per organ, every panel on a single shared abundance axis.
+
+    **The shared axis is the whole point.** τ answers "is this gene
+    concentrated in one organ, and which" -- and this section stated it as a
+    number restated once per stage, 19 times on the TBX5 page with only the
+    figure changing. Per-organ axes would rescale each line to its own range
+    and draw seven similar-looking traces, which is the same non-answer in a
+    picture. One axis is what makes τ = 0.96 legible: measured 2026-08-20 on
+    the committed corpus, TBX5's heart medians run 5 to 275 tpm while the six
+    other organs it places at all reach 3.0, so heart sits a decade and a half
+    above everything else on a shared scale and nowhere in particular on seven
+    private ones.
+
+    `data-scale-high` is emitted from the axis itself rather than recomputed,
+    so a build that gave each organ its own scale would publish a different
+    value per panel and could not pass the test asserting they are equal.
+    Assert the property, never the appearance.
+
+    **What earns this under D43** -- never a panel redundant with the source's
+    own browser -- is `Dataset.cardiac_tissues`. Which organ counts as cardiac
+    is this atlas's own declaration in `curation/datasets.yaml`, not the
+    source's; the source's browser has the per-organ curves and makes no such
+    claim. The caption states that in words, because a stroke weight is not an
+    argument.
+
+    Returns `""` in the two cases where a panel would assert more than the
+    data does, D42's rule that a page says so rather than drawing an empty
+    frame:
+
+    - **No stage reports a τ at all.** τ needs at least two organs, and with
+      one sampled there is no specificity to draw a specificity panel about.
+      `_SPECIFICITY_GAP_CLAUSE` is what the page says instead, once per stage,
+      and it says it already.
+    - **No organ has a single placed median.** Nothing to plot.
+
+    **Only medians this dataset placed are drawn**, which is `_tissue_medians`'
+    discipline reused rather than restated: a below-floor figure is one this
+    atlas declines to vouch for, and putting it on the same line as ones it
+    does is the conflation `_percentile_cell` refuses in words. The line
+    therefore breaks at an unplaced stage exactly as `_trajectory`'s does --
+    measured 2026-08-20, 20 of the 85 charted genes have a below-floor stage
+    strictly between two plotted points, and a guard added to one layer is not
+    a guard.
+
+    An organ with nothing placed gets no panel and is **named in the caption**
+    instead. Silently dropping it would leave five panels beside a τ sentence
+    reading "7 organs sampled", the page contradicting itself, and a reader
+    concluding this dataset never looked there.
+    """
+    if all(stage["specificity"] is None for stage in entry["stages"]):
+        return ""
+
+    series: dict[str, list[tuple[int, float]]] = {}
+    sampled_at: dict[str, int] = {}
+    for tissue in _sampled_tissues(entry):
+        whole = _tissue_medians(entry, tissue)
+        sampled_at[tissue] = len(whole)
+        series[tissue] = [(index, value) for index, _, value in whole if value is not None]
+    drawn = [tissue for tissue in series if series[tissue]]
+    if not drawn:
+        return ""
+
+    low, high = _axis_bounds([value for tissue in drawn for _, value in series[tissue]])
+    scale = LogScale(low=low, high=high, left=0.0, width=_SPARK_BOTTOM - _SPARK_TOP)
+    cardiac = frozenset(dataset.cardiac_tissues) if dataset is not None else frozenset()
+    count = len(entry["stages"])
+
+    panels = ""
+    for tissue in drawn:
+        placed = series[tissue]
+        points = [
+            (_spark_x(index, count), _SPARK_BOTTOM - scale.x(value)) for index, value in placed
+        ]
+        css = "chart-cardiac" if tissue in cardiac else "chart-control"
+        body = "".join(
+            polyline(run, css_class=css)
+            if len(run) >= 2
+            else marker(run[0][0], run[0][1], css_class=css)
+            for run in _adjacent_runs(placed, points)
+        )
+        role = (
+            ", this atlas's declared cardiac tissue for this dataset" if tissue in cardiac else ""
+        )
+        title = (
+            f"Median abundance in whole {tissue}{role}: {len(placed)} of "
+            f"{sampled_at[tissue]} sampled developmental stages placed, on the abundance "
+            "axis every organ here shares."
+        )
+        panels += (
+            f'<figure class="spark" data-scale-high="{coordinate(scale.high)}">'
+            + svg_figure(width=_SPARK_WIDTH, height=_SPARK_HEIGHT, title=title, body=body)
+            + f"<figcaption>{html.escape(tissue)}</figcaption></figure>"
+        )
+    undrawn = [tissue for tissue in series if not series[tissue]]
+    caption = _spark_caption(entry, drawn, undrawn, cardiac, low, high)
+    return f'<div class="sparks">{panels}</div>{caption}'
+
+
+def _spark_caption(
+    entry: DatasetProfileEntry,
+    drawn: Sequence[str],
+    undrawn: Sequence[str],
+    cardiac: frozenset[str],
+    low: float,
+    high: float,
+) -> str:
+    """What the grid of panels cannot say about itself, in words beside it.
+
+    Four things, and three of them are traps. The horizontal axis is stage
+    *order* rather than elapsed time, exactly as `_band_caption` says of the
+    trajectory. The vertical axis is **shared**, which is the entire claim the
+    figure makes and the one a reader cannot check by looking. The highlighted
+    organ is this atlas's own declaration and not the source's, which is what
+    admits the panel under D43. And an organ with no panel was still sampled.
+
+    **The cardiac clause has three positions and no blank one.** A panel where
+    the declared cardiac tissue has nothing placed carries no highlight, and
+    "Highlighted: heart" beside no highlighted panel is false -- a sentence's
+    truth conditions travel with its position (`_POOLING_NOTICE`'s recorded
+    lesson). Measured 2026-08-20 on the committed corpus, that is 6 of the 91
+    genes with a panel, so it is a live case. It names the declaration anyway,
+    because "this atlas calls heart the cardiac tissue and placed nothing
+    there" is the fact, and dropping the sentence would leave a reader to
+    conclude the atlas never declared one.
+    """
+    unit = html.escape(_dominant_unit(entry, set(drawn)))
+    cardiac_drawn = [tissue for tissue in drawn if tissue in cardiac]
+    if cardiac_drawn:
+        marked = ", ".join(html.escape(tissue) for tissue in cardiac_drawn)
+        noun = "tissue" if len(cardiac_drawn) == 1 else "tissues"
+        highlight = (
+            f" Drawn heavier: {marked} &mdash; this atlas's own declaration of which organ "
+            f"is this dataset's cardiac {noun}, not the source's."
+        )
+    elif cardiac:
+        declared = ", ".join(html.escape(tissue) for tissue in sorted(cardiac))
+        noun = "tissue" if len(cardiac) == 1 else "tissues"
+        highlight = (
+            f" No panel here is drawn heavier: this atlas declares {declared} this "
+            f"dataset's cardiac {noun}, and this dataset placed no measurement there."
+        )
+    else:
+        highlight = ""
+    if undrawn:
+        names = ", ".join(html.escape(tissue) for tissue in undrawn)
+        organs = "that organ" if len(undrawn) == 1 else "those organs"
+        missing = (
+            f" No panel is drawn for {names}: this dataset sampled {organs} and placed no "
+            "measurement there against its percentile grid."
+        )
+    else:
+        missing = ""
+    return (
+        '<p class="method">One panel per organ this dataset sampled for this gene, each '
+        "drawn left to right in curated developmental order &mdash; the horizontal axis is "
+        "<strong>order, not elapsed time</strong>. <strong>Every panel shares one abundance "
+        f"axis</strong> ({_fmt(low)} to {_fmt(high)} {unit}, log scale), which is what makes "
+        "a gene concentrated in one organ look different from a broadly expressed one; a "
+        "per-organ axis would rescale every line to its own range and hide exactly that "
+        f"difference.{highlight} Only medians this dataset placed against its percentile "
+        "grid are drawn, so a stage below the floor breaks a line rather than being drawn "
+        f"through.{missing} Every figure is in the table below.</p>"
+    )
+
+
 def _dataset_block(
     entry: DatasetProfileEntry, dataset: Dataset | None, phases: CardiacPhaseFile | None
 ) -> str:
-    """One dataset's whole contribution: a chart per cardiac organ, then every figure.
+    """One dataset's whole contribution: a chart per cardiac organ, one panel per
+    organ sampled, then every figure.
+
+    Two pictures, answering two questions, and neither substitutes for the
+    other. `_trajectory` reads one cardiac organ in detail across development;
+    `_small_multiples` compares every organ on one shared axis, which is what
+    τ asserts once per stage and nothing on the page showed. Each returns `""`
+    on its own terms, so a dataset can carry either, both or neither.
 
     The link is D39(b)'s other half reaching a reader rather than only a
     program: `build_profile_quantiles` publishes the 101-point grid a
@@ -2370,6 +2587,7 @@ def _dataset_block(
     # two organs' charts in a different order between two builds of one commit.
     charts = "".join(_trajectory(entry, tissue, dataset, phases) for tissue in sorted(cardiac))
     lede = charts or _no_trajectory_sentence(entry, cardiac, floor)
+    sparks = _small_multiples(entry, dataset)
     stages = "".join(_stage_block(stage, cardiac, floor) for stage in entry["stages"])
     total = len(entry["stages"])
     noun = "stage" if total == 1 else "stages"
@@ -2377,7 +2595,7 @@ def _dataset_block(
         f'<details class="stage-figures"><summary>every figure, all {total} {noun}'
         f"</summary>{stages}</details>"
     )
-    return heading + lede + folded
+    return heading + lede + sparks + folded
 
 
 def _placement_count(entries: Sequence[DatasetProfileEntry]) -> int:

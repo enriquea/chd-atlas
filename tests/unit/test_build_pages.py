@@ -3481,3 +3481,206 @@ def test_a_chart_never_replaces_the_figures_it_summarises(tmp_path: Path) -> Non
     # (CLAUDE.md section 4.19).
     unfolded = re.sub(r"<details.*?</details>", "", section, flags=re.S)
     assert "<table" not in unfolded
+
+
+# --- Organ small multiples (D40/D43) -----------------------------------------
+#
+# The fixtures below all sample at least one cardiac and one non-cardiac organ,
+# at genuinely different magnitudes. CLAUDE.md section 4.36 is why that is
+# spelled out: a fixture whose organs all share the value under test measures
+# nothing, and it has cost this repository four separate defects. A panel where
+# every organ rendered `chart-cardiac` and one where none did would be
+# indistinguishable on a heart-only fixture.
+
+
+def _organ_panel(
+    *organs: tuple[str, tuple[float | None, ...]],
+    stages: tuple[str, ...] = ("4wpc", "5wpc", "6wpc"),
+    highest_in: str | None = "heart",
+) -> ExpressionProfile:
+    """Several organs measured across the same stages, each at its own magnitude.
+
+    A `float` is a median this dataset placed against its percentile grid; a
+    `None` is a stage this organ was sampled at and not placed, below the
+    detection floor.
+
+    Every stage carries a real `specificity`, unlike `_heart_series`: tau is
+    what this panel exists to make visible, and `_small_multiples` draws
+    nothing for a dataset that reports none.
+    """
+    names = tuple(name for name, _ in organs)
+    entries = tuple(
+        _stage_entry(
+            stage=token,
+            specificity=_specificity(tissues=names, highest_in=highest_in),
+            tissues=tuple(
+                _tissue_entry(
+                    tissue=name,
+                    median=values[index] if values[index] is not None else 0.3,
+                    unit="tpm",
+                    placement=_placement() if values[index] is not None else None,
+                    not_placed_reason=(
+                        None if values[index] is not None else "below_detection_floor"
+                    ),
+                )
+                for name, values in organs
+            ),
+        )
+        for index, token in enumerate(stages)
+    )
+    return _expression_profile((_dataset_profile_entry(stages=entries),))
+
+
+def _spark_panels(section: str) -> dict[str, str]:
+    """Each organ's own `<figure class="spark">`, keyed by the caption naming it.
+
+    Scoped rather than page-wide, for the reason `_validity_table` is scoped
+    (CLAUDE.md section 4.19): a section-wide `chart-cardiac` check passes on
+    the strength of a *different* organ's panel, which is the shape of defect
+    this repository has shipped twice.
+    """
+    keyed: dict[str, str] = {}
+    for panel in re.findall(r'<figure class="spark".*?</figure>', section, re.S):
+        caption = re.search(r"<figcaption>(.*?)</figcaption>", panel, re.S)
+        assert caption is not None, "every panel names the organ it draws"
+        keyed[caption.group(1)] = panel
+    return keyed
+
+
+_SPARK_PANEL = _organ_panel(
+    ("heart", (50.0, 150.0, 275.0)),
+    ("kidney", (0.8, 1.0, 1.5)),
+    ("liver", (0.5, 1.2, 2.0)),
+)
+
+
+def test_small_multiples_share_one_axis_across_organs(tmp_path: Path) -> None:
+    """The shared axis is the whole point.
+
+    Per-organ axes would rescale each line to its own range and show seven
+    similar-looking traces; one axis is what makes heart-preference visible
+    instead of asserted once per stage.
+
+    Asserts the property rather than the appearance: every panel must declare
+    the same axis maximum.
+    """
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: _SPARK_PANEL}, _HEART_DATASET)
+    )
+
+    scales = re.findall(r'data-scale-high="([^"]+)"', section)
+    assert len(scales) > 1
+    assert len(set(scales)) == 1, "each organ drew its own axis; heart-preference vanishes"
+    # One panel per organ, so a renderer that drew only the tallest -- and
+    # therefore trivially shares one axis with itself -- fails here.
+    assert len(scales) == 3
+
+
+def test_a_cardiac_organ_is_marked_as_one(tmp_path: Path) -> None:
+    """Which organ is cardiac is this atlas's declaration, not the source's,
+    and it is what makes the panel non-redundant under D43."""
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: _SPARK_PANEL}, _HEART_DATASET)
+    )
+
+    assert "chart-cardiac" in section
+    assert "chart-cardiac" in _spark_panels(section)["heart"]
+
+
+def test_a_non_cardiac_organ_is_not_marked_as_cardiac(tmp_path: Path) -> None:
+    """The negative half. A fixture whose organs all render identically
+    measures nothing -- this repository has shipped four defects of exactly
+    that shape."""
+    section = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: _SPARK_PANEL}, _HEART_DATASET)
+    )
+    panels = _spark_panels(section)
+
+    assert set(panels) == {"heart", "kidney", "liver"}
+    assert "chart-cardiac" not in panels["liver"]
+    assert "chart-control" in panels["liver"]
+    assert "chart-cardiac" not in panels["kidney"]
+
+
+def test_small_multiples_are_absent_when_tau_is_undefined(tmp_path: Path) -> None:
+    """One organ sampled means no specificity to show, so no panel is drawn.
+
+    D42: where there is nothing to plot the page says so; it never renders an
+    empty frame.
+
+    The one organ this fixture samples is the **cardiac** one, and it is
+    placed. So a build that dropped this branch would draw a real panel
+    carrying `chart-cardiac`, not an empty frame that a bare "is there a
+    figure" check could miss.
+    """
+    profile = _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=(
+                    _stage_entry(
+                        stage="4wpc",
+                        specificity=None,
+                        specificity_unavailable_reason="one_organ_sampled",
+                        tissues=(
+                            _tissue_entry(tissue="heart", unit="tpm", placement=_placement()),
+                        ),
+                    ),
+                )
+            ),
+        )
+    )
+    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET))
+
+    assert "chart-cardiac" not in section
+    assert 'class="sparks"' not in section, "an empty frame is what D42 forbids"
+    assert "only one organ was sampled" in section
+
+
+def test_a_spark_line_never_spans_a_stage_the_atlas_did_not_place(tmp_path: Path) -> None:
+    """The same rule the trajectory keeps, in the smaller picture beside it.
+
+    Measured 2026-08-20 on the committed corpus: 20 of the 85 charted genes
+    carry a below-floor stage strictly between two plotted points. A single
+    line through the placed points runs smooth across exactly the stages this
+    dataset measured below its own floor -- the picture asserting a continuity
+    the figures deny. A guard added to one layer is not a guard.
+
+    Liver is placed at every stage in the same fixture, so "split correctly"
+    and "never split anything" are distinguishable.
+    """
+    profile = _organ_panel(
+        ("heart", (50.0, None, 150.0, 275.0)),
+        ("liver", (0.5, 0.8, 1.2, 2.0)),
+        stages=("4wpc", "5wpc", "6wpc", "7wpc"),
+    )
+    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET))
+    panels = _spark_panels(section)
+
+    assert re.findall(r'<polyline class="chart-cardiac"', panels["heart"]) == [
+        '<polyline class="chart-cardiac"'
+    ], "the heart run of two adjacent stages is one line, and the lone point is not on it"
+    assert '<circle class="chart-cardiac"' in panels["heart"]
+    assert len(re.findall(r"<polyline", panels["liver"])) == 1
+    assert "<circle" not in panels["liver"]
+
+
+def test_an_organ_with_nothing_placed_is_named_rather_than_silently_dropped(
+    tmp_path: Path,
+) -> None:
+    """The evidence-loss mutant, in the form this panel can take it.
+
+    Kidney is sampled at every stage and placed at none, so it has no line to
+    draw and D42 forbids an empty frame for it. Dropping it without a word
+    would leave five panels beside a tau sentence reading "6 organs sampled"
+    -- the page contradicting itself, and a reader concluding this dataset
+    never looked at kidney.
+    """
+    profile = _organ_panel(
+        ("heart", (50.0, 150.0, 275.0)),
+        ("kidney", (None, None, None)),
+        ("liver", (0.5, 1.2, 2.0)),
+    )
+    section = _expression_section_text(_expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET))
+
+    assert set(_spark_panels(section)) == {"heart", "liver"}
+    assert "No panel is drawn for kidney" in section
