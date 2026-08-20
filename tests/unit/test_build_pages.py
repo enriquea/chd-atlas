@@ -3587,10 +3587,17 @@ def test_the_gloss_never_calls_a_gene_heart_preferential_on_another_organs_peak(
     heart_section = _expression_section_text(_page(tmp_path, "HGNC_11604.html"))
     liver_section = _expression_section_text(_page(tmp_path, "HGNC_4173.html"))
 
-    assert "heart-preferential" in heart_section
-    assert "peaks in Heart" in heart_section
+    # The cardiac argmax names the organ and says it is cardiac. It does NOT
+    # say "preferential": measured over the committed corpus, 445 blocks
+    # carried that adjective and 30 of them sat below tau 0.20 -- TAB2 at
+    # 4 wpc scores 0.046, where heart leads the runner-up by 7% across seven
+    # organs. A negative assertion on built bytes, because the positive one
+    # fails when a sentence is deleted and only this fails when it returns
+    # (CLAUDE.md 4.35).
+    assert "preferential" not in heart_section
+    assert "peaks in Heart at this stage, one of this dataset's cardiac tissues" in heart_section
 
-    assert "heart-preferential" not in liver_section
+    assert "preferential" not in liver_section
     assert "peaks in Liver" in liver_section
     assert "does not treat as a cardiac tissue" in liver_section
 
@@ -3611,7 +3618,7 @@ def test_the_gloss_says_neither_organ_when_the_peak_is_tied(tmp_path: Path) -> N
     )
     section = _expression_section_text(page)
 
-    assert "heart-preferential" not in section
+    assert "preferential" not in section
     assert "peaks in" not in section
     assert "tied" in section
     # Rule 3 still holds in the tied case: the number, its scale and its organ

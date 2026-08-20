@@ -2436,14 +2436,22 @@ def _specificity_sentence(spec: Specificity, cardiac_tissues: frozenset[str]) ->
     measure label, after the same near miss: a bare number under a header that
     does not say what it measures.
 
-    **"Heart-preferential" is gated on `highest_in` being one of this
-    dataset's own declared `cardiac_tissues`, never on tau alone.** tau
-    measures concentration, not location: a gene at heart 20, liver 200, five
-    other organs at 5 scores tau = 0.623 on log2 with `highest_in` = liver, and
-    a gloss keyed on the number alone would call that gene heart-preferential
-    -- the opposite of the truth. Three mutually exclusive endings -- the
-    argmax is cardiac, the argmax is some other organ, or the peak is tied
-    (`highest_in is None`) -- and only the first ever uses that phrase.
+    **It said "Expression is heart-preferential at this stage" until
+    2026-08-21, and that was an adjective this function's own last paragraph
+    already forbade.** The phrase was gated correctly -- on `highest_in` being
+    one of this dataset's declared `cardiac_tissues`, never on tau alone,
+    because tau measures concentration and not location. What it was not
+    gated on was *how much* preference the number supports. Measured over the
+    committed corpus: 445 stage blocks carried it, median tau 0.708, but **65
+    below 0.30, 30 below 0.20 and 16 below 0.15** -- at the extreme, TAB2 at
+    4 wpc with tau 0.046, where heart's 124 leads ovary's 116 and hindbrain's
+    115 across seven organs. A 7% lead is an argmax; "preferential" reads as
+    a finding.
+
+    So the argmax gate stays and the adjective goes. Three mutually exclusive
+    endings -- the argmax is cardiac, the argmax is some other organ, or the
+    peak is tied (`highest_in is None`) -- each naming the organ and leaving
+    the reader to weigh it against the tau printed in the same sentence.
 
     No adjective and no band on the number itself: this function states the
     scale, the organs and the argmax and stops there, never "highly specific"
@@ -2459,8 +2467,8 @@ def _specificity_sentence(spec: Specificity, cardiac_tissues: frozenset[str]) ->
         peak = "No single organ has the highest median at this stage; the peak is tied."
     elif highest in cardiac_tissues:
         peak = (
-            "Expression is heart-preferential at this stage: it peaks in "
-            f"{html.escape(highest)}, one of this dataset's cardiac tissues."
+            f"Expression peaks in {html.escape(highest)} at this stage, one of "
+            "this dataset's cardiac tissues."
         )
     else:
         peak = (

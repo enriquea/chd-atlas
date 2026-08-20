@@ -223,8 +223,10 @@ class Specificity(TypedDict):
     banding (<=0.5 broad, >=0.8-0.9 specific), and choosing a threshold is a
     classification the atlas would author, which D39(c) forbids. `highest_in`
     is what makes a page's wording safe -- tau measures concentration, not
-    location, so a "heart-preferential" gloss keyed on tau alone can state
-    the opposite of the truth for a gene concentrated elsewhere.
+    location, so an organ-naming gloss keyed on tau alone can state the
+    opposite of the truth for a gene concentrated elsewhere. (The page said
+    "heart-preferential" until 2026-08-21; `pages._specificity_sentence`
+    records why the adjective went and why this gate stayed.)
 
     - `scale` -- names the transform (D39(a)); the same input reads
       tissue-specific on linear and broad on log2, so this is not decoration.
@@ -262,7 +264,8 @@ def specificity(medians: Mapping[str, float], floor: float) -> Specificity | Non
     0.900 on linear RPKM -- "tissue-specific" -- and 0.480 on log2 --
     "broadly expressed". Yanai et al. 2005 and the Kryuchkova-Mostacci &
     Robinson-Rechavi benchmark both compute tau on log expression; computing
-    on linear would call ordinary genes heart-preferential across the board.
+    on linear would publish a number that reads tissue-specific for ordinary
+    genes across the board.
 
     Returns `None`, never `0.0`, when tau is undefined:
 
