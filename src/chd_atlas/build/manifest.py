@@ -267,7 +267,62 @@ from chd_atlas.corpus import Corpus
 # `{"datasets": []}` shape and neither figure can be told apart from the other
 # or from a hardcoded zero without a fixture -- `profiles.profile_census`'s own
 # tests build one rather than trusting a real build to distinguish them.
-SCHEMA_VERSION: Final = "2.11"
+# 2.12 adds `order` to every `stages` entry in `datasets.json`, and changes the
+# order of `expression_profile.datasets[].stages[]` in all 92 gene bundles from
+# alphabetical to chronological. MINOR -- but the second half is a correction to
+# already-published data, so the letter was checked against the rule above
+# rather than assumed.
+#
+# `order` is the curated chronological position of one of a dataset's own stage
+# tokens: 1-based, ascending, unique within a dataset (PRF011, and PRF012
+# refuses an `order` that contradicts its own `wpc`). Required and always
+# present, so a 2.11 parser is unaffected and a 2.12 reader never guards for a
+# missing key. It exists because `wpc` cannot do this job: `wpc` is null for
+# every post-natal stage -- 8 of E-MTAB-6814's 21 -- so the tokens that most
+# need ordering carry no number at all, and what the build sorted on instead was
+# the token string.
+#
+# **The reordering is the release, and it is a defect being fixed rather than a
+# feature being added.** Through 2.11 a gene bundle's stage array was sorted
+# alphabetically: `4 week post conception` published eighth, after `19 week post
+# conception`, and `elderly` second of the eight post-natal stages.
+# Deterministic, reproducible, byte-identical between builds, and wrong -- a
+# developmental time series published in dictionary order. It survived three
+# releases because nothing asserted a chronology and no published artifact drew
+# one.
+#
+# MINOR by the rule, for the reason 2.2's population change was MINOR: no field
+# is added, removed or reshaped, every entry still carries every key 2.11
+# published, and a parser is unaffected. The paragraph 2.2 added for *rows*
+# applies to *positions* -- what changed is which entry sits where, not what an
+# entry is.
+#
+# **The display obligation is heavier than the parsing one, again, and it is
+# unusual: a correct consumer's output changes.** Anything that plotted `stages`
+# in array order -- the obvious thing to do with a developmental series -- drew
+# an axis in the wrong sequence and will now draw a different picture. That is
+# the correction arriving, not a regression to investigate. A consumer that
+# worked around it by sorting the tokens itself must *remove* the workaround,
+# because sorting the tokens is precisely the bug. No version letter can carry
+# that, so `docs/data-api.md` states it where a reader meets the array.
+#
+# `datasets.json`'s own `stages` array is **not** sorted by the build: that file
+# is serialised generically from the curated record (`literature._dump`), so its
+# order is the curation file's declaration order, and nothing enforces that to
+# agree with `order`. The two agree today. A consumer wanting chronology from
+# that file sorts on `order` rather than trusting the array, and the API doc
+# says so rather than leaving the coincidence to be discovered.
+#
+# **That array moved in this release too, and measurement is the only reason
+# this sentence is here.** A diff of two real builds (2.11 against 2.12) shows
+# `datasets.json` changing in *two* ways, not the one that was expected: every
+# stage gains `order`, and the eight post-natal entries come back in a
+# different sequence -- `neonate` first rather than `adolescent` -- because the
+# curator renumbered and re-sequenced that block in the same commit. The token
+# *set* is unchanged and every `wpc` is unchanged; the sequence is not. It was
+# first recorded as "gained exactly one key, with identical stage tokens",
+# which is true of the set and false of the order (CLAUDE.md section 4.24).
+SCHEMA_VERSION: Final = "2.12"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is
