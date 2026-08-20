@@ -43,9 +43,9 @@ TBX20 = "HGNC:11598"
 REPO = Path(__file__).parent.parent.parent
 
 # The parenthetical said "browsable once curated" until D21, which made it
-# false: 23 of these 154 genes are browsable today and 22 of those carry no
-# curation from this atlas at all. What decides is ClinGen's grade, and that is
-# what it now says. The row's placement and label are pinned below for the
+# false: 23 of these 154 genes were browsable then and 22 of those carried no
+# curation from this atlas at all. What decides is the upstream grade, and that
+# is what it now says. The row's placement and label are pinned below for the
 # reason they always were -- this number must never read as published coverage.
 #
 # It then said "(browsable once ClinGen grades it definitive)", which was false
@@ -452,12 +452,12 @@ def test_the_published_and_mirrored_counts_are_derived_not_hardcoded(tmp_path: P
     against one fixture and only that one; varying the fixture and checking the
     rendered counts move with it is what tells a literal from a derivation. Two
     assertions on two genes, three published genes and five mirrored ones --
-    none of which match the committed corpus's one assertion, its 23 published
-    genes or its 154 mirrored ones -- so a hardcoded "1"/"23"/"154" fails here.
+    none of which match the committed corpus's one assertion, its 92 published
+    genes or its 154 mirrored ones -- so a hardcoded "1"/"92"/"154" fails here.
 
     The three fixture values are deliberately all different, and `published` is
     deliberately not the asserted genes. Since D21 those are separate
-    populations -- 22 of the 23 genes the site publishes carry no assertion --
+    populations -- 91 of the 92 genes the site publishes carry no assertion --
     and the figure wired to the wrong one of the three is the mistake this
     catches: the page used to count `{assertion.gene for ...}` under this very
     label, which would render 2 here instead of 3.
@@ -493,7 +493,7 @@ def test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json(
     This is the regression the false "154 genes" claim was: `mirrored_gene_count
     = len(validity)` counted every gene either mirror curates, not the genes the
     build actually publishes. `genes/index.json` is keyed on `published`
-    (`derive.gene_facts`), which for the committed corpus is 23 genes — not 154,
+    (`derive.gene_facts`), which for the committed corpus is 92 genes — not 154,
     and no longer the 1 gene that carries an assertion either. Checked here
     against the real built file rather than against a literal, so it fails the
     same way the original bug would if it recurred, and so that widening the
@@ -511,9 +511,10 @@ def test_the_published_gene_count_agrees_with_a_real_build_of_genes_index_json(
 def test_the_landing_page_distinguishes_published_from_curated(tmp_path: Path) -> None:
     """The promotion review forced this distinction into prose once already.
 
-    23 genes are published on an expert panel's classification and 1 carries the
-    atlas's own evidence. A single "genes" count would read as coverage the site
-    does not have.
+    92 genes are published on an upstream authority's classification -- 76 on a
+    ClinGen expert panel's and 16 on two or more agreeing GenCC submitters --
+    and 1 carries the atlas's own evidence. A single "genes" count would read
+    as coverage the site does not have.
 
     The fixture separates all three numbers that could be wired to this row --
     two assertions, on one gene, against three published genes -- because the

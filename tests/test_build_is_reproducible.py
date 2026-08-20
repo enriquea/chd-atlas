@@ -58,8 +58,9 @@ def test_two_builds_of_one_commit_are_byte_identical(
     order under every seed, and that dropping the gene sort in `search.py` and
     building under `PYTHONHASHSEED` 0 and 12345 produced byte-identical output.
     That was measured against a build whose search index was keyed on the
-    asserted genes. D31 rekeyed it on `published`, which is 23 genes, and the
-    same measurement rerun on 2026-08-04 now gives two different files —
+    asserted genes. D31 rekeyed it on `published` — 23 genes when that was
+    measured on 2026-08-04, and 92 since the gate widened on 2026-08-06 — and
+    the same measurement rerun then gives two different files —
     `search/index.json.gz` and, through it, `manifest.json`. The corpus-size
     escape hatch is gone; the in-process one above is the whole reason this test
     cannot see hash order, which is why it is stated first.
