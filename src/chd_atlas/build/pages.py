@@ -1722,10 +1722,12 @@ def _mark_class(row: BurdenRow, glyph: str) -> str:
     byte-identical to `chart-point`'s. Measured 2026-08-20 on the built
     corpus: **205 of the 854 plotted marks were arrows, not one of them had
     survived any correction, and every one was drawn in the fill that says it
-    had.** 13 of those sat on a ClinGen `definitive` gene, GATA4 among them,
-    whose Sierant enrichment panel drew three solid marks of which the third
-    was `p 1 · q 1`. Two families of class name, written twice, is how that
-    happened; one function is the fix.
+    had.** 30 were corrected and failed, with q as high as 1.0, and 175 came
+    from a study publishing no correction at all; **13 of the 30 sat on a
+    ClinGen `definitive` gene**, GATA4 among them, whose Sierant enrichment
+    panel drew three solid marks of which the third was `p 1 · q 1`. Two
+    families of class name, written twice, is how that happened; one function
+    is the fix.
 
     Measured 2026-08-20 over the 915 published rows: 55 carry an adjusted p
     below 0.05 and 45 of those are plottable, all from PMID:40127276.
