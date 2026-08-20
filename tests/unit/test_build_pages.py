@@ -2538,21 +2538,37 @@ def test_the_union_key_never_promises_a_component_row_the_panel_does_not_draw(
                 _burden_row(cohort_stratum="all", effect=2.45, **placed),
                 _burden_row(cohort_stratum="syndromic", effect=3.1, **placed),
                 _burden_row(cohort_stratum="nonsyndromic", effect=4.2, **placed),
-                # Panel two, Sierant enrichment ratios: `all cases · damaging`
-                # is tagged on the consequence axis with only one of the two
-                # component consequences drawn. No published panel is in this
-                # state; every measured case splits on the other axis.
+                # Panel two, Sierant enrichment ratios: `syndromic ·
+                # damaging` is tagged on the consequence axis with only one of
+                # its two component consequences drawn. No published panel is
+                # in this state; every measured case splits on the other axis.
+                #
+                # **The missing component is on the panel under a different
+                # stratum**, and no row here is `all cases`, so the stratum
+                # union is off and this measures the consequence branch alone.
+                # Without it, dropping `_fully_split`'s `other.cohort_stratum
+                # == row.cohort_stratum` -- checking the union across strata
+                # rather than within one -- survived all 1,050 tests: this
+                # panel's rows all shared a stratum, so holding it fixed or
+                # not made no difference to any of them (CLAUDE.md 4.36).
                 _burden_row(
-                    cohort_stratum="all",
+                    cohort_stratum="syndromic",
                     consequence_class="damaging",
                     effect=5.0,
                     **placed,
                     **enrichment,
                 ),
                 _burden_row(
-                    cohort_stratum="all",
+                    cohort_stratum="syndromic",
                     consequence_class="lof",
                     effect=6.0,
+                    **placed,
+                    **enrichment,
+                ),
+                _burden_row(
+                    cohort_stratum="nonsyndromic",
+                    consequence_class="missense_damaging",
+                    effect=4.0,
                     **placed,
                     **enrichment,
                 ),
