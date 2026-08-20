@@ -2931,9 +2931,15 @@ def _trajectory(
 
     Returns `""` -- the caller's cue to say something in words instead -- in
     each of the three cases where a figure would assert more than the data
-    does: nothing sampled for this organ, nothing placed at any stage
-    (`_no_trajectory_sentence` is what a page shows then), and no curated
-    phase band to draw, which is the bare re-plot D43 forbids.
+    does: nothing sampled for this organ, nothing placed at any stage, and no
+    curated phase band to draw, which is the bare re-plot D43 forbids.
+
+    **The three are different facts and `_dataset_block` owes a reader a
+    different sentence for each**, which it could not do while this returned
+    a bare `""` for all three. The band question is answered per *dataset*
+    rather than per organ -- `_phase_bands` never reads the tissue -- so the
+    caller can ask it directly, and does; what it cannot re-derive cheaply is
+    which of the first two applies, so it asks `_anything_placed` instead.
 
     The line is drawn only from `_STAGES_FOR_A_TRAJECTORY` placed points up.
     Below that the markers stand alone: `charts.polyline` refuses fewer than
@@ -3024,6 +3030,70 @@ def _sampled_cardiac(entry: DatasetProfileEntry, cardiac: frozenset[str]) -> lis
     ]
 
 
+def _sampled_organs_clause(sampled: Sequence[tuple[str, int]]) -> str:
+    """ "whole heart (19 stages sampled)" -- the organ clause both refusals open with.
+
+    One implementation, because the two sentences name the same organs for
+    two different reasons and a reader who sees one never sees the other; two
+    copies of this could spell the same fact two ways with nothing failing.
+
+    **`stage` has a singular form here and did not before.** The count is a
+    real 1 on a live corpus shape -- a dataset sampling one cardiac stage for
+    a gene -- and "1 stages sampled" is the `_abundance`/`_count` discipline
+    lapsing in the one place nothing was reading.
+    """
+    return ", ".join(
+        f"whole {html.escape(tissue)} ({count} stage{'' if count == 1 else 's'} sampled)"
+        for tissue, count in sampled
+    )
+
+
+def _unbanded_sentence(entry: DatasetProfileEntry, cardiac: frozenset[str]) -> str:
+    """D43's refusal, in words: placed measurements but no phase to band them with.
+
+    The third of `_trajectory`'s three `""`s, and the only one that is not
+    about the gene at all. `_phase_bands` returns nothing when no curated
+    cardiac phase with a stated end covers any of this dataset's stages, and
+    a curve drawn without one is the re-plot of the source's own browser that
+    D43 forbids. That is a fact about this atlas's vocabulary, so this
+    sentence claims nothing about the measurements -- every one of which is
+    placed, and printed in the table below.
+
+    Reached only where something *is* placed. Where nothing is,
+    `_no_trajectory_sentence` has the better sentence whatever the bands say:
+    "no trajectory" is then a fact about the gene, and the missing band is a
+    second reason a reader does not need.
+
+    Returns `""` when this dataset sampled no cardiac organ for this gene,
+    the same degenerate case `_no_trajectory_sentence` returns `""` for and
+    for the same reason: there is no organ to make a statement about.
+    """
+    sampled = _sampled_cardiac(entry, cardiac)
+    if not sampled:
+        return ""
+    return (
+        f'<p class="notice-inline">No trajectory is drawn for '
+        f"{_sampled_organs_clause(sampled)}: none of this dataset's developmental stages "
+        "falls inside a curated cardiac phase this atlas can band, and an unbanded curve "
+        "is the source's own plot rather than anything this atlas adds. Every per-stage "
+        "figure is in the table below.</p>"
+    )
+
+
+def _anything_placed(entry: DatasetProfileEntry, cardiac: frozenset[str]) -> bool:
+    """Does any cardiac organ carry a median this dataset placed?
+
+    The one question that tells `_trajectory`'s second refusal from its third,
+    and it is asked of every cardiac organ at once because the answer decides
+    one sentence for the whole dataset block.
+    """
+    return any(
+        value is not None
+        for tissue in sorted(cardiac)
+        for _, _, value in _tissue_medians(entry, tissue)
+    )
+
+
 def _no_trajectory_sentence(
     entry: DatasetProfileEntry, cardiac: frozenset[str], floor: float | None
 ) -> str:
@@ -3050,13 +3120,22 @@ def _no_trajectory_sentence(
     Returns `""` when this dataset sampled no cardiac organ for this gene at
     all: there is then no organ to make either statement about, and every
     figure it did publish is in the table below regardless.
+
+    **Reached only where nothing at all is placed, and the first branch is
+    false the moment that stops holding.** "At every stage sampled" is read
+    off the set of recorded gap *reasons*, which says what the gaps were and
+    not how many stages had one; a series placed at 4 and 6 wpc and below the
+    floor at 5 has exactly one reason in that set. It published the bold
+    claim of a gene whose page printed two percentiles three lines below it
+    (2026-08-20). `_dataset_block` is what holds the precondition, by asking
+    `_anything_placed` before choosing this sentence over
+    `_unbanded_sentence`; the guard is stated here because this is where a
+    later author would have to break it.
     """
     sampled = _sampled_cardiac(entry, cardiac)
     if not sampled:
         return ""
-    organs = ", ".join(
-        f"whole {html.escape(tissue)} ({count} stages sampled)" for tissue, count in sampled
-    )
+    organs = _sampled_organs_clause(sampled)
     named = {tissue for tissue, _ in sampled}
     reasons = {
         measured["not_placed_reason"]
@@ -3415,7 +3494,28 @@ def _dataset_block(
     # Sorted: `cardiac` is a `frozenset`, and an unsorted iteration would put
     # two organs' charts in a different order between two builds of one commit.
     charts = "".join(_trajectory(entry, tissue, dataset, phases) for tissue in sorted(cardiac))
-    lede = charts or _no_trajectory_sentence(entry, cardiac, floor)
+    # **Three refusals, three sentences.** `_trajectory` returns `""` for
+    # three different reasons -- nothing sampled, nothing placed, and no
+    # curated phase band -- and a caller that routes them all into one
+    # sentence publishes a claim that is false for two of them. Measured
+    # 2026-08-20 with `runner.py` passing `phases=None`: 55 pages said "no
+    # measurement there is placed against this dataset's percentile grid
+    # &mdash; ." with the reason list empty, and 30 said, in bold, that the
+    # gene reads below the detection floor at every stage sampled -- one of
+    # them with 18 of its 19 heart stages placed and printed in the table
+    # below. Nothing was published in either state, because `runner.py`
+    # passes the real vocabulary; the sentences were wrong all the same, and
+    # a dataset whose stages fall in no *ended* cardiac phase reaches them.
+    #
+    # Placement first, because it is the fact about the gene. A missing band
+    # is a fact about this atlas's own vocabulary, and where nothing is
+    # placed a reader is better served by the dilution caveat than by it.
+    if charts:
+        lede = charts
+    elif _anything_placed(entry, cardiac):
+        lede = _unbanded_sentence(entry, cardiac)
+    else:
+        lede = _no_trajectory_sentence(entry, cardiac, floor)
     sparks = _small_multiples(entry, dataset)
     stages = "".join(_stage_block(stage, cardiac, floor) for stage in entry["stages"])
     total = len(entry["stages"])

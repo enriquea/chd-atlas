@@ -3905,6 +3905,14 @@ def test_every_chart_carries_an_atlas_specific_axis(tmp_path: Path) -> None:
 
     A bare re-plot of the source's own curve, with no phase band, must fail
     here.
+
+    **And the sentence that replaces the refused chart has to be true**, which
+    is a second assertion and not the same one. `_trajectory` returns `""` for
+    three different reasons and this half exercises the third; a caller that
+    routes all three into one sentence publishes, of a gene placed at every
+    stage on the page below, that no measurement there is placed at all. That
+    is what shipped until 2026-08-20: the refusal was guarded, the replacement
+    was not.
     """
     profile = _heart_series(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", 275.0))
     section = _expression_section_text(
@@ -3916,10 +3924,43 @@ def test_every_chart_carries_an_atlas_specific_axis(tmp_path: Path) -> None:
 
     # The same three measurements with no curated phase vocabulary behind them
     # are exactly the source's own curve, and are refused.
-    bare = _expression_section_text(
-        _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=None)
+    bare = _dataset_lede(
+        _expression_section_text(
+            _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=None)
+        )
     )
     assert "<svg" not in bare
+    # Every one of these three stages is placed, and the table below prints
+    # its percentile. Neither of the other two refusals' sentences may be
+    # published here.
+    assert "no measurement there is placed" not in bare
+    assert "detection floor at every" not in bare
+    assert "curated cardiac phase" in bare, "the refusal has to name the reason it refused"
+    # And it is never left dangling. The reason list is empty in this branch,
+    # so a sentence built to end in one ends "&mdash; ." -- an em dash, a
+    # space and a full stop, published on 55 pages by the mutant above.
+    assert "&mdash; ." not in bare
+
+    # The third fixture, and the one whose sentence was worst. A series with
+    # a below-floor stage *between* two placed ones has exactly one recorded
+    # gap reason, so a sentence keyed on the reason set alone reads it as
+    # "every stage is below the floor" -- in bold, on a gene whose page
+    # prints two percentiles immediately below it. "Nothing placed" and "one
+    # gap, below the floor" are different facts and only the first earns that
+    # sentence.
+    mixed = _dataset_lede(
+        _expression_section_text(
+            _expression_page(
+                tmp_path,
+                {GATA4: _heart_series(("4wpc", 5.0), ("5wpc", None), ("6wpc", 275.0))},
+                _HEART_DATASET,
+                phases=None,
+            )
+        )
+    )
+    assert "<svg" not in mixed
+    assert "detection floor at every" not in mixed
+    assert "no measurement there is placed" not in mixed
 
 
 def _trajectory_figure(section: str) -> str:
@@ -4439,6 +4480,14 @@ def test_small_multiples_are_absent_when_tau_is_undefined(tmp_path: Path) -> Non
     placed. So a build that dropped this branch would draw a real panel
     carrying `chart-cardiac`, not an empty frame that a bare "is there a
     figure" check could miss.
+
+    **The sentence the dataset block opens with is asserted too**, because
+    this fixture is also the smallest case of D42's other refusal and the two
+    share a page. One heart stage, placed, and no curated phase vocabulary:
+    no trajectory can be drawn, and the reason is the missing band, not a
+    missing measurement. Until 2026-08-20 the page said "no measurement there
+    is placed against this dataset's percentile grid" of the one stage whose
+    percentile it printed in the table below, and said it of "1 stages".
     """
     profile = _expression_profile(
         (
@@ -4461,6 +4510,12 @@ def test_small_multiples_are_absent_when_tau_is_undefined(tmp_path: Path) -> Non
     assert "chart-cardiac" not in section
     assert 'class="sparks"' not in section, "an empty frame is what D42 forbids"
     assert "only one organ was sampled" in section
+
+    lede = _dataset_lede(section)
+    assert "no measurement there is placed" not in lede
+    assert "detection floor at every" not in lede
+    assert "1 stages sampled" not in lede, "a count with no singular form"
+    assert "1 stage sampled" in lede
 
 
 def test_the_spark_caption_names_both_ways_a_panel_line_breaks(tmp_path: Path) -> None:
