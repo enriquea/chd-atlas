@@ -405,7 +405,9 @@ _GEOMETRY_ATTRIBUTES = (
     "y",
     "r",
 )
-# Longest-first, so `x1="..."` is never half-matched as `x`.
+# Longest-first. Measured: the order is not load-bearing -- the alternation
+# backtracks, so `x` failing on the `1` of `x1="..."` lets `x1` match anyway --
+# but written this way so the scan does not depend on that.
 _GEOMETRY = re.compile(r"\b(?:" + "|".join(_GEOMETRY_ATTRIBUTES) + r')="([^"]*)"')
 
 # What `charts.coordinate` produces: an integer, or an integer and exactly one
