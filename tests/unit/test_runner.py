@@ -137,6 +137,39 @@ stages:
 """
 
 
+_QUANTILES_TSV_HEADER = "dataset\ttissue\tstage\tpercentile\tvalue\tunit\tn_genes\n"
+
+# A minimal, valid phase vocabulary covering the fixture dataset's one 7 wpc
+# stage. Present in every fixture that is *not* about the vocabulary being
+# missing, so PRF013/PRF000 stay isolated to the fixtures that mean to trip
+# them -- the same isolation `_PROFILE_DATASET_YAML` buys against PRF004/005.
+# One phase, so `_prf006_issues` finds no interior gap to report either.
+_CARDIAC_PHASES_YAML = """\
+attributed_to: test fixture
+citation: PMID:32048790
+phases:
+  - id: ventricular_septum_morphogenesis
+    go_id: "GO:0060412"
+    label: "Ventricular septum morphogenesis"
+    start_wpc: 3.71
+    end_wpc: 7.29
+    start_carnegie_stage: "CS12"
+    end_carnegie_stage: "CS19"
+    start_hsapdv_id: "HsapDv:0000019"
+    end_hsapdv_id: "HsapDv:0000026"
+    end_basis: stated
+"""
+
+# The same dataset with its one stage post-natal. Phase matching is a no-op
+# for a null `wpc` by construction (`Stage.wpc`), so this is a repository with
+# profiles rows and *no work for the phase vocabulary to do*: section 4.41's
+# case, where a skip must not be emitted.
+_POSTNATAL_DATASET_YAML = _PROFILE_DATASET_YAML.replace(
+    "  - token: 7wpc\n    wpc: 7.0\n    order: 1\n",
+    "  - token: adult\n    wpc: null\n    order: 1\n",
+)
+
+
 def _repo_with_profiles_but_no_quantiles(root: Path) -> Path:
     """Profiles committed, quantiles not yet -- the ordinary state mid-curation.
 
@@ -153,9 +186,14 @@ def _repo_with_profiles_but_no_quantiles(root: Path) -> Path:
     validity mirrors -- following `_gene_registry_missing`'s and
     `_validity_mirrors_missing`'s precedent, so PRF000/PRF010 are isolated to
     their own causing pair rather than riding along with unrelated noise.
+
+    The cardiac phase vocabulary is here for that same isolation and is not
+    incidental: this fixture's profiles row names a 7 wpc stage, so without a
+    vocabulary it would trip PRF013 as well and stop isolating PRF010.
     """
     (root / "curation" / "datasets").mkdir(parents=True)
     (root / "curation" / "datasets" / "GSE999999.yaml").write_text(_PROFILE_DATASET_YAML)
+    (root / "curation" / "cardiac_phases.yaml").write_text(_CARDIAC_PHASES_YAML)
     (root / "curation" / ".id_registry.yaml").write_text("{}\n")
     (root / "mirrors").mkdir()
     (root / "mirrors" / "genes.tsv").write_text(
@@ -173,6 +211,100 @@ def _repo_with_profiles_but_no_quantiles(root: Path) -> Path:
         + "\n"
     )
     return root
+
+
+def _quantiles_tsv(dataset: str, tissue: str, stage: str, unit: str = "tpm") -> str:
+    """A complete 101-point breakpoint grid for one cell, non-decreasing.
+
+    Written out in full rather than truncated: a short grid is a different
+    defect with its own codes, and a fixture carrying one would leave the
+    PRF013 cases below reporting two things at once.
+    """
+    rows = "".join(
+        "\t".join([dataset, tissue, stage, str(percentile), str(float(percentile)), unit, "20"])
+        + "\n"
+        for percentile in range(101)
+    )
+    return _QUANTILES_TSV_HEADER + rows
+
+
+def _repo_with_profiles_and_quantiles(root: Path, dataset_yaml: str, stage: str) -> Path:
+    """Everything a profiles corpus needs except the cardiac phase vocabulary.
+
+    Deliberately complete on every other axis -- gene registry, id registry,
+    source registry, both validity mirrors, the curated dataset record, and a
+    full quantile grid for the one cell the profiles row occupies -- so the
+    phase-vocabulary codes below arrive alone rather than beside PRF010,
+    PRF004/005 or TBL012. Same isolation discipline as
+    `_repo_with_profiles_but_no_quantiles`, from which this is otherwise
+    copied.
+    """
+    (root / "curation" / "datasets").mkdir(parents=True)
+    (root / "curation" / "datasets" / "GSE999999.yaml").write_text(dataset_yaml)
+    (root / "curation" / ".id_registry.yaml").write_text("{}\n")
+    (root / "mirrors").mkdir()
+    (root / "mirrors" / "genes.tsv").write_text(
+        _GENES_TSV_HEADER
+        + "\t".join(["HGNC:11604", "TBX5", "T-box transcription factor 5", "", "", "", "", "", ""])
+        + "\n"
+    )
+    (root / "mirrors" / "sources.yaml").write_text(VALID_SOURCES_YAML)
+    (root / "mirrors" / "clingen_gene_validity.tsv").write_text(_EMPTY_CLINGEN_TSV)
+    (root / "mirrors" / "gencc_submissions.tsv").write_text(_EMPTY_GENCC_TSV)
+    (root / "mirrors" / "profiles").mkdir()
+    (root / "mirrors" / "profiles" / "GSE999999.tsv").write_text(
+        _PROFILES_TSV_HEADER
+        + "\t".join(["GSE999999", "HGNC:11604", "Heart", stage, "10.0", "tpm", "", "", "5"])
+        + "\n"
+    )
+    (root / "mirrors" / "profile_quantiles").mkdir()
+    (root / "mirrors" / "profile_quantiles" / "GSE999999.tsv").write_text(
+        _quantiles_tsv("GSE999999", "Heart", stage)
+    )
+    return root
+
+
+def _repo_with_no_phase_vocabulary(root: Path) -> Path:
+    """Prenatal profiles rows and no `curation/cardiac_phases.yaml` at all.
+
+    The absent case. `corpus.cardiac_phases` is `None`, `_prf006_issues`
+    returns `[]` on sight of it, and every check that reads the vocabulary is
+    skipped in silence. Measured on the committed corpus before PRF013:
+    deleting the file took `validate` from 4 warnings to **3**, and the build
+    stayed green while 460 stage entries flipped from `matched` to
+    `outside_window` and all 85 charted pages lost their phase bands.
+    """
+    return _repo_with_profiles_and_quantiles(root, _PROFILE_DATASET_YAML, "7wpc")
+
+
+def _repo_with_an_empty_phase_vocabulary(root: Path) -> Path:
+    """A well-formed vocabulary file declaring no phases -- equally silent.
+
+    Not the same input as a *malformed* file: `phases: []` on its own fails
+    `CardiacPhaseFile`'s required `attributed_to`/`citation` and is already an
+    error (SCHEMA001), which is why the brief's shorthand does not reproduce.
+    A file carrying both and an empty list parses cleanly, so `_prf006_issues`
+    finds no gap in nothing and reports nothing, exactly as an absent file
+    does. Both must reach PRF013; a check written as `phases is None` catches
+    only the first.
+    """
+    root = _repo_with_profiles_and_quantiles(root, _PROFILE_DATASET_YAML, "7wpc")
+    (root / "curation" / "cardiac_phases.yaml").write_text(
+        "attributed_to: test fixture\ncitation: PMID:32048790\nphases: []\n"
+    )
+    return root
+
+
+def _repo_with_only_post_natal_profiles(root: Path) -> Path:
+    """Profiles rows, no vocabulary, and nothing for a vocabulary to do.
+
+    Section 4.41: emit a skip only when there was work to skip. A stage with a
+    null `wpc` is post-natal *by construction* (`Stage.wpc`) and falls outside
+    every cardiac morphogenetic phase whether or not one is curated, so no
+    phase assignment changes here — and PRF013 firing would be the lone-skip
+    defect that section exists to prevent, in reverse.
+    """
+    return _repo_with_profiles_and_quantiles(root, _POSTNATAL_DATASET_YAML, "adult")
 
 
 def _repo_with_no_profiles(root: Path) -> Path:
@@ -360,6 +492,25 @@ def test_a_gap_warning_is_reported_without_blocking_the_build() -> None:
             {"PRF000"},
             {"PRF010"},
             id="profiles-quantiles-absent",
+        ),
+        # PRF013's own causing error, isolated: profiles rows that would have
+        # been phase-matched and no vocabulary to match them against. Without
+        # the error, PRF000 arrives alone in a report `ok` calls clean and the
+        # build publishes 85 pages saying the *dataset's* stages fall in no
+        # curated phase, when what actually happened is that the atlas's own
+        # vocabulary never loaded.
+        pytest.param(
+            _repo_with_no_phase_vocabulary,
+            {"PRF000"},
+            {"PRF013"},
+            id="phase-vocabulary-absent",
+        ),
+        # And the same for a file that parses cleanly and declares nothing.
+        pytest.param(
+            _repo_with_an_empty_phase_vocabulary,
+            {"PRF000"},
+            {"PRF013"},
+            id="phase-vocabulary-empty",
         ),
     ],
 )
@@ -686,6 +837,23 @@ def test_no_profiles_means_no_skip_warning_at_all(tmp_path: Path) -> None:
     """Emit a skip only when there was work to skip."""
     report = validate_repository(_repo_with_no_profiles(tmp_path))
     assert "PRF000" not in {issue.code for issue in report.issues}
+
+
+def test_post_natal_only_profiles_need_no_phase_vocabulary(tmp_path: Path) -> None:
+    """Section 4.41, for PRF013: a skip only when there was work to skip.
+
+    A null `wpc` is post-natal by construction and matches no cardiac phase
+    whether or not one is curated, so an absent vocabulary costs this corpus
+    nothing. Written as its own case rather than trusted to the parametrised
+    table above, which can only assert that codes *do* fire: a PRF013 keyed on
+    "profiles rows exist" rather than "a stage that would be matched exists"
+    passes every case in that table and fails only here.
+    """
+    report = validate_repository(_repo_with_only_post_natal_profiles(tmp_path))
+
+    codes = {issue.code for issue in report.issues}
+    assert "PRF013" not in codes
+    assert "PRF000" not in codes
 
 
 @pytest.mark.parametrize(
