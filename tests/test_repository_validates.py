@@ -74,26 +74,33 @@ def test_missing_validity_mirrors_fails_validation(tmp_path: Path) -> None:
     assert "SCP000" in codes
 
 
-def test_the_curated_post_natal_stage_sequence_is_pinned_against_a_literal() -> None:
-    """The eight post-natal tokens carry no `wpc`, so `order` is their only
-    chronology and PRF012 cannot check them by construction.
-
-    Without this, re-alphabetising that block in `curation/datasets/
-    E-MTAB-6814.yaml` would silently restore the exact defect `Stage.order`
-    removes -- `elderly` published second of the eight -- with every gate
-    green: the model accepts any ascending integers, and no validator can
-    contradict a null `wpc`.
-
-    Read from the real committed dataset and asserted against a literal
-    spelled out here, never against `sorted()` of the tokens themselves --
-    sorting them is what the defect did.
-    """
-    from chd_atlas.corpus import load_curation
-
-    corpus, _ = load_curation(REPO_ROOT)
-    dataset = next(item for item in corpus.datasets if item.id == "E-MTAB-6814")
-    ordered = [stage.token for stage in sorted(dataset.stages, key=lambda item: item.order)]
-    assert ordered[13:] == [
+# Every `design="profile"` dataset's whole stage sequence, in curated order.
+#
+# Keyed by accession and asserted exhaustively, because the version this
+# replaced was hardcoded to `id == "E-MTAB-6814"` and the slice `ordered[13:]`
+# -- so a second profile dataset inherited no pin at all, and one committed
+# with an inverted block validated 0 errors / 4 warnings, exactly like the
+# clean baseline. A dataset added without an entry here now fails rather than
+# passing silently.
+#
+# The prenatal half is pinned too, not only the post-natal block PRF012 cannot
+# reach: it costs nothing, and a slice boundary is one more number to get
+# wrong.
+_EXPECTED_STAGE_ORDER: dict[str, list[str]] = {
+    "E-MTAB-6814": [
+        "4 week post conception",
+        "5 week post conception",
+        "6 week post conception",
+        "7 week post conception",
+        "8 week post conception",
+        "9 week post conception",
+        "10 week post conception",
+        "11 week post conception",
+        "12 week post conception",
+        "13 week post conception",
+        "16 week post conception",
+        "18 week post conception",
+        "19 week post conception",
         "neonate",
         "infant",
         "toddler",
@@ -102,4 +109,46 @@ def test_the_curated_post_natal_stage_sequence_is_pinned_against_a_literal() -> 
         "young adult",
         "middle adult",
         "elderly",
-    ]
+    ],
+}
+
+
+def test_every_profile_dataset_pins_its_stage_sequence_against_a_literal() -> None:
+    """Post-natal tokens carry no `wpc`, so `order` is their only chronology.
+
+    PRF014 now refuses a post-natal stage ordered before a prenatal one, but
+    nothing can check the post-natal block's *internal* sequence: the model
+    accepts any ascending integers and no validator can contradict a null
+    `wpc`. Re-alphabetising that block would silently restore the exact defect
+    `Stage.order` removes -- `elderly` published second of eight -- with every
+    gate green.
+
+    Asserted against a literal spelled out in `_EXPECTED_STAGE_ORDER`, never
+    against `sorted()` of the tokens themselves: sorting them is what the
+    defect did.
+
+    **Iterates every profile dataset, and refuses an unpinned one.** The
+    version this replaced named one accession and sliced at 13, so it guarded
+    exactly one dataset's tail; a second dataset with an inverted block
+    measured 0 errors and 4 warnings, byte-identical codes to the clean
+    baseline, and this test would not have run against it at all.
+    """
+    from chd_atlas.corpus import load_curation
+    from chd_atlas.models.dataset import DatasetDesign
+
+    corpus, _ = load_curation(REPO_ROOT)
+    profiles = {
+        dataset.id: dataset
+        for dataset in corpus.datasets
+        if dataset.design is DatasetDesign.PROFILE
+    }
+
+    assert profiles, "no profile dataset in the corpus; this test measures nothing"
+    assert set(profiles) == set(_EXPECTED_STAGE_ORDER), (
+        "a profile dataset has no pinned stage sequence (or a pin names no dataset): "
+        f"{sorted(set(profiles) ^ set(_EXPECTED_STAGE_ORDER))}"
+    )
+
+    for accession, dataset in sorted(profiles.items()):
+        ordered = [stage.token for stage in sorted(dataset.stages, key=lambda item: item.order)]
+        assert ordered == _EXPECTED_STAGE_ORDER[accession], accession
