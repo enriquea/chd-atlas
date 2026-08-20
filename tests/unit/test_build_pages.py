@@ -1194,6 +1194,18 @@ def _burden_page(
     return _page(tmp_path, name)
 
 
+def _burden_section_text(page: str) -> str:
+    """The `Rare variant burden` section alone, up to the next `<h2>`.
+
+    Sliced for the reason `_validity_table` and `_expression_section_text` are
+    sliced (CLAUDE.md section 4.19). The developmental-expression section that
+    follows this one draws a chart of its own on nearly every page, so a
+    page-wide `"<svg" not in page` can be satisfied -- or defeated -- by a
+    picture the burden section did not draw.
+    """
+    return _slice_between(page, "<h2>Rare variant burden</h2>", ("<h2>",))
+
+
 def test_an_effect_size_is_never_rendered_without_the_measure_that_names_it(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
@@ -2241,6 +2253,384 @@ def test_a_family_wise_corrected_p_is_not_labelled_q(
     assert "q 0.01" in matrix
     assert "q 0.02" not in matrix
     assert "corrected p 0.02" in matrix
+
+
+# --- The effect-and-uncertainty forest ------------------------------------
+#
+# Every fixture below carries **both** values of whatever it is testing.
+# CLAUDE.md section 4.36 is why that is spelled out rather than assumed: a
+# fixture whose rows all share the value under test measures nothing, and it
+# has cost this repository four separate defects -- the last of them in a page
+# fixture exactly like these.
+
+
+def _forest_figures(section: str) -> list[str]:
+    """Each `<figure class="forest">` on the page, whole, in document order."""
+    return re.findall(r'<figure class="forest".*?</figure>', section, flags=re.S)
+
+
+def test_two_effect_measures_never_share_one_axis(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The merge `effect_measure` exists to prevent.
+
+    779 corpus rows carry an odds ratio and 75 an enrichment ratio. An odds
+    ratio of 3.1 and a de novo enrichment of 3.1 are different claims.
+    """
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(effect=2.45, effect_bound=None, ci_low=1.2, ci_high=8.1),
+                _burden_row(
+                    cohort_stratum="all",
+                    comparator="mutation_model",
+                    n_control_carriers=None,
+                    n_controls=None,
+                    control_cohorts=(),
+                    expected_count=0.42,
+                    effect=2.45,
+                    effect_measure="enrichment_ratio",
+                    effect_bound=None,
+                    ci_low=1.2,
+                    ci_high=8.1,
+                    pvalue_test="poisson",
+                ),
+            ],
+        )
+    )
+
+    figures = re.findall(r'data-effect-measure="([^"]+)"', section)
+    assert sorted(set(figures)) == ["enrichment_ratio", "odds_ratio"]
+    assert len(figures) == len(set(figures)), "one panel carried two measures"
+    # And the two panels are two pictures, not one picture drawn twice: the
+    # rows are otherwise identical, so a facet keyed on `study` alone would
+    # emit a single figure holding both numbers on one axis.
+    assert len(_forest_figures(section)) == 2
+
+
+def test_a_study_publishing_no_interval_still_gets_a_panel(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Otherwise the only picture on TBX5's page is of the null study.
+
+    PMID:40127276 reports de novo LOF enriched 297x, q 5.6e-08, surviving its
+    own correction, and publishes no intervals. Drawing only where intervals
+    exist demotes the surviving finding to text.
+    """
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(
+                    study="PMID:40127276",
+                    cohort_stratum="all",
+                    consequence_class="lof",
+                    origin="de_novo",
+                    comparator="mutation_model",
+                    n_control_carriers=None,
+                    n_controls=None,
+                    control_cohorts=(),
+                    expected_count=0.0128,
+                    effect=297.419440226872,
+                    effect_measure="enrichment_ratio",
+                    effect_bound=None,
+                    ci_low=None,
+                    ci_high=None,
+                    pvalue=1.35e-09,
+                    pvalue_test="poisson",
+                    pvalue_adjusted=5.58e-08,
+                    pvalue_adjustment="benjamini_hochberg",
+                ),
+            ],
+            publications={
+                _PUBLICATION.id: _PUBLICATION,
+                "PMID:40127276": Publication(
+                    id="PMID:40127276",
+                    title="Landscape of rare variants in congenital heart disease",
+                    journal="Nature genetics",
+                    year=2025,
+                    authors=["Sierant MC"],
+                    study_type="case_control",  # type: ignore[arg-type]
+                    own_lab=False,
+                    tests_reported=4128,
+                ),
+            },
+        )
+    )
+
+    assert "chart-nointerval" in section
+    assert "no interval published" in section
+    # The panel is drawn, not skipped: the surviving finding is a picture.
+    figures = _forest_figures(section)
+    assert len(figures) == 1
+    # **And 1 is on the axis.** This panel's only row is enriched 297x, so an
+    # axis fitted to the values present would start above 1 and leave nothing
+    # to say which side of "no enrichment" the row falls on. The null line is
+    # the one drawn from the top of the plot rather than along its foot.
+    null = re.search(r'<line class="chart-axis" x1="([\d.]+)" y1="16\.0"', figures[0])
+    assert null is not None, "the panel drew no null line"
+    assert 244.0 <= float(null.group(1)) <= 470.0
+
+
+def test_an_unbounded_effect_draws_an_arrow_and_never_a_ceiling(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`effect_bound: unbounded_above` publishes a null effect and null
+    ci_high. Those rows carry the strongest signals, and `ci_low` is the
+    finding -- never a blank, an em dash, or an invented ceiling."""
+    section = _burden_section_text(_burden_page(tmp_path, facts_uncurated, [_burden_row()]))
+
+    assert "chart-arrow" in section
+    # **And the bar reaches the axis edge rather than a number nobody
+    # published.** Asserted against literals in the figure's own coordinate
+    # system, not against the constants that produced them (CLAUDE.md section
+    # 4.38): 470.0 is the right-hand edge of the plot area and 26.0 is the
+    # first row's centre line. A renderer that invented a ceiling -- say
+    # `ci_high = ci_low * 10` -- would end the bar short of the edge.
+    figure = _forest_figures(section)[0]
+    assert '<polygon class="chart-arrow" points="470.0,26.0 463.0,22.5 463.0,29.5"/>' in figure
+    # **Scoped to this row's own bar, not to the figure.** `'x2="470.0"' in
+    # figure` was the first spelling of this and a mutant giving the row a
+    # ceiling of `ci_low * 10` survived it: the horizontal axis line runs to
+    # the same edge and satisfied the check on the bar's behalf (CLAUDE.md
+    # section 4.19). Matched at `y1="26.0"`, the first row's centre.
+    bar = re.search(
+        r'<line class="chart-line" x1="[\d.]+" y1="26\.0" x2="([\d.]+)" y2="26\.0"/>', figure
+    )
+    assert bar is not None, "the unbounded row drew no interval bar"
+    assert bar.group(1) == "470.0", "the bar stopped short of the axis edge"
+    # The number the study did publish is still the whole finding.
+    assert "OR ∞ (95% CI 28.1–∞)" in section
+
+
+def test_a_union_row_is_marked_as_one(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`damaging` is LOF + damaging missense; `all` is syndromic +
+    nonsyndromic. Stacked as sibling rows they would read as independent
+    findings, which the section's prose already denies."""
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                # A union on the consequence axis and on the stratum axis at
+                # once; a union on the stratum axis alone; and a row that is
+                # neither, so "tag every row" fails here too.
+                _burden_row(
+                    cohort_stratum="all",
+                    consequence_class="damaging",
+                    effect=2.45,
+                    effect_bound=None,
+                    ci_low=1.2,
+                    ci_high=8.1,
+                ),
+                _burden_row(
+                    cohort_stratum="all",
+                    consequence_class="lof",
+                    effect=3.1,
+                    effect_bound=None,
+                    ci_low=1.4,
+                    ci_high=9.0,
+                ),
+                _burden_row(
+                    cohort_stratum="syndromic",
+                    consequence_class="lof",
+                    effect=4.2,
+                    effect_bound=None,
+                    ci_low=1.9,
+                    ci_high=11.0,
+                ),
+                # A second study whose every row is `all cases` and which
+                # publishes neither stratum below it, and no composite.
+                _burden_row(
+                    study="PMID:40127276",
+                    cohort_stratum="all",
+                    consequence_class="lof",
+                    effect=14.96,
+                    effect_bound=None,
+                    ci_low=None,
+                    ci_high=None,
+                ),
+                _burden_row(
+                    study="PMID:40127276",
+                    cohort_stratum="all",
+                    consequence_class="missense_damaging",
+                    effect=2.24,
+                    effect_bound=None,
+                    ci_low=None,
+                    ci_high=None,
+                ),
+            ],
+        )
+    )
+
+    assert "chart-union" in section
+    # Two panels, in study order: the second study's `all cases` rows are the
+    # whole cohort rather than the sum of two rows on the page, because it
+    # publishes no syndromic or non-syndromic row at all -- which is exactly
+    # PMID:40127276's shape on all 25 genes it covers. Tagging them `union`
+    # would point a reader at rows that are not there, so the tag is
+    # conditional on the components being in the same panel, as
+    # `_composite_note` is conditional on the study reporting both.
+    figures = _forest_figures(section)
+    assert [figure.count('class="chart-union"') for figure in figures] == [0, 2]
+    # The two components are named, so the tag is a claim a reader can check.
+    assert "loss-of-function and damaging-missense rows together" in figures[1]
+    assert "syndromic and non-syndromic rows together" in figures[1]
+
+
+def test_marker_fill_encodes_survival_of_the_studys_own_correction(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """Filled where the study's own correction was survived, hollow where not.
+
+    Never a correction this atlas computed. A row whose study published no
+    correction at all is hollow for the same honest reason -- nothing says it
+    survived one.
+
+    The fixture carries one surviving and one non-surviving row, because a
+    fixture whose rows all share the value under test measures nothing.
+    """
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(
+                    cohort_stratum="all",
+                    effect=2.45,
+                    effect_bound=None,
+                    ci_low=1.2,
+                    ci_high=8.1,
+                    pvalue_adjusted=0.0037,
+                    pvalue_adjustment="benjamini_hochberg",
+                ),
+                _burden_row(
+                    cohort_stratum="syndromic",
+                    effect=3.1,
+                    effect_bound=None,
+                    ci_low=1.4,
+                    ci_high=9.0,
+                    pvalue_adjusted=0.42,
+                    pvalue_adjustment="benjamini_hochberg",
+                ),
+                _burden_row(
+                    cohort_stratum="nonsyndromic",
+                    effect=4.2,
+                    effect_bound=None,
+                    ci_low=1.9,
+                    ci_high=11.0,
+                ),
+            ],
+        )
+    )
+
+    assert "chart-point-open" in section
+    assert 'class="chart-point"' in section
+    figure = _forest_figures(section)[0]
+    # One survived; the other two did not, and one of those two is hollow for
+    # the second honest reason -- its study published no correction at all.
+    assert figure.count('class="chart-point"') == 1
+    assert figure.count('class="chart-point-open"') == 2
+    assert "did not survive" in figure
+
+
+def test_a_gene_with_no_plottable_row_gets_a_sentence_and_no_chart(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """D42. Measured: KLF13, CFC1 and MYH11 carry only CNV rows with no effect
+    measure at all; CRIPTO has no burden row. Four of 92."""
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(
+                    study="PMID:34324492",
+                    variant_class="cnv_deletion",
+                    cohort_stratum="all",
+                    consequence_class="all_coding",
+                    effect=None,
+                    effect_measure=None,
+                    effect_bound=None,
+                    ci_low=None,
+                    ci_high=None,
+                    pvalue=0.0068,
+                    pvalue_test="binomial",
+                    pvalue_adjusted=0.99,
+                    pvalue_adjustment="familywise_permutation",
+                ),
+            ],
+            publications={**_OTHER_PUBLICATIONS},
+        )
+    )
+
+    assert "<svg" not in section
+    assert "no effect measure" in section
+    # And the figures it does have stay in plain sight rather than folding
+    # behind a summary that promises a picture there is none of.
+    assert "<table" in re.sub(r"<details.*?</details>", "", section, flags=re.S)
+
+
+def test_the_forest_carries_no_summary_diamond(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """D33: no pooled statistic, ever. These cohorts overlap -- DDD
+    contributes cases to more than one cited paper -- so a pooled estimate
+    would count the same children twice. The forest idiom invites a diamond
+    and a reader expects one; its absence is deliberate and captioned."""
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [_burden_row(effect=2.45, effect_bound=None, ci_low=1.2, ci_high=8.1)],
+        )
+    )
+
+    assert "chart-diamond" not in section
+    assert "no pooled" in section
+    # Scoped to the panel that invites the diamond. `_POOLING_NOTICE` already
+    # carries "no pooled statistic across studies" as the matrix caption a
+    # screen above, so the section-wide assertion above passes with or without
+    # a word from this figure (CLAUDE.md section 4.19).
+    assert "no pooled" in _forest_figures(section)[0]
+
+
+def test_a_forest_never_replaces_the_figures_it_summarises(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """The evidence-loss mutant.
+
+    A picture that took the table with it would remove every exact count,
+    interval and p-value from the HTML -- this repository's characteristic
+    defect. The table folds; it does not leave.
+    """
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [_burden_row(effect=2.45, effect_bound=None, ci_low=1.2, ci_high=8.1)],
+        )
+    )
+
+    assert "<svg" in section
+    folded = re.search(r'<details class="study-figures">.*?</details>', section, re.S)
+    assert folded is not None, "the study's table must be folded, not deleted"
+    assert "<table" in folded.group(0)
+    assert "5 carriers / 1,471" in folded.group(0)
+    assert "OR 2.45 (95% CI 1.2–8.1)" in folded.group(0)
+    # A section-wide `<details` check would not be enough: the reading notes
+    # and the how-this-study-counted block are both `<details>` a few lines
+    # above (CLAUDE.md section 4.19). Nor is `"<table" not in unfolded`: the
+    # evidence matrix is a table too, and it is outside the fold on purpose.
+    # Asserted on a count only this study's own table renders -- the matrix
+    # cell carries the effect and one statistic and no count at all.
+    unfolded = re.sub(r"<details.*?</details>", "", section, flags=re.S)
+    assert "5 carriers / 1,471" not in unfolded
 
 
 def test_the_browse_page_refuses_a_gene_it_has_no_concordance_for(

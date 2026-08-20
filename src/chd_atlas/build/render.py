@@ -301,6 +301,9 @@ STYLESHEET: Final = """
   .chart-cardiac { stroke: var(--link); stroke-width: 2; fill: none; }
   .chart-arrow { fill: var(--link); }
   .chart-union { fill: var(--muted); font-size: 0.55rem; }
+  /* SVG `<text>` takes no `color`, only `fill`, so a label with neither
+     renders black on a dark page. The one text class the charts use. */
+  .chart-label { fill: var(--fg); font-size: 0.6rem; }
   /* One marker a forest plot might want is deliberately absent from the list
      above; `build/charts.py` names it and says why, and says it there rather
      than here on purpose. **This stylesheet is inlined verbatim into every
@@ -321,6 +324,7 @@ STYLESHEET: Final = """
   }
   .spark figcaption { font-size: 0.6rem; color: var(--muted); }
   .forest { margin: 0.6rem 0; }
+  .forest figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
 """
 
 # The one piece of client-side behaviour on the site, and a literal so it does

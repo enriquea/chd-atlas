@@ -64,7 +64,7 @@ import html
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Final
 
-from chd_atlas.build.burden import BurdenRow, shared_cohorts
+from chd_atlas.build.burden import BurdenRow, _sort_key, shared_cohorts
 from chd_atlas.build.charts import LogScale, coordinate, marker, polyline, svg_figure
 from chd_atlas.build.concordance import FamilyState, family_state
 from chd_atlas.build.derive import GeneFacts
@@ -1000,6 +1000,35 @@ def _burden_section(
             if design or _provenance(study_rows, cohorts)
             else ""
         )
+        # One panel per effect measure, never one per study: an odds ratio of
+        # 3.1 and a de novo enrichment of 3.1 are different claims, and 75 of
+        # the 915 published rows are the second kind. `sorted` over a set, for
+        # the reason every other loop here is sorted.
+        placed = [row for row in study_rows if _plottable(row)]
+        measures = sorted({row.effect_measure for row in placed if row.effect_measure is not None})
+        forests = "".join(
+            _forest(
+                [row for row in placed if row.effect_measure == measure],
+                measure,
+                _study_label(study, publications),
+            )
+            for measure in measures
+        )
+        # **Folded only where a panel above it shows the same rows.** THE FOLD
+        # RULE says a caveat may fold when it is general and must stay visible
+        # when it is particular; a table of this gene's own counts is as
+        # particular as anything on the page, and what earns the fold is not
+        # that it repeats but that the picture directly above it is drawn from
+        # exactly these rows. Where no row is plottable there is no picture, so
+        # the table is the only record and stays in plain sight -- 3 published
+        # genes are in that state (KLF13, CFC1, MYH11), and folding away the
+        # only figures they have would be evidence loss dressed as tidiness.
+        figures = (
+            f'<details class="study-figures"><summary>every figure from this study'
+            f"</summary>{table}</details>"
+            if forests
+            else table
+        )
         blocks.append(
             f"<h3>"
             f'<a href="{html.escape(_pubmed(study))}">'
@@ -1008,7 +1037,8 @@ def _burden_section(
             f"{warning}"
             f"{counted}"
             f"{_composite_note(study_rows)}"
-            f"{table}"
+            f"{forests or _NO_EFFECT_MEASURE}"
+            f"{figures}"
             f"{_footnotes(study_rows)}"
         )
 
@@ -1448,18 +1478,10 @@ def _matrix_cell(rows: Sequence[BurdenRow]) -> str:
     # odds ratio of 3.1 and a de novo enrichment of 3.1 are different claims, and
     # `_effect_compact` keeps that property.
     kind = "corrected" if state is FamilyState.CORRECTED else "nominal"
-    # `q` only where the correction really is a false-discovery rate. The mirror
-    # carries two methods -- `benjamini_hochberg`, which is an FDR, and
-    # `familywise_permutation`, which is not -- and labelling the second `q`
-    # contradicted the same page's own table, which names it "family-wise" a
-    # screen below. Measured 2026-08-05: 29 cells rendered `q`, some of them
-    # over a family-wise p.
-    if best.pvalue_adjusted is None:
-        statistic = f"p {best.pvalue:.3g}" if best.pvalue is not None else _EM_DASH
-    elif best.pvalue_adjustment == "benjamini_hochberg":
-        statistic = f"q {best.pvalue_adjusted:.3g}"
-    else:
-        statistic = f"corrected p {best.pvalue_adjusted:.3g}"
+    # `_statistic` is shared with the forest panel above, so the two pictures on
+    # one page cannot name the same number two different ways; the rule it
+    # keeps -- `q` only for a real false-discovery rate -- is recorded there.
+    statistic = _statistic(best)
     more = f'<span class="sub"> &middot; {len(rows)} rows</span>' if len(rows) > 1 else ""
     full = f"{_effect(best)}; {_corrected(best) if best.pvalue_adjusted is not None else ''}".strip(
         "; "
@@ -1493,6 +1515,472 @@ def _effect_compact(row: BurdenRow) -> str:
     if row.effect is None:
         return _EM_DASH
     return f"{measure} {_fmt(row.effect)}"
+
+
+# --- Effect and uncertainty, drawn ------------------------------------------
+#
+# The evidence matrix a screen above answers *which datasets tested this gene
+# and which found enrichment*. It cannot answer **how large** and **how
+# certain**, because a swatch has no room for a number and no room for an
+# interval. That is what this panel is for, and it is the half of the burden
+# layer a reader was previously left to assemble from a nine-row table by eye.
+#
+# **Every (study, effect measure) pair gets a panel, including the two studies
+# that publish no interval at all.** Measured 2026-08-20 over the 915 published
+# rows: PMID:42230622 publishes an interval on 100% of its 704 rows and
+# PMID:40127276 on 0% of its 150 -- and PMID:40127276 is the study with the
+# findings that survive correction. On TBX5 it reports de novo loss-of-function
+# enriched 297x at q 5.6e-08, while all eight of PMID:42230622's TBX5 intervals
+# cross 1 and none survives any correction. Drawing only where an interval
+# exists would put a picture of the null result on the page and leave the
+# surviving finding as text -- curated evidence visually demoted, which is this
+# repository's characteristic failure in a new medium.
+
+# One panel's geometry, in the SVG's own coordinates. The label column is wide
+# because the longest label this vocabulary produces -- "non-syndromic ·
+# damaging (LOF + missense) union" -- is 47 characters, and a label running
+# under the plot area would overlap the very interval it names.
+_FOREST_WIDTH: Final = 600
+_FOREST_ROW: Final = 20.0
+_FOREST_TOP: Final = 26.0
+_FOREST_LABEL_X: Final = 2.0
+_FOREST_PLOT_LEFT: Final = 244.0
+_FOREST_PLOT_RIGHT: Final = 470.0
+_FOREST_STAT_X: Final = 478.0
+_FOREST_AXIS_GAP: Final = 10.0
+_FOREST_FOOT: Final = 16.0
+
+# Text is dropped by an explicit offset rather than by `dominant-baseline`,
+# whose initial value differs between renderers: a chart whose labels sit half
+# a row too high in one browser and correctly in another is a chart nobody can
+# check against the table below it.
+_FOREST_TEXT_DROP: Final = 3.4
+_FOREST_ARROW: Final = 7.0
+_FOREST_ARROW_HALF: Final = 3.5
+
+# A quarter decade of clearance beyond the extreme values, so that no measured
+# number lands on an edge of the axis. The edges are **reserved**: an arrow
+# there means "past the end of this axis", and a real value sharing that pixel
+# would read as one. Same reason `_FLOOR_GAP` exists on the trajectory chart --
+# the atlas's weakest statement about a figure and its most extreme real one
+# must not land on the same pixel column.
+_EFFECT_AXIS_PAD: Final = 10.0**0.25
+
+# What "survived the correction" means, and the only threshold this module
+# applies to any number. It is applied to a p-value the **study** corrected and
+# published; the atlas corrects nothing (D12/D33), which is why a row whose
+# study published no correction at all is drawn hollow rather than filled --
+# nothing says it survived one.
+_CORRECTED_ALPHA: Final = 0.05
+
+# The two unions this schema contains, each as (the union's own value, the
+# components it is the union of). `_composite_note` states the first in words
+# and `_CONSEQUENCE_LABEL["damaging"]` names it in the table; the second is
+# stated by the counts themselves (measured on TBX5: 3,876 = 1,471 + 2,405).
+# The plot has to mark both, for the reason the note exists: bars stacked as
+# siblings read as independent findings, and here two of them are inside a
+# third.
+_CONSEQUENCE_UNION: Final[tuple[str, tuple[str, ...]]] = (
+    "damaging",
+    ("lof", "missense_damaging"),
+)
+_STRATUM_UNION: Final[tuple[str, tuple[str, ...]]] = (
+    "all",
+    ("syndromic", "nonsyndromic"),
+)
+
+# What a page says instead of drawing an empty frame (D42). Measured 2026-08-20
+# on a real build: 3 published genes -- KLF13, CFC1, MYH11 -- carry only
+# PMID:34324492's CNV rows, which publish no effect measure of any kind, and a
+# fourth (CRIPTO) carries no burden row at all and so reaches this section
+# never. An empty axis under a heading naming a study asserts that the study
+# measured something and found it to be nothing, which is not what happened.
+_NO_EFFECT_MEASURE: Final = (
+    '<p class="method">This study publishes <strong>no effect measure</strong> for this '
+    "gene &mdash; no odds ratio, enrichment or rate ratio &mdash; so there is nothing to "
+    "place on an effect axis. Its counts and p-values are in the table below.</p>"
+)
+
+
+def _plottable(row: BurdenRow) -> bool:
+    """Whether this row can be placed on an effect axis at all.
+
+    An `unbounded_above` row **is** plottable and renders as an arrow: those
+    rows carry the strongest signals in the mirror (TAB2: 5 syndromic
+    carriers, 0 of 45,082 controls), and `ci_low` is the finding. Excluding
+    them was an error in this plan's own first measurements.
+
+    A row with an effect measure, no effect and no unbounded flag is refused
+    rather than drawn as a bar with nothing on it. It does not occur in the
+    mirror -- `validate/burden.py` pairs `effect` with `effect_measure` -- and
+    a panel row with no estimate and no arrow would read as an estimate of
+    zero, which is a different and much stronger claim.
+    """
+    return row.effect_measure is not None and (
+        row.effect is not None or row.effect_bound == "unbounded_above"
+    )
+
+
+def _union_kinds(rows: Sequence[BurdenRow]) -> tuple[bool, bool]:
+    """Whether each union is *shown as one* in this panel: (consequence, stratum).
+
+    Conditional on the components being in the same panel, exactly as
+    `_composite_note` is conditional on the study reporting both. Measured
+    2026-08-20: every PMID:40127276 row is `cohort_stratum: all` and that study
+    publishes no syndromic or non-syndromic row at all, so its `all` rows are
+    the whole cohort rather than the sum of two rows a reader can see. Tagging
+    them `union` would point at rows that are not on the page.
+    """
+    composite, parts = _CONSEQUENCE_UNION
+    consequence = any(row.consequence_class == composite for row in rows) and any(
+        row.consequence_class in parts for row in rows
+    )
+    whole, strata = _STRATUM_UNION
+    stratum = any(row.cohort_stratum == whole for row in rows) and any(
+        row.cohort_stratum in strata for row in rows
+    )
+    return consequence, stratum
+
+
+def _is_union(row: BurdenRow, kinds: tuple[bool, bool]) -> bool:
+    """Whether this row contains other rows in its own panel."""
+    consequence, stratum = kinds
+    return (consequence and row.consequence_class == _CONSEQUENCE_UNION[0]) or (
+        stratum and row.cohort_stratum == _STRATUM_UNION[0]
+    )
+
+
+def _marker_class(row: BurdenRow) -> str:
+    """Filled where the study's own correction was survived, hollow where not.
+
+    **Never a correction this atlas computed** -- there is none (D12/D33). The
+    hollow form therefore covers two cases that are honestly the same one: the
+    study corrected and this row did not clear the threshold, and the study
+    published no correction, so nothing says it cleared anything. Measured
+    2026-08-20 over the 915 published rows: 55 carry an adjusted p below 0.05
+    and 45 of those are plottable, all from PMID:40127276.
+
+    A synonymous row that *does* survive is drawn muted rather than in the
+    result colour, because it is the study's own negative control and a
+    surviving one is a warning about the comparison rather than a finding
+    (`_SYNONYMOUS_NOTICE` says the rest). No published row is in that state
+    today -- all 261 published synonymous rows come from the study that
+    publishes no correction -- so the branch is exercised by its test rather
+    than by the corpus. Hollowness is what may not be traded away here: it
+    carries the correction, which the muted colour does not.
+    """
+    survived = row.pvalue_adjusted is not None and row.pvalue_adjusted < _CORRECTED_ALPHA
+    if not survived:
+        return "chart-point-open"
+    return "chart-control-point" if row.consequence_class == "synonymous" else "chart-point"
+
+
+def _statistic(row: BurdenRow) -> str:
+    """The one statistic that speaks for a row: the published correction where
+    there is one, and the raw p otherwise.
+
+    `q` only where the correction really is a false-discovery rate. The mirror
+    carries two methods -- `benjamini_hochberg`, which is an FDR, and
+    `familywise_permutation`, which is not -- and labelling the second `q`
+    contradicted the same page's own table, which names it "family-wise" a
+    screen below. Measured 2026-08-05: 29 matrix cells rendered `q`, some of
+    them over a family-wise p.
+
+    One function for the matrix cell and the forest panel, so the two pictures
+    on one page cannot name the same number two different ways.
+    """
+    if row.pvalue_adjusted is None:
+        return f"p {row.pvalue:.3g}" if row.pvalue is not None else _EM_DASH
+    if row.pvalue_adjustment == "benjamini_hochberg":
+        return f"q {row.pvalue_adjusted:.3g}"
+    return f"corrected p {row.pvalue_adjusted:.3g}"
+
+
+def _forest_statistic(row: BurdenRow) -> str:
+    """Both statistics for a plotted row: the raw p, and the correction if any.
+
+    The matrix cell shows one because it has one line; a panel row has a whole
+    column, and the pair is what the fill of its marker is derived from. A
+    reader who sees a hollow marker beside `p 0.045 · q 0.29` can check the
+    encoding against the numbers, which is the only way a legend is worth
+    anything.
+    """
+    raw = f"p {row.pvalue:.3g}" if row.pvalue is not None else _EM_DASH
+    if row.pvalue_adjusted is None:
+        return raw
+    return f"{raw} · {_statistic(row)}"
+
+
+def _effect_bounds(rows: Sequence[BurdenRow]) -> tuple[float, float]:
+    """The axis one panel's rows are placed on, padded clear of both edges.
+
+    **1.0 is always among the values**, so the null line is always on the
+    axis: a reader must always be able to see which side of "no enrichment" a
+    bar falls on, and a panel whose rows are all above 1 would otherwise draw
+    no null at all and read as if every row were enriched relative to the
+    weakest of them.
+
+    Only positive values are collected. A zero effect and a zero lower bound
+    have no position on a logarithmic axis -- `LogScale` refuses them rather
+    than clamping, because a clamped zero reads as "the smallest number here"
+    -- and `_forest_estimate` draws them as an arrow off the left edge
+    instead. Measured 2026-08-20: 182 of the 915 published rows have an effect
+    of exactly zero, every one of them with no case carrier, and 152 of those
+    also publish a zero lower bound.
+
+    `_axis_bounds` is what makes a panel whose values are all equal drawable at
+    all; the padding is applied after it, so the flat case is widened and then
+    padded rather than either alone.
+    """
+    values = [1.0]
+    for row in rows:
+        values.extend(
+            value
+            for value in (row.effect, row.ci_low, row.ci_high)
+            if value is not None and value > 0
+        )
+    low, high = _axis_bounds(values)
+    return low / _EFFECT_AXIS_PAD, high * _EFFECT_AXIS_PAD
+
+
+def _forest_line(x1: float, x2: float, y: float, css_class: str) -> str:
+    """One horizontal rule at `y`, from `x1` to `x2`."""
+    return (
+        f'<line class="{html.escape(css_class)}" x1="{coordinate(x1)}" y1="{coordinate(y)}" '
+        f'x2="{coordinate(x2)}" y2="{coordinate(y)}"/>'
+    )
+
+
+def _forest_arrow(x: float, y: float, *, pointing: float) -> str:
+    """A triangle at an axis edge: this row continues past the end of the axis.
+
+    `pointing` is +1 for the right-hand edge and -1 for the left. The apex sits
+    exactly on the edge, which is why `_EFFECT_AXIS_PAD` keeps every measured
+    value away from it.
+    """
+    base = x - pointing * _FOREST_ARROW
+    return (
+        f'<polygon class="chart-arrow" points="{coordinate(x)},{coordinate(y)} '
+        f"{coordinate(base)},{coordinate(y - _FOREST_ARROW_HALF)} "
+        f'{coordinate(base)},{coordinate(y + _FOREST_ARROW_HALF)}"/>'
+    )
+
+
+def _forest_text(x: float, y: float, content: str, *, anchor: str) -> str:
+    """One label. `content` is already escaped markup, because a row label
+    carries a `<tspan>` for its union tag and escaping here would publish the
+    tag as literal text."""
+    return (
+        f'<text class="chart-label" x="{coordinate(x)}" '
+        f'y="{coordinate(y + _FOREST_TEXT_DROP)}" text-anchor="{anchor}">{content}</text>'
+    )
+
+
+def _forest_interval(row: BurdenRow, y: float, scale: LogScale) -> str:
+    """The row's published interval, or the statement that there is none.
+
+    A row with neither bound gets a hatched bar spanning the whole axis, not a
+    short one and not nothing: 150 of the 915 published rows are in that state
+    and they include every finding that survives a correction. A short bar
+    would invent a precision the study never claimed, and no bar at all would
+    make the strongest rows on the site the faintest marks on it.
+
+    A bound that is absent or zero resolves to the axis edge, where
+    `_forest_estimate` has already drawn the arrow that says the row runs past
+    it. Measured 2026-08-20 on the published corpus, the two coincide exactly:
+    every row with a zero lower bound has an effect of zero, and every row with
+    no upper bound is flagged `unbounded_above`.
+    """
+    if row.ci_low is None and row.ci_high is None:
+        return _forest_line(_FOREST_PLOT_LEFT, _FOREST_PLOT_RIGHT, y, "chart-nointerval")
+    low = scale.x(row.ci_low) if row.ci_low is not None and row.ci_low > 0 else _FOREST_PLOT_LEFT
+    high = (
+        scale.x(row.ci_high) if row.ci_high is not None and row.ci_high > 0 else _FOREST_PLOT_RIGHT
+    )
+    control = row.consequence_class == "synonymous"
+    return _forest_line(low, high, y, "chart-control" if control else "chart-line")
+
+
+def _forest_estimate(row: BurdenRow, y: float, scale: LogScale) -> str:
+    """The point estimate, or an arrow where the axis has no position for it.
+
+    Two rows have no point to draw and both are drawn as arrows rather than as
+    blanks:
+
+    * `effect_bound: unbounded_above` -- Fisher returns an infinite odds ratio
+      where no control carries, and `allow_nan=False` refuses to publish it.
+      All 23 such published rows have zero control carriers. The lower bound is
+      the finding, and it is the left end of the bar this arrow terminates.
+    * an effect of exactly zero -- no case carried, on all 182 published rows
+      in that state. Zero has no position on a logarithmic axis, and clamping
+      it onto the axis floor would read as "the smallest effect measured here"
+      rather than as "none".
+    """
+    if row.effect is None:
+        return _forest_arrow(_FOREST_PLOT_RIGHT, y, pointing=1.0)
+    if row.effect <= 0:
+        return _forest_arrow(_FOREST_PLOT_LEFT, y, pointing=-1.0)
+    return marker(scale.x(row.effect), y, css_class=_marker_class(row))
+
+
+def _forest_row(row: BurdenRow, index: int, scale: LogScale, *, union: bool) -> str:
+    """One burden row: its name, its interval, its estimate and its statistics."""
+    y = _FOREST_TOP + index * _FOREST_ROW
+    label = (
+        f"{_STRATUM_LABEL.get(row.cohort_stratum, row.cohort_stratum)} · "
+        f"{_CONSEQUENCE_LABEL.get(row.consequence_class, row.consequence_class)}"
+    )
+    # A `<tspan>` rather than a second `<text>` at a computed x: the label's
+    # width depends on the reader's font, which this build cannot measure, and
+    # a tag positioned by arithmetic would land on top of the longest labels.
+    tag = '<tspan class="chart-union"> union</tspan>' if union else ""
+    return (
+        _forest_text(_FOREST_LABEL_X, y, html.escape(label) + tag, anchor="start")
+        + _forest_interval(row, y, scale)
+        + _forest_estimate(row, y, scale)
+        + _forest_text(_FOREST_STAT_X, y, html.escape(_forest_statistic(row)), anchor="start")
+    )
+
+
+def _forest_caption(
+    rows: Sequence[BurdenRow], measure: str, bounds: tuple[float, float], kinds: tuple[bool, bool]
+) -> str:
+    """The key. Every clause names a mark that is actually on this panel.
+
+    Conditional clause by clause, for the reason `_composite_note` and
+    `_SYNONYMOUS_NOTICE` are conditional and `_POOLING_NOTICE` had to be
+    reworded when it moved (CLAUDE.md section 4.27): a sentence's truth
+    conditions travel with its position, and a legend entry for a glyph the
+    reader cannot see sends them hunting for it.
+
+    The pooling clause is **not** conditional, and it is worded as policy
+    rather than as an observation about this page. It is here at all because
+    the forest idiom ends in a summary diamond and a reader who knows the
+    idiom will look for one; its absence has to be an answer rather than a
+    gap. It deliberately does not reuse `_POOLING_NOTICE`'s own sentence:
+    that constant is the matrix's caption, and a test asserts it survives
+    outside the fold, which a second copy of its wording here would satisfy on
+    its behalf.
+    """
+    low, high = bounds
+    label = _MEASURE_LABEL.get(measure, measure)
+    parts = [
+        f"Axis: <strong>{html.escape(label)}</strong> on a logarithmic scale, "
+        f"{_fmt(low)} to {_fmt(high)}; the vertical line is <strong>1</strong>, "
+        "no enrichment. ",
+        "A <strong>hollow</strong> marker is a row that <strong>did not survive</strong> its "
+        "own study's correction for multiple testing, or whose study published no correction "
+        "at all &mdash; the atlas computes none of its own. ",
+        "A forest plot usually ends in a summary diamond. There is <strong>no pooled</strong> "
+        "estimate here and none is computed anywhere on this site: two studies that share a "
+        "sample collection describe partly the same children, and adding their rows would "
+        "count them more than once. ",
+    ]
+    if any(row.ci_low is None and row.ci_high is None for row in rows):
+        parts.append(
+            "A <strong>hatched</strong> bar means <strong>no interval published</strong> for "
+            "that row, not a wide one. "
+        )
+    if any(row.effect is None for row in rows):
+        parts.append(
+            "An arrow to the <strong>right</strong> is an effect unbounded above &mdash; no "
+            "control carried the variant &mdash; so the study's lower bound is the whole "
+            "finding and there is no point estimate to place. "
+        )
+    if any(row.effect is not None and row.effect <= 0 for row in rows):
+        parts.append(
+            "An arrow to the <strong>left</strong> is an effect of zero &mdash; no case "
+            "carried the variant &mdash; which a logarithmic axis has no position for. "
+        )
+    consequence, stratum = kinds
+    reasons = []
+    if consequence:
+        reasons.append(
+            "<code>damaging</code> is the loss-of-function and damaging-missense rows together"
+        )
+    if stratum:
+        reasons.append("<code>all cases</code> is the syndromic and non-syndromic rows together")
+    if reasons:
+        parts.append(
+            "A row tagged <strong>union</strong> contains other rows in this panel and is not "
+            "an independent finding: " + "; ".join(reasons) + ". "
+        )
+    if any(row.consequence_class == "synonymous" for row in rows):
+        # Not the words "negative control", deliberately. That teaching is
+        # `_SYNONYMOUS_NOTICE`'s and it is behind the fold, where
+        # `test_the_general_reading_notes_are_folded_out_of_the_way` asserts it
+        # stays; a caption repeating the phrase on all 94 pages would satisfy
+        # that test on the notice's behalf and unfold nothing. What this clause
+        # owes the reader is what the *muting* means, which nothing else says.
+        parts.append(
+            "The <strong>muted</strong> row is this study's <strong>synonymous</strong> row, "
+            "drawn apart from the results it calibrates; <em>How to read these numbers</em>, "
+            "above, says why."
+        )
+    return f"<figcaption>{''.join(parts).strip()}</figcaption>"
+
+
+def _forest(rows: Sequence[BurdenRow], measure: str, study_label: str) -> str:
+    """One study's rows for one effect measure, as effect and interval.
+
+    **One panel per (study, effect measure), never one per study.** 779 of the
+    915 published rows carry an odds ratio and 75 an enrichment ratio, and one
+    study publishes both: an odds ratio of 3.1 and a de novo enrichment of 3.1
+    are different claims, so placing them on one axis would equate them at the
+    only scale a reader actually reads. `_effect` has no branch that omits the
+    measure's name for the same reason; this is that rule in geometry.
+
+    Rows are in `_sort_key` order, so the panel reads top to bottom in the
+    order the table below it reads -- the composite above its components, the
+    synonymous negative control last.
+
+    Raises on an empty panel rather than emitting an axis with nothing on it.
+    The caller filters on `_plottable` and never calls this with nothing, so
+    this is a guard on a bypassed gate: a bypassed gate must fail rather than
+    publish (`raise`, never `assert` -- `-O` strips `assert`).
+    """
+    if not rows:
+        raise ValueError("a forest panel needs at least one row to place")
+    ordered = sorted(rows, key=_sort_key)
+    bounds = _effect_bounds(ordered)
+    scale = LogScale(
+        low=bounds[0],
+        high=bounds[1],
+        left=_FOREST_PLOT_LEFT,
+        width=_FOREST_PLOT_RIGHT - _FOREST_PLOT_LEFT,
+    )
+    kinds = _union_kinds(ordered)
+    axis_y = _FOREST_TOP + (len(ordered) - 1) * _FOREST_ROW + _FOREST_AXIS_GAP
+    top = _FOREST_TOP - _FOREST_ROW / 2
+    null_x = scale.x(1.0)
+    body = (
+        _forest_line(_FOREST_PLOT_LEFT, _FOREST_PLOT_RIGHT, axis_y, "chart-axis")
+        + f'<line class="chart-axis" x1="{coordinate(null_x)}" y1="{coordinate(top)}" '
+        f'x2="{coordinate(null_x)}" y2="{coordinate(axis_y)}"/>'
+        + _forest_text(null_x, top - 6.0, "1", anchor="middle")
+        + _forest_text(_FOREST_PLOT_LEFT, axis_y + 8.0, _fmt(bounds[0]), anchor="start")
+        + _forest_text(_FOREST_PLOT_RIGHT, axis_y + 8.0, _fmt(bounds[1]), anchor="end")
+        + "".join(
+            _forest_row(row, index, scale, union=_is_union(row, kinds))
+            for index, row in enumerate(ordered)
+        )
+    )
+    noun = "statistic" if len(ordered) == 1 else "statistics"
+    title = (
+        f"{study_label}: {len(ordered)} published "
+        f"{_MEASURE_LABEL.get(measure, measure)} {noun} for this gene on a logarithmic axis, "
+        f"with 95% confidence intervals where this study published them, and no pooled summary."
+    )
+    figure = svg_figure(
+        width=_FOREST_WIDTH,
+        height=round(axis_y + _FOREST_FOOT),
+        title=title,
+        body=body,
+    )
+    return (
+        f'<figure class="forest" data-effect-measure="{html.escape(measure)}">'
+        f"{figure}{_forest_caption(ordered, measure, bounds, kinds)}</figure>"
+    )
 
 
 def _composite_note(rows: Sequence[BurdenRow]) -> str:
