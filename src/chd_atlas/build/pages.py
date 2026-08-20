@@ -1650,15 +1650,37 @@ def _is_union(row: BurdenRow, kinds: tuple[bool, bool]) -> bool:
     )
 
 
-def _marker_class(row: BurdenRow) -> str:
+def _survived_correction(row: BurdenRow) -> bool:
+    """Whether this row cleared **its own study's** correction for multiple testing.
+
+    Never a correction this atlas computed -- there is none (D12/D33). A row
+    whose study published no correction is `False` for the same honest
+    reason a row that failed one is: nothing says it cleared anything.
+
+    One predicate, because it decides the fill of two different glyphs.
+    """
+    return row.pvalue_adjusted is not None and row.pvalue_adjusted < _CORRECTED_ALPHA
+
+
+def _mark_class(row: BurdenRow, glyph: str) -> str:
     """Filled where the study's own correction was survived, hollow where not.
 
-    **Never a correction this atlas computed** -- there is none (D12/D33). The
-    hollow form therefore covers two cases that are honestly the same one: the
-    study corrected and this row did not clear the threshold, and the study
-    published no correction, so nothing says it cleared anything. Measured
-    2026-08-20 over the 915 published rows: 55 carry an adjusted p below 0.05
-    and 45 of those are plottable, all from PMID:40127276.
+    **`glyph` is the shape, and the fill rule is the same for every shape.**
+    A panel draws two of them -- `point` for a placed estimate, `arrow` for a
+    row the axis has no position for -- and each has the same three states,
+    so the class names are composed here rather than written out per shape.
+    `_forest_estimate` bypassed this function entirely for its two arrow
+    branches and drew every arrow in `chart-arrow`, whose declaration was
+    byte-identical to `chart-point`'s. Measured 2026-08-20 on the built
+    corpus: **205 of the 854 plotted marks were arrows, not one of them had
+    survived any correction, and every one was drawn in the fill that says it
+    had.** 13 of those sat on a ClinGen `definitive` gene, GATA4 among them,
+    whose Sierant enrichment panel drew three solid marks of which the third
+    was `p 1 · q 1`. Two families of class name, written twice, is how that
+    happened; one function is the fix.
+
+    Measured 2026-08-20 over the 915 published rows: 55 carry an adjusted p
+    below 0.05 and 45 of those are plottable, all from PMID:40127276.
 
     A synonymous row that *does* survive is drawn muted rather than in the
     result colour, because it is the study's own negative control and a
@@ -1669,10 +1691,9 @@ def _marker_class(row: BurdenRow) -> str:
     than by the corpus. Hollowness is what may not be traded away here: it
     carries the correction, which the muted colour does not.
     """
-    survived = row.pvalue_adjusted is not None and row.pvalue_adjusted < _CORRECTED_ALPHA
-    if not survived:
-        return "chart-point-open"
-    return "chart-control-point" if row.consequence_class == "synonymous" else "chart-point"
+    if not _survived_correction(row):
+        return f"chart-{glyph}-open"
+    return f"chart-control-{glyph}" if row.consequence_class == "synonymous" else f"chart-{glyph}"
 
 
 def _statistic(row: BurdenRow) -> str:
@@ -1751,16 +1772,21 @@ def _forest_line(x1: float, x2: float, y: float, css_class: str) -> str:
     )
 
 
-def _forest_arrow(x: float, y: float, *, pointing: float) -> str:
+def _forest_arrow(x: float, y: float, *, pointing: float, css_class: str) -> str:
     """A triangle at an axis edge: this row continues past the end of the axis.
 
     `pointing` is +1 for the right-hand edge and -1 for the left. The apex sits
     exactly on the edge, which is why `_EFFECT_AXIS_PAD` keeps every measured
     value away from it.
+
+    `css_class` is required rather than defaulted, so that adding a third
+    arrow branch cannot quietly inherit the fill of the first two -- which is
+    exactly how every arrow on the site came to be drawn as a surviving
+    result. `_mark_class` is what callers pass.
     """
     base = x - pointing * _FOREST_ARROW
     return (
-        f'<polygon class="chart-arrow" points="{coordinate(x)},{coordinate(y)} '
+        f'<polygon class="{html.escape(css_class)}" points="{coordinate(x)},{coordinate(y)} '
         f"{coordinate(base)},{coordinate(y - _FOREST_ARROW_HALF)} "
         f'{coordinate(base)},{coordinate(y + _FOREST_ARROW_HALF)}"/>'
     )
@@ -1804,6 +1830,11 @@ def _forest_interval(row: BurdenRow, y: float, scale: LogScale) -> str:
 def _forest_estimate(row: BurdenRow, y: float, scale: LogScale) -> str:
     """The point estimate, or an arrow where the axis has no position for it.
 
+    **Every branch takes its fill from `_mark_class`**, arrows included. The
+    arrow branches carried a hardcoded `chart-arrow` until 2026-08-20 and it
+    resolved to the same paint as a survived-its-correction circle; see
+    `_mark_class` for what that published.
+
     Two rows have no point to draw and both are drawn as arrows rather than as
     blanks:
 
@@ -1817,10 +1848,14 @@ def _forest_estimate(row: BurdenRow, y: float, scale: LogScale) -> str:
       rather than as "none".
     """
     if row.effect is None:
-        return _forest_arrow(_FOREST_PLOT_RIGHT, y, pointing=1.0)
+        return _forest_arrow(
+            _FOREST_PLOT_RIGHT, y, pointing=1.0, css_class=_mark_class(row, "arrow")
+        )
     if row.effect <= 0:
-        return _forest_arrow(_FOREST_PLOT_LEFT, y, pointing=-1.0)
-    return marker(scale.x(row.effect), y, css_class=_marker_class(row))
+        return _forest_arrow(
+            _FOREST_PLOT_LEFT, y, pointing=-1.0, css_class=_mark_class(row, "arrow")
+        )
+    return marker(scale.x(row.effect), y, css_class=_mark_class(row, "point"))
 
 
 def _forest_row(row: BurdenRow, index: int, scale: LogScale, *, union: bool) -> str:
@@ -1853,6 +1888,21 @@ def _forest_caption(
     conditions travel with its position, and a legend entry for a glyph the
     reader cannot see sends them hunting for it.
 
+    **The hollow clause was the one exception, in the function whose docstring
+    says there are none.** Measured 2026-08-20 on the built corpus: 11 of the
+    137 panels printed it with no hollow marker drawn, across 10 genes --
+    CHD7, GATA4, KMT2D, MYH7, NKX2-5, NODAL, RBFOX2, RNF40, WDR5, ZIC3, six
+    of them ClinGen `definitive` -- and on 9 of those the panel did draw
+    arrows, so the key told the reader that everything visible had failed a
+    correction. Every other clause measured 0 captioned-but-not-drawn.
+
+    **And there was no clause for a filled mark at all**, so its meaning had
+    to be inferred as the complement of the hollow one. That inference was
+    wrong for all 205 arrows on the site until `_mark_class` began deciding
+    an arrow's fill; it is stated now rather than left to be worked out.
+    The filled clause excludes a surviving *synonymous* row, which is drawn
+    muted rather than in the result colour and has its own clause below.
+
     The pooling clause is **not** conditional, and it is worded as policy
     rather than as an observation about this page. It is here at all because
     the forest idiom ends in a summary diamond and a reader who knows the
@@ -1868,14 +1918,24 @@ def _forest_caption(
         f"Axis: <strong>{html.escape(label)}</strong> on a logarithmic scale, "
         f"{_fmt(low)} to {_fmt(high)}; the vertical line is <strong>1</strong>, "
         "no enrichment. ",
-        "A <strong>hollow</strong> marker is a row that <strong>did not survive</strong> its "
-        "own study's correction for multiple testing, or whose study published no correction "
-        "at all &mdash; the atlas computes none of its own. ",
+    ]
+    if any(_survived_correction(row) and row.consequence_class != "synonymous" for row in rows):
+        parts.append(
+            "A <strong>filled</strong> marker is a row that <strong>survived</strong> its own "
+            "study's correction for multiple testing. "
+        )
+    if any(not _survived_correction(row) for row in rows):
+        parts.append(
+            "A <strong>hollow</strong> marker is a row that <strong>did not survive</strong> its "
+            "own study's correction for multiple testing, or whose study published no correction "
+            "at all &mdash; the atlas computes none of its own. "
+        )
+    parts.append(
         "A forest plot usually ends in a summary diamond. There is <strong>no pooled</strong> "
         "estimate here and none is computed anywhere on this site: two studies that share a "
         "sample collection describe partly the same children, and adding their rows would "
-        "count them more than once. ",
-    ]
+        "count them more than once. "
+    )
     if any(row.ci_low is None and row.ci_high is None for row in rows):
         parts.append(
             "A <strong>hatched</strong> bar means <strong>no interval published</strong> for "

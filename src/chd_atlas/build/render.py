@@ -300,6 +300,8 @@ STYLESHEET: Final = """
   .chart-nointerval { stroke: var(--border); stroke-width: 4; stroke-dasharray: 2 3; }
   .chart-cardiac { stroke: var(--link); stroke-width: 2; fill: none; }
   .chart-arrow { fill: var(--link); }
+  .chart-arrow-open { fill: var(--bg); stroke: var(--link); stroke-width: 1.6; }
+  .chart-control-arrow { fill: var(--muted); }
   .chart-union { fill: var(--muted); font-size: 0.55rem; }
   /* SVG `<text>` takes no `color`, only `fill`, so a label with neither
      renders black on a dark page. The one text class the charts use. */

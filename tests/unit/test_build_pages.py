@@ -1163,6 +1163,20 @@ _OTHER_PUBLICATIONS = {
 }
 
 
+_SIERANT_PUBLICATION = {
+    "PMID:40127276": Publication(
+        id="PMID:40127276",
+        title="Landscape of rare variants in congenital heart disease",
+        journal="Nature genetics",
+        year=2025,
+        authors=["Sierant MC"],
+        study_type="case_control",  # type: ignore[arg-type]
+        own_lab=False,
+        tests_reported=4128,
+    ),
+}
+
+
 def _burden_page(
     tmp_path: Path,
     facts: dict[str, GeneFacts],
@@ -2345,19 +2359,7 @@ def test_a_study_publishing_no_interval_still_gets_a_panel(
                     pvalue_adjustment="benjamini_hochberg",
                 ),
             ],
-            publications={
-                _PUBLICATION.id: _PUBLICATION,
-                "PMID:40127276": Publication(
-                    id="PMID:40127276",
-                    title="Landscape of rare variants in congenital heart disease",
-                    journal="Nature genetics",
-                    year=2025,
-                    authors=["Sierant MC"],
-                    study_type="case_control",  # type: ignore[arg-type]
-                    own_lab=False,
-                    tests_reported=4128,
-                ),
-            },
+            publications={_PUBLICATION.id: _PUBLICATION, **_SIERANT_PUBLICATION},
         )
     )
 
@@ -2383,15 +2385,21 @@ def test_an_unbounded_effect_draws_an_arrow_and_never_a_ceiling(
     finding -- never a blank, an em dash, or an invented ceiling."""
     section = _burden_section_text(_burden_page(tmp_path, facts_uncurated, [_burden_row()]))
 
-    assert "chart-arrow" in section
     # **And the bar reaches the axis edge rather than a number nobody
     # published.** Asserted against literals in the figure's own coordinate
     # system, not against the constants that produced them (CLAUDE.md section
     # 4.38): 470.0 is the right-hand edge of the plot area and 26.0 is the
     # first row's centre line. A renderer that invented a ceiling -- say
     # `ci_high = ci_low * 10` -- would end the bar short of the edge.
+    #
+    # The class is `chart-arrow-open`, not `chart-arrow`: this study published
+    # no correction for this row, and an arrow carries the same fill rule as a
+    # circle. `"chart-arrow" in section` was the first spelling of the check
+    # above it and is now a substring of the hollow class, so it is asserted
+    # here as a whole attribute instead.
     figure = _forest_figures(section)[0]
-    assert '<polygon class="chart-arrow" points="470.0,26.0 463.0,22.5 463.0,29.5"/>' in figure
+    assert '<polygon class="chart-arrow-open" points="470.0,26.0 463.0,22.5 463.0,29.5"/>' in figure
+    assert 'class="chart-arrow"' not in figure
     # **Scoped to this row's own bar, not to the figure.** `'x2="470.0"' in
     # figure` was the first spelling of this and a mutant giving the row a
     # ceiling of `ci_low * 10` survived it: the horizontal axis line runs to
@@ -2481,6 +2489,140 @@ def test_a_union_row_is_marked_as_one(
     # The two components are named, so the tag is a claim a reader can check.
     assert "loss-of-function and damaging-missense rows together" in figures[1]
     assert "syndromic and non-syndromic rows together" in figures[1]
+
+
+def test_an_arrow_carries_the_same_correction_fill_as_a_circle(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """An arrow is a marker, so its fill has to mean what a circle's means.
+
+    `_forest_estimate` bypassed `_mark_class` for both arrow branches and
+    drew every one of them in `chart-arrow`, whose declaration was
+    byte-identical to `chart-point`'s -- the fill that says "survived this
+    study's own correction". Measured 2026-08-20 on the built corpus: **205
+    of the 854 plotted marks were arrows and not one had survived any
+    correction.** 30 were corrected and failed, with q as high as 1.0, and
+    175 came from a study that published no correction at all; 13 of the
+    corrected-and-failed sat on a ClinGen `definitive` gene.
+
+    GATA4 was the worst of them and is the shape of the fixture below: three
+    marks on one panel, all solid, no hollow mark anywhere to read them
+    against, and the third was `p 1 · q 1`.
+
+    The fixture carries all three fills in one panel, because a fixture whose
+    rows share the value under test measures nothing (CLAUDE.md section 4.36)
+    -- and the filled branch has **no row in the committed corpus at all**, so
+    the surviving unbounded row here is the only thing that proves it is
+    reachable rather than dead.
+    """
+    page = _burden_page(
+        tmp_path,
+        facts_uncurated,
+        [
+            # Unbounded above, no correction published: hollow.
+            _burden_row(cohort_stratum="all", consequence_class="lof"),
+            # Unbounded above and the study's own correction survived:
+            # filled. No published row is in this state.
+            _burden_row(
+                cohort_stratum="syndromic",
+                consequence_class="missense_damaging",
+                pvalue_adjusted=0.0037,
+                pvalue_adjustment="benjamini_hochberg",
+            ),
+            # An effect of exactly zero -- the other arrow branch, at the
+            # opposite edge -- corrected and failed: hollow.
+            _burden_row(
+                cohort_stratum="nonsyndromic",
+                consequence_class="lof",
+                effect=0.0,
+                effect_bound=None,
+                ci_low=0.0,
+                ci_high=3.2,
+                pvalue_adjusted=1.0,
+                pvalue_adjustment="benjamini_hochberg",
+            ),
+            # The study's own negative control, surviving and unbounded:
+            # muted, never in the result colour.
+            _burden_row(
+                cohort_stratum="all",
+                consequence_class="synonymous",
+                pvalue_adjusted=0.0041,
+                pvalue_adjustment="benjamini_hochberg",
+            ),
+        ],
+    )
+
+    figure = _forest_figures(_burden_section_text(page))[0]
+    assert figure.count('class="chart-arrow-open"') == 2
+    assert figure.count('class="chart-arrow"') == 1
+    assert figure.count('class="chart-control-arrow"') == 1
+    # And the hollow form is visibly hollow rather than a second name for the
+    # same paint. Asserted on the published stylesheet -- the class is only
+    # worth anything if it resolves to a different fill, and `chart-arrow`'s
+    # declaration was byte-identical to `chart-point`'s for three releases.
+    assert ".chart-arrow-open { fill: var(--bg); stroke: var(--link); stroke-width: 1.6; }" in page
+    assert ".chart-control-arrow { fill: var(--muted); }" in page
+    # A key that names only the hollow mark leaves the reader to infer the
+    # complement, and for every arrow on the site that inference was wrong.
+    assert "A <strong>filled</strong> marker is a row that <strong>survived</strong>" in figure
+
+
+def test_each_fill_in_the_key_is_a_fill_the_reader_can_see(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_forest_caption` is conditional clause by clause; the fills were not.
+
+    A legend entry for a glyph that is not on the panel sends a reader
+    hunting for it, which is `_POOLING_NOTICE`'s recorded lesson (CLAUDE.md
+    section 4.27). Measured 2026-08-20 on the built corpus: **11 of the 137
+    panels printed the hollow clause with no hollow marker drawn**, across 10
+    genes -- CHD7, GATA4, KMT2D, MYH7, NKX2-5, NODAL, RBFOX2, RNF40, WDR5,
+    ZIC3, six of them ClinGen `definitive`. On 9 of the 11 the panel did draw
+    arrows, so the key affirmatively told the reader that everything visible
+    had failed its correction when the arrows carried no such claim.
+
+    Both directions are asserted, from two panels that differ in exactly this
+    -- an all-surviving panel and an all-failing one.
+    """
+    survived: dict[str, object] = {
+        "pvalue_adjusted": 0.0037,
+        "pvalue_adjustment": "benjamini_hochberg",
+    }
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(
+                    cohort_stratum="all",
+                    effect=2.45,
+                    effect_bound=None,
+                    ci_low=1.2,
+                    ci_high=8.1,
+                    **survived,
+                ),
+                _burden_row(
+                    study="PMID:40127276",
+                    cohort_stratum="all",
+                    effect=3.1,
+                    effect_bound=None,
+                    ci_low=1.4,
+                    ci_high=9.0,
+                ),
+            ],
+            publications={_PUBLICATION.id: _PUBLICATION, **_SIERANT_PUBLICATION},
+        )
+    )
+
+    # PMID:40127276 sorts before PMID:42230622, so the failing panel is first.
+    failing, surviving = _forest_figures(section)
+    hollow = "A <strong>hollow</strong> marker is a row that <strong>did not survive</strong>"
+    filled = "A <strong>filled</strong> marker is a row that <strong>survived</strong>"
+    assert filled in surviving and hollow not in surviving
+    assert hollow in failing and filled not in failing
+    # The glyph each clause names really is the one drawn beside it.
+    assert 'class="chart-point-open"' not in surviving
+    assert 'class="chart-point"' not in failing
 
 
 def test_marker_fill_encodes_survival_of_the_studys_own_correction(
