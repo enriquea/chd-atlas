@@ -2744,6 +2744,9 @@ def _band_caption(
     floor: float | None,
     low: float,
     high: float,
+    series: Sequence[tuple[int, str, float | None]],
+    *,
+    lined: bool,
 ) -> str:
     """What the picture cannot say about itself, in words beside it.
 
@@ -2762,6 +2765,21 @@ def _band_caption(
     a shared axis and a per-gene one are different claims, and a reader can
     only tell which they are looking at if the figure says.
 
+    **Both break clauses are conditional on the break being in this figure.**
+    The tick clause was not, and it named a mark most pages do not draw:
+    measured 2026-08-20, all 85 trajectory pages said "the stage is ticked on
+    the axis instead" while **55 drew zero ticks**, and 55 of the 59 with a
+    visibly broken line were among them -- TBX5 has two polylines, a visible
+    gap, and the only sentence about gaps described a mark that is not there.
+
+    **And the second cause was never named at all.** A line also breaks where
+    this dataset has no row for that organ at that stage, which for
+    E-MTAB-6814 is the same set of stages for every gene (heart has none at
+    `school age child` or `elderly`, forebrain none at 6 wpc, testis none at
+    `neonate` or `school age child`). `_tissue_medians`' docstring insists
+    that state and a below-floor one "must not render the same way", and in
+    the picture they did.
+
     **It is stated as the axis's range, never as the medians'**, and the two
     differ on exactly the genes where the wording matters most. `_axis_bounds`
     widens a flat series by half a decade either side, because `LogScale`
@@ -2775,10 +2793,27 @@ def _band_caption(
     unit = html.escape(_tissue_unit(entry, tissue))
     floor_clause = (
         f" Below this dataset's detection floor ({_fmt(floor)} {unit}) no percentile is "
-        "published and the stage is ticked on the axis instead."
-        if floor is not None
+        "published and the stage is ticked on the axis instead &mdash; below the foot of "
+        "the scale, not at a value on it."
+        if floor is not None and any(value is None for _, _, value in series)
         else ""
     )
+    _, no_row = _line_breaks(series)
+    # Two spellings, because the sentence contrasts itself with the clause
+    # above it and that clause is not always there. "A break with no tick
+    # under it is different again" on a figure drawing no tick at all sends a
+    # reader hunting for one -- the defect this whole caption was rewritten
+    # for, reintroduced one sentence later (CLAUDE.md section 4.27).
+    gap_clause = ""
+    if lined and no_row:
+        gap_clause = (
+            " A break in the line with no tick under it is different again: this dataset has "
+            "<strong>no row for this organ at that stage</strong>, so there is no measurement "
+            "to place, low or otherwise."
+            if floor_clause
+            else " The line breaks where this dataset has <strong>no row for this organ at "
+            "that stage</strong>: there is no measurement to place, low or otherwise."
+        )
     stages = entry["stages"]
     span = (
         f"{html.escape(_stage_label(stages[0]))} to {html.escape(_stage_label(stages[-1]))}, "
@@ -2792,7 +2827,7 @@ def _band_caption(
         f"Vertical: median abundance in whole {html.escape(tissue)}, {unit}, on a log scale; "
         f"the axis runs {_fmt(low)} to {_fmt(high)} and is fitted to <strong>this gene</strong>, "
         "so a curve's height compares nothing to another gene's."
-        f"{floor_clause} Shaded: {named} ({attribution}).</p>"
+        f"{floor_clause}{gap_clause} Shaded: {named} ({attribution}).</p>"
     )
 
 
@@ -2820,6 +2855,35 @@ def _adjacent_runs(
         runs[-1].append(point)
         previous = index
     return runs
+
+
+def _line_breaks(series: Sequence[tuple[int, str, float | None]]) -> tuple[bool, bool]:
+    """Which of the two causes actually interrupts this organ's drawn line:
+    `(a stage sampled and not placed, a stage with no row at all)`.
+
+    `_adjacent_runs` splits the line on both and cannot tell them apart,
+    because for the *line* they are the same fact. For the *caption* they are
+    not: the first is a measurement this atlas declines to vouch for and gets
+    a tick on the axis, the second is the dataset never having looked, and
+    `_tissue_medians`' docstring is explicit that they "must not render the
+    same way". They did -- to a reader, a break with a tick and a break
+    without one differed only in a mark the caption promised on every page
+    and drew on 30 of 85.
+
+    Only a gap *between two placed stages* counts, for either cause. A stage
+    the dataset skipped before the first placed one or after the last breaks
+    no line, so nothing on the figure needs explaining.
+    """
+    present = {index for index, _, _ in series}
+    placed = [index for index, _, value in series if value is not None]
+    unplaced = unsampled = False
+    for first, second in zip(placed, placed[1:], strict=False):
+        for gap in range(first + 1, second):
+            if gap in present:
+                unplaced = True
+            else:
+                unsampled = True
+    return unplaced, unsampled
 
 
 def _trajectory(
@@ -2903,7 +2967,13 @@ def _trajectory(
         title=title,
         body=bands + axis + ticks + lines + markers,
     )
-    return figure + _band_caption(entry, phases, tissue, floor, low, high)
+    # `lined` rather than a second look at the data: the caption's clause
+    # about a break in the line may only be published if there *is* a line,
+    # and only this function knows whether one was drawn. Three of the 85
+    # charted genes place too few stages for one.
+    return figure + _band_caption(
+        entry, phases, tissue, floor, low, high, series, lined=bool(lines)
+    )
 
 
 def _sampled_cardiac(entry: DatasetProfileEntry, cardiac: frozenset[str]) -> list[tuple[str, int]]:

@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
+from types import EllipsisType
 
 import pytest
 
@@ -3820,16 +3821,25 @@ _HEART_DATASET = {"E-MTAB-6814": _profile_dataset(cardiac_tissues=("heart",))}
 
 
 def _heart_series(
-    *stages: tuple[str, float | None],
+    *stages: tuple[str, float | None | EllipsisType],
     phase_ids: tuple[str, ...] = ("atrial_septum_morphogenesis",),
     unplaced_reason: str = "below_detection_floor",
 ) -> ExpressionProfile:
     """A heart series over `stages`, in the order given.
 
-    A `float` is a median this dataset placed against its percentile grid; a
-    `None` is a stage sampled and not placed, for `unplaced_reason`. The order
-    given is the published order -- `gene_expression_profiles` emits stages
-    by `Stage.order`, so a fixture's own sequence is the trajectory's.
+    Three states, because the page owes a reader three different sentences
+    and `_tissue_medians`' docstring insists the last two "must not render the
+    same way":
+
+    * a `float` -- a median this dataset placed against its percentile grid;
+    * `None` -- a stage sampled and **not placed**, for `unplaced_reason`,
+      which `_trajectory` ticks on the axis;
+    * `...` -- a stage this dataset has **no heart row for at all**, which
+      gets no tick and nothing else, and is why the stage is still in
+      `entry["stages"]` and still occupies an x position.
+
+    The order given is the published order -- `gene_expression_profiles` emits
+    stages by `Stage.order`, so a fixture's own sequence is the trajectory's.
 
     `unplaced_reason` is a parameter rather than a constant because the reason
     changes what a page is entitled to say: below a floor is a low reading
@@ -3840,7 +3850,9 @@ def _heart_series(
         _stage_entry(
             stage=token,
             phase=_phase_info(phase_ids=phase_ids),
-            tissues=(
+            tissues=()
+            if median is ...
+            else (
                 _tissue_entry(
                     tissue="heart",
                     median=median if median is not None else 0.3,
@@ -4023,6 +4035,82 @@ def test_a_phase_the_source_never_ended_bands_nothing(tmp_path: Path) -> None:
         _expression_page(tmp_path, {GATA4: alone}, _HEART_DATASET, phases=vocabulary)
     )
     assert "<svg" not in unbanded
+
+
+def test_the_band_caption_names_only_the_breaks_this_figure_actually_draws(
+    tmp_path: Path,
+) -> None:
+    """Two ways a trajectory's line can break, and the caption named one of
+    them unconditionally -- including on the 55 pages that draw no tick at all.
+
+    Measured 2026-08-20 on the built corpus: 85 pages carry a trajectory and
+    every one of them said "the stage is ticked on the axis instead"; **55
+    drew zero ticks**, and 55 of the 59 with a visibly broken line were among
+    them. TBX5 is one -- two polylines, a visible gap, and the only sentence
+    about gaps described a mark that is not on the page.
+
+    The second cause was never named at all: this dataset has **no row** for
+    an organ at some stages, identically for every gene (heart has none at
+    `school age child` or `elderly`, forebrain none at `6 week post
+    conception`, testis none at `neonate` or `school age child`), and that
+    breaks the line with no tick under it. `_tissue_medians`' own docstring
+    insists the two "must not render the same way"; in the picture they did.
+
+    Four fixtures, one per corner: a fixture where every case shares the
+    value under test measures nothing (CLAUDE.md section 4.36).
+    """
+
+    def caption(*stages: tuple[str, float | None | EllipsisType]) -> str:
+        return _expression_section_text(
+            _expression_page(
+                tmp_path,
+                {GATA4: _heart_series(*stages)},
+                _HEART_DATASET,
+                phases=_cardiac_phases(),
+            )
+        )
+
+    tick = "the stage is ticked on the axis instead"
+    no_row = "no row for this organ at that stage"
+
+    # Ticked and unbroken: the floor clause, and nothing about a missing row.
+    ticked = caption(("4wpc", None), ("5wpc", 5.0), ("6wpc", 40.0), ("7wpc", 275.0))
+    assert tick in ticked
+    assert no_row not in ticked
+
+    # TBX5's shape: a line broken by a stage this dataset has no row for, and
+    # not one tick anywhere. The floor clause described a mark that is absent.
+    unsampled = caption(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", ...), ("7wpc", 275.0))
+    assert tick not in unsampled
+    assert no_row in unsampled
+    # And it does not point back at a clause this figure does not carry.
+    # "A break with no tick under it is different again" beside no tick at
+    # all is the same defect one sentence further on.
+    assert "different again" not in unsampled
+
+    # Both causes at once -- the caption owes a reader both sentences.
+    both = caption(
+        ("4wpc", 5.0),
+        ("5wpc", 40.0),
+        ("6wpc", None),
+        ("7wpc", 275.0),
+        ("8wpc", ...),
+        ("9wpc", 12.0),
+    )
+    assert tick in both
+    assert no_row in both
+    assert "different again" in both
+
+    # Neither: an unbroken, fully placed series says nothing about either.
+    clean = caption(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", 275.0))
+    assert tick not in clean
+    assert no_row not in clean
+
+    # And the tick is placed off the bottom of the scale rather than at a
+    # value on it. Measured: KIF20A's axis starts at 42 tpm against a 1 tpm
+    # floor, so its 6 ticks sat where the axis reads 38.6 tpm; the words are
+    # what stop a reader interpolating them.
+    assert "below the foot of the scale, not at a value on it" in ticked
 
 
 def test_a_stage_below_the_floor_is_an_axis_tick_and_never_a_zero(tmp_path: Path) -> None:
