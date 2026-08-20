@@ -1169,14 +1169,15 @@ def profile_census(
     both figures moved: measured on the committed corpus, `genes` is 92 and
     `datasets` is 1.
 
-    **The fixture is still what proves the restriction, for a different
-    reason.** 92 is also `counts.genes` and 1 is also `counts.datasets`, so an
-    implementation counting the mirror, or the whole `Corpus`, or reading the
-    wrong key entirely, publishes the same two numbers a correct one does. Two
-    figures that are equal today are one figure to every test (CLAUDE.md
-    section 4.30), so the case that separates them is hand-built: a gene
-    outside `published`, and a dataset only that gene cites. See
-    `tests/unit/test_build_profiles.py`.
+    **The fixture is still what proves the restriction, for a narrower
+    reason.** One wrong implementation is now visible on a real build and one
+    is not. Counting the mirror gives 154, because
+    `mirrors/profiles/E-MTAB-6814.tsv` covers every registered gene; reading
+    `len(published)` and `len(corpus.datasets)` gives 92 and 1, which is
+    exactly what a correct implementation publishes. Two figures that are
+    equal today are one figure to every test (CLAUDE.md section 4.30), so the
+    case that separates them is hand-built: a gene outside `published`, and a
+    dataset only that gene cites. See `tests/unit/test_build_profiles.py`.
     """
     genes = 0
     datasets: set[str] = set()
