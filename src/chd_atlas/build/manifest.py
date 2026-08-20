@@ -262,11 +262,19 @@ from chd_atlas.corpus import Corpus
 # paragraph again), so this one counts only what a published gene's own bundle
 # actually carries.
 #
-# Both are 0 on the committed corpus: no `profiles` mirror has ever been
-# committed, so every gene bundle's `expression_profile` is the empty
-# `{"datasets": []}` shape and neither figure can be told apart from the other
-# or from a hardcoded zero without a fixture -- `profiles.profile_census`'s own
-# tests build one rather than trusting a real build to distinguish them.
+# **Both were 0 when this paragraph was written and are not now.** It said "no
+# `profiles` mirror has ever been committed" -- true on 2026-08-15 and false
+# from 04a1077 four days later, which committed `mirrors/profiles/E-MTAB-6814.tsv`.
+# Measured 2026-08-20 on the committed corpus: `profile_datasets` is 1 and
+# `profile_genes` is 92.
+#
+# The reason the sentence gave still holds, in a sharper form. A real build
+# cannot tell these two figures from the ones beside them: `profile_genes` is
+# 92 and so is `genes`, `profile_datasets` is 1 and so is `datasets`. Two
+# figures that are equal today are one figure to every test (CLAUDE.md section
+# 4.30), so `profiles.profile_census`'s own tests build a fixture that
+# separates them rather than trusting a real build to.
+#
 # 2.12 adds `order` to every `stages` entry in `datasets.json`, and changes the
 # order of `expression_profile.datasets[].stages[]` in all 92 gene bundles from
 # alphabetical to chronological. MINOR -- but the second half is a correction to

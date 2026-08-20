@@ -611,13 +611,16 @@ def test_the_landing_card_names_the_layer_the_build_publishes(tmp_path: Path) ->
     against a literal, never against a constant a rewrite could carry along
     with it -- the same discipline `_MIRRORED_ROW_LABEL` is asserted with.
 
-    **Every profile count is 0 on the committed corpus** -- there is no
-    `profiles` mirror to derive one from -- so `genes=3, datasets=2` here is
-    what tells a real card from a hardcoded "0" that would also satisfy every
-    other assertion in this file. `test_the_page_and_the_manifest_publish_
-    one_census_of_a_real_build` is what proves this same wiring holds on the
-    real, zero-valued build; this is what proves it is not two zeros wired to
-    each other by coincidence.
+    **Neither profile count is distinguishable on the committed corpus.** This
+    said "every profile count is 0 -- there is no `profiles` mirror to derive
+    one from" until 2026-08-20; `mirrors/profiles/E-MTAB-6814.tsv` landed on
+    2026-08-19 and the real build now publishes `profile_genes: 92` and
+    `profile_datasets: 1`. Those are also `genes: 92` and `datasets: 1`, so a
+    card wired to the wrong count still reads correctly there. `genes=3,
+    datasets=2` here is what tells a real card from one reading a neighbour or
+    a literal. `test_the_page_and_the_manifest_publish_one_census_of_a_real_
+    build` is what proves this same wiring holds on the real build; this is
+    what proves it is not two coincidences wired to each other.
     """
     corpus = Corpus(root=Path("."), assertions=(_assertion(),))
 
@@ -718,10 +721,13 @@ def test_the_page_and_the_manifest_publish_one_census_of_a_real_build(
 
     `burden_rows` is checked against the gene bundles too, which is the claim
     that actually matters: the figure must count rows a consumer can *fetch*, not
-    rows in `mirrors/burden.tsv`. The mirror holds 1,475 rows over 150 genes and
-    127 of those genes publish no page, so a census counting the mirror would
-    advertise five times the evidence the site serves. Summed over the published
-    bundles rather than over the mirror for that reason.
+    rows in `mirrors/burden.tsv`. Measured 2026-08-20: the mirror holds 1,475
+    rows over 150 genes, 59 of those genes publish no page, and 915 rows reach
+    a bundle -- so a census counting the mirror would advertise 1.6 times the
+    evidence the site serves. Summed over the published bundles rather than
+    over the mirror for that reason. (This read "127 of those genes" and "five
+    times" until 2026-08-20: both were measured on the 23-gene corpus and both
+    moved when the gate widened to 92 on 2026-08-06.)
 
     **Every shared key, not a sample.** This checked three of the nine keys the
     page and the manifest both state until review 2026-08-06 pointed out that

@@ -1587,8 +1587,13 @@ def test_the_census_counts_published_genes_and_their_datasets_not_the_registry(
     """Two figures that are equal today are one figure to every test (CLAUDE.md
     section 4.15b/30/36) -- so this fixture is built to make `genes` and
     `datasets` each move independently under the `published` restriction,
-    rather than trusting a real build where every profile count is 0 to tell
-    a correct implementation apart from one that counts the mirror.
+    rather than trusting a real build to tell a correct implementation apart
+    from a wrong one. This said "a real build where every profile count is 0"
+    until 2026-08-20; measured that day, `mirrors/profiles/E-MTAB-6814.tsv`
+    covers 154 genes and the census reports 92 and 1. So a real build does now
+    separate this from a count of the mirror -- but 92 is `counts.genes` and 1
+    is `counts.datasets`, so it does not separate it from a read of the count
+    next door, and nothing asserts either figure there anyway.
 
     HGNC:1 and HGNC:2 are published and share one dataset (E-AAAA-1). HGNC:3
     is registered in the mirror -- `mirrors/profiles/*.tsv` can cover a gene
@@ -1634,10 +1639,19 @@ def test_a_gene_with_no_profile_row_at_all_does_not_count(tmp_path: Path) -> Non
 
     `_concordance_for` raises on exactly this shape of absence for burden
     concordance, because there every published gene is supposed to have an
-    entry. Here most published genes have no profile dataset covering them at
-    all -- there is no committed `profiles` mirror today -- so `profile_census`
-    must treat a missing key as "contributes nothing", the same reading
+    entry. A profile is not owed that way: `mirrors/profiles/*.tsv` is a
+    mirror of whatever a dataset measured, and a gene it never mentions is an
+    ordinary state, not a broken corpus. So `profile_census` must treat a
+    missing key as "contributes nothing", the same reading
     `bundles._expression_profile` gives it when assembling a bundle.
+
+    This said "most published genes have no profile dataset covering them at
+    all -- there is no committed `profiles` mirror today" until 2026-08-20.
+    Measured that day, `mirrors/profiles/E-MTAB-6814.tsv` covers all 154
+    registered genes, so **no published gene takes this branch on the
+    committed corpus** and this test is the only thing exercising it. That is
+    a reason to keep it, not to drop it: the first gene a second dataset does
+    not measure lands here.
     """
     _write_profiles(tmp_path, "E-AAAA-1", [_profile_row(gene="HGNC:1")])
     profiles = gene_expression_profiles(tmp_path, (), None, {})

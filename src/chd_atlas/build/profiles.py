@@ -1163,10 +1163,19 @@ def profile_census(
     apart from `independent_datasets` to avoid, so this counts only
     accessions actually reachable from a published gene's own bundle.
 
-    Both figures are 0 on every corpus this atlas has built so far -- no
-    `profiles` mirror has ever been committed -- so a fixture giving `profiles`
-    a gene outside `published` and a dataset only that gene cites is what
-    tells this function's restriction apart from a hardcoded zero; see
+    This paragraph read "both figures are 0 on every corpus this atlas has
+    built so far -- no `profiles` mirror has ever been committed" until
+    2026-08-20. `mirrors/profiles/E-MTAB-6814.tsv` landed on 2026-08-19 and
+    both figures moved: measured on the committed corpus, `genes` is 92 and
+    `datasets` is 1.
+
+    **The fixture is still what proves the restriction, for a different
+    reason.** 92 is also `counts.genes` and 1 is also `counts.datasets`, so an
+    implementation counting the mirror, or the whole `Corpus`, or reading the
+    wrong key entirely, publishes the same two numbers a correct one does. Two
+    figures that are equal today are one figure to every test (CLAUDE.md
+    section 4.30), so the case that separates them is hand-built: a gene
+    outside `published`, and a dataset only that gene cites. See
     `tests/unit/test_build_profiles.py`.
     """
     genes = 0
