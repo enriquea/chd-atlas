@@ -785,6 +785,23 @@ def test_prf011_reports_two_stages_claiming_one_position() -> None:
     `profile_quantiles` data), where it is PRF000's partner error. One code
     naming two unrelated failures would let a lone skip warning pair with the
     wrong error, which is the whole point of section 4.41.
+
+    **The colliding pair is listed `d` before `b`**, and that is the whole
+    reason the message is asserted as a sequence rather than as two
+    independent `in` checks. This check scans `sorted(stages, key=(order,
+    token))` precisely so that which of a pair is named first does not depend
+    on which record a curator happened to type first -- `Stage`'s own
+    docstring says the list's order is deliberately not load-bearing -- and
+    with the pair listed in already-sorted order the sort is unobservable:
+    dropping it left both `in` checks green. A list sort over a tuple, so it
+    is comparison-based and owes no seed probe (section 4.42); one
+    deliberately unsorted fixture is the whole guard.
+
+    **`wpc` still ascends in the order the pair is listed**, and that is not
+    incidental. `_prf012_issues` sorts on `order` alone, and Python's sort is
+    stable, so a tie inherits the curated list's order -- a fixture that
+    listed the later `wpc` first would provoke a real PRF012 as well and turn
+    a test about one check's scan order into a test about two.
     """
     issues = validate_profile_references(
         _root_with(profiles=[_p(tissue="Heart", stage="a")]),
@@ -792,8 +809,8 @@ def test_prf011_reports_two_stages_claiming_one_position() -> None:
             _profile_dataset(
                 stages=[
                     {"token": "a", "wpc": 1.0, "order": 1},
-                    {"token": "b", "wpc": 2.0, "order": 3},
-                    {"token": "c", "wpc": 3.0, "order": 3},
+                    {"token": "d", "wpc": 2.0, "order": 3},
+                    {"token": "b", "wpc": 3.0, "order": 3},
                 ]
             ),
         ),
@@ -804,8 +821,7 @@ def test_prf011_reports_two_stages_claiming_one_position() -> None:
     assert [issue.code for issue in issues] == ["PRF011"]
     assert issues[0].severity is Severity.ERROR
     assert "3" in issues[0].message
-    assert "'b'" in issues[0].message
-    assert "'c'" in issues[0].message
+    assert "stages 'b' and 'd'" in issues[0].message
 
 
 def test_prf012_reports_an_order_that_contradicts_wpc() -> None:

@@ -9,6 +9,7 @@ from datetime import date
 from enum import StrEnum
 from pathlib import Path
 from types import EllipsisType
+from typing import Final
 
 import pytest
 
@@ -2287,10 +2288,34 @@ def _forest_figures(section: str) -> list[str]:
 def test_two_effect_measures_never_share_one_axis(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
-    """The merge `effect_measure` exists to prevent.
+    """The merge `effect_measure` exists to prevent, and the order it is drawn in.
 
     779 corpus rows carry an odds ratio and 75 an enrichment ratio. An odds
     ratio of 3.1 and a de novo enrichment of 3.1 are different claims.
+
+    **The panels' order is a published fact and was pinned by nothing.**
+    `pages.py` builds the facet list as `sorted({row.effect_measure ...})`
+    over a `set`, and removing that `sorted` survived the whole suite: the
+    assertion below reads `sorted(set(figures))`, which sorts its own actual
+    value and therefore cannot see order at all.
+    `test_build_is_reproducible.py` cannot see it either -- it builds twice in
+    one process, where `PYTHONHASHSEED` is fixed for the interpreter's life --
+    so two builds of one commit on two machines would publish 25 gene pages
+    with their forest panels in opposite orders while every checksum verified.
+
+    **The real vocabulary is far too small to fixture safely, and this is
+    the case CLAUDE.md section 4.42 says a synthetic set is for.** A probe
+    constructing the exact `set` under 300 explicit `PYTHONHASHSEED` values
+    measured the published pair `{enrichment_ratio, odds_ratio}` iterating
+    pre-sorted **149/300 (49.7%)** -- a coin flip, so a literal-order
+    assertion on the real pair is not a guard. All three members of
+    `EffectMeasure` measured 73/300 (24.3%), and there is no fourth to widen
+    into. Eight synthetic tokens measured **0/300**, matching
+    `test_prf008_message_lists_every_offending_unit_in_sorted_order`'s fix for
+    the identical constraint. `_effect` resolves an unrecognised measure to
+    its own raw token by design, so the tokens render rather than being
+    silently dropped, and `_burden_row` builds a `BurdenRow` directly -- which
+    vocabulary a token belongs to is `tables.py`'s check, not this one's.
     """
     section = _burden_section_text(
         _burden_page(
@@ -2323,6 +2348,29 @@ def test_two_effect_measures_never_share_one_axis(
     # rows are otherwise identical, so a facet keyed on `study` alone would
     # emit a single figure holding both numbers on one axis.
     assert len(_forest_figures(section)) == 2
+
+    # The order, on a set wide enough that a coincidentally-sorted iteration
+    # is not what is being measured. Asserted as the published sequence, not
+    # as `sorted(...)` of it.
+    synthetic = ["golf", "alpha", "hotel", "charlie", "echo", "bravo", "foxtrot", "delta"]
+    ordered = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(
+                    consequence_class=token,
+                    effect=2.45,
+                    effect_measure=token,
+                    effect_bound=None,
+                    ci_low=1.2,
+                    ci_high=8.1,
+                )
+                for token in synthetic
+            ],
+        )
+    )
+    assert re.findall(r'data-effect-measure="([^"]+)"', ordered) == sorted(synthetic)
 
 
 def test_a_study_publishing_no_interval_still_gets_a_panel(
@@ -4817,6 +4865,91 @@ def _trajectory_organs(section: str) -> list[str]:
         r"Median abundance in whole ([^,]+),",
         section,
     )
+
+
+# Four phases whose id order, label order and walk order are three different
+# sequences, so a band list can be attributed to exactly one of them. `covered`
+# in `_banded_phases` is a **dict**, filled by walking the stage list, so its own
+# key order is insertion order and carries no `PYTHONHASHSEED` risk at all --
+# `_banded_phases`' docstring records that measurement and this fixture does not
+# repeat it. What the sort buys is the property that docstring claims and
+# nothing tested: the band order is a function of the covered ids alone, so it
+# does not move when a dataset's stage list does.
+_BAND_LABELS: Final = {"alpha": "Zulu", "bravo": "Yankee", "charlie": "Xray", "delta": "Whisky"}
+
+# Deliberately neither sorted nor reverse-sorted: a walk in this order gives a
+# fourth sequence again, so "sorted by id" is the only rule that produces the
+# literal asserted below.
+_BAND_WALK: Final = ("delta", "alpha", "charlie", "bravo")
+
+
+def _phase_walk(*phase_ids: str) -> ExpressionProfile:
+    """One placed heart stage per phase, in the order given."""
+    return _expression_profile(
+        (
+            _dataset_profile_entry(
+                stages=tuple(
+                    _stage_entry(
+                        stage=f"{index + 4}wpc",
+                        phase=_phase_info(phase_ids=(phase_id,)),
+                        tissues=(
+                            _tissue_entry(
+                                tissue="heart",
+                                median=5.0 * (index + 1),
+                                unit="tpm",
+                                placement=_placement(),
+                            ),
+                        ),
+                    )
+                    for index, phase_id in enumerate(phase_ids)
+                )
+            ),
+        )
+    )
+
+
+def test_the_phase_bands_are_ordered_by_id_not_by_the_stage_walk_that_found_them(
+    tmp_path: Path,
+) -> None:
+    """`_banded_phases` sorts `covered`, and removing that sort changed 85 gene
+    pages and the manifest while every test stayed green.
+
+    Not a determinism guard, and the docstring beside the sort says so after
+    being measured: `covered` is a dict filled by a deterministic walk, so its
+    key order is reproducible with or without the sort. What the sort buys is
+    that the band order is a function of the covered phase ids alone rather
+    than of the stage list that found them -- a claim that was written down,
+    measured once by hand, and pinned by nothing.
+
+    Both halves are asserted, because either alone is weak. The literal alone
+    cannot tell "sorted by id" from "this fixture's walk happens to agree";
+    the two stage orders alone cannot tell "sorted" from "sorted by label", or
+    from any other rule stable under reversal. Together only sorting by id
+    produces both results.
+    """
+    vocabulary = _cardiac_phases(
+        *(
+            _cardiac_phase(phase_id=phase_id, label=label)
+            for phase_id, label in _BAND_LABELS.items()
+        )
+    )
+
+    def bands(*phase_ids: str) -> list[str]:
+        section = _expression_section_text(
+            _expression_page(
+                tmp_path,
+                {GATA4: _phase_walk(*phase_ids)},
+                _HEART_DATASET,
+                phases=vocabulary,
+            )
+        )
+        return re.findall(r'<rect class="chart-band"[^>]*><title>([^<]*)</title>', section)
+
+    # Sorted by id -- which is neither the walk order (Whisky, Zulu, Xray,
+    # Yankee) nor the label order (Whisky, Xray, Yankee, Zulu).
+    assert bands(*_BAND_WALK) == ["Zulu", "Yankee", "Xray", "Whisky"]
+    # And it does not move when the dataset's stage list does.
+    assert bands(*reversed(_BAND_WALK)) == ["Zulu", "Yankee", "Xray", "Whisky"]
 
 
 def test_the_trajectories_are_drawn_in_one_order_whatever_the_frozenset_does(
