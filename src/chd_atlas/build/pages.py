@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Final
+from typing import Final, NamedTuple
 
 from chd_atlas.build.burden import BurdenRow, _sort_key, shared_cohorts
 from chd_atlas.build.charts import LogScale, coordinate, marker, polyline, svg_figure
@@ -2645,8 +2645,36 @@ def _stage_label(stage: StageProfileEntry) -> str:
     return stage["stage"] if stage["stage"] is not None else "no stage recorded"
 
 
-def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[tuple[int, str, float | None]]:
-    """One organ's series: `(stage index, stage label, plottable median)`.
+class _Median(NamedTuple):
+    """One organ's figure at one stage, and -- if it is not plottable -- why not.
+
+    A `NamedTuple` rather than a bare tuple because the fourth field is the
+    one two captions were reading off the wrong axis. `value is None` says a
+    stage was sampled and not placed; it does not say the gene reads low
+    there, and `_band_caption` and `_spark_caption` both said so. The reason
+    now travels *with* the point, so a caption cannot look it up on a
+    different pass over the data than the one that decided the point was
+    unplaceable -- the discipline `_adjacent_runs` keeps by taking its pixel
+    points beside its stage indices.
+
+    `gap` is `None` exactly when `value` is not, and is the raw `ProfileGap`
+    token the payload recorded rather than a sentence: what the wording
+    should be is `_PLACEMENT_GAP_CLAUSE`'s job, in one place, and this module
+    already has three maps saying so.
+
+    `position` rather than `index`, which is `tuple.index` and cannot be a
+    field name on a `NamedTuple` at all -- mypy refuses it outright, which is
+    the only reason this is not a silently shadowed method.
+    """
+
+    position: int
+    label: str
+    value: float | None
+    gap: str | None
+
+
+def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[_Median]:
+    """One organ's series: `(stage index, stage label, plottable median, gap)`.
 
     `None` is a stage this dataset **sampled and did not place** -- below the
     detection floor, or with no complete percentile grid behind it. Those
@@ -2668,14 +2696,21 @@ def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[tuple[int, 
     on a log axis at all. Neither loses a figure; every one of them is in the
     table inside the `<details>`.
     """
-    series: list[tuple[int, str, float | None]] = []
+    series: list[_Median] = []
     for index, stage in enumerate(entry["stages"]):
         for measured in stage["tissues"]:
             if measured["tissue"] != tissue:
                 continue
             plottable = measured["median_abundance"]
             placed = measured["placement"] is not None and plottable > 0
-            series.append((index, _stage_label(stage), plottable if placed else None))
+            series.append(
+                _Median(
+                    position=index,
+                    label=_stage_label(stage),
+                    value=plottable if placed else None,
+                    gap=None if placed else measured["not_placed_reason"],
+                )
+            )
     return series
 
 
@@ -2772,6 +2807,44 @@ def _phase_bands(entry: DatasetProfileEntry, phases: CardiacPhaseFile | None, co
     return "".join(rects)
 
 
+def _other_gap_clause(reasons: frozenset[str]) -> str:
+    """Every gap reason *except* the detection floor's, spelled out.
+
+    The floor is excluded because it is the one reason with its own required
+    wording -- `_percentile_cell`'s rule 5, and the same sentence
+    `_band_caption` and `_spark_caption` each carry in full. Everything else
+    resolves through `_PLACEMENT_GAP_CLAUSE`, so a caption and the table cell
+    three lines below it cannot spell one gap two ways.
+
+    Sorted because `reasons` is a `frozenset` and an unsorted join over one
+    would reorder a published sentence between two builds of one commit --
+    **and, measured 2026-08-20, that cannot happen today.** `_tissue_entry`
+    assigns `dataset_not_registered` and `detection_floor_undeclared` from
+    `_dataset_gap`, which reads the `Dataset` alone, so either one applies to
+    every cell of that dataset or to none; only `no_quantile_grid` is
+    per-cell, and it is reached only where `_dataset_gap` returned nothing.
+    Two distinct non-floor reasons therefore cannot co-occur inside one
+    `DatasetProfileEntry`, this set holds at most one member, and removing
+    the sort changes no published byte. The sort stays as the defensive kind
+    section 9 keeps deliberately: this module renders whatever the payload
+    says and cannot see an invariant that lives in `profiles.py`. It is not
+    guarded by a test, and that is the reason -- `_banded_phases`' own
+    docstring records the same correction, made after its sort was claimed as
+    a determinism guard and measured not to be one.
+
+    Returns `""` when the floor is the only reason present, which is every
+    published page today -- measured 2026-08-20, all 2,817 unplaced cells on
+    the committed corpus are below-floor.
+    """
+    others = sorted(reason for reason in reasons if reason != ProfileGap.BELOW_DETECTION_FLOOR)
+    if not others:
+        return ""
+    return "; ".join(
+        _PLACEMENT_GAP_CLAUSE.get(reason, "no reason was recorded for this gap")
+        for reason in others
+    )
+
+
 def _band_caption(
     entry: DatasetProfileEntry,
     phases: CardiacPhaseFile | None,
@@ -2779,7 +2852,7 @@ def _band_caption(
     floor: float | None,
     low: float,
     high: float,
-    series: Sequence[tuple[int, str, float | None]],
+    series: Sequence[_Median],
     *,
     lined: bool,
 ) -> str:
@@ -2826,13 +2899,30 @@ def _band_caption(
     named = ", ".join(html.escape(phase.label) for phase, _, _ in _banded_phases(entry, phases))
     attribution = html.escape(phases.attributed_to) if phases is not None else ""
     unit = html.escape(_tissue_unit(entry, tissue))
+    # Every stage this dataset sampled and did not place is ticked, whatever
+    # the recorded reason -- so the clause explaining the mark is keyed on the
+    # reasons that actually occur, never on `value is None`. Read off the
+    # whole series rather than off `_line_breaks`, which sees only the gaps
+    # that interrupt a *line*: a leading or trailing unplaced stage draws a
+    # tick and breaks nothing, and it still needs explaining.
+    ticked = frozenset(point.gap or "" for point in series if point.value is None)
     floor_clause = (
         f" Below this dataset's detection floor ({_fmt(floor)} {unit}) no percentile is "
         "published and the stage is ticked on the axis instead &mdash; below the foot of "
         "the scale, not at a value on it."
-        if floor is not None and any(value is None for _, _, value in series)
+        if floor is not None and ProfileGap.BELOW_DETECTION_FLOOR.value in ticked
         else ""
     )
+    other_clause = _other_gap_clause(ticked)
+    tick_clause = ""
+    if other_clause:
+        tick_clause = (
+            f" A tick can mean something else too: {other_clause}. The mark says only that "
+            "this atlas did not place the stage, never that the gene reads low there."
+            if floor_clause
+            else f" A ticked stage is one this atlas did not place: {other_clause}. The mark "
+            "says nothing about how high the gene reads there."
+        )
     _, no_row = _line_breaks(series)
     # Two spellings, because the sentence contrasts itself with the clause
     # above it and that clause is not always there. "A break with no tick
@@ -2862,7 +2952,7 @@ def _band_caption(
         f"Vertical: median abundance in whole {html.escape(tissue)}, {unit}, on a log scale; "
         f"the axis runs {_fmt(low)} to {_fmt(high)} and is fitted to <strong>this gene</strong>, "
         "so a curve's height compares nothing to another gene's."
-        f"{floor_clause}{gap_clause} Shaded: {named} ({attribution}).</p>"
+        f"{floor_clause}{tick_clause}{gap_clause} Shaded: {named} ({attribution}).</p>"
     )
 
 
@@ -2892,9 +2982,17 @@ def _adjacent_runs(
     return runs
 
 
-def _line_breaks(series: Sequence[tuple[int, str, float | None]]) -> tuple[bool, bool]:
-    """Which of the two causes actually interrupts this organ's drawn line:
-    `(a stage sampled and not placed, a stage with no row at all)`.
+def _line_breaks(series: Sequence[_Median]) -> tuple[frozenset[str], bool]:
+    """Which causes actually interrupt this organ's drawn line:
+    `(the recorded reasons for a stage sampled and not placed, whether a stage
+    has no row at all)`.
+
+    **The first half is a set of reasons and was a bare `bool`.** "A stage
+    sampled and not placed" is not one fact -- below a detection floor is a
+    low reading about the gene, a missing percentile grid is a hole in the
+    reference -- and a caller handed only `True` can say nothing but the
+    first. `_spark_caption` said exactly that, of every break, whatever the
+    payload recorded.
 
     `_adjacent_runs` splits the line on both and cannot tell them apart,
     because for the *line* they are the same fact. For the *caption* they are
@@ -2909,16 +3007,17 @@ def _line_breaks(series: Sequence[tuple[int, str, float | None]]) -> tuple[bool,
     the dataset skipped before the first placed one or after the last breaks
     no line, so nothing on the figure needs explaining.
     """
-    present = {index for index, _, _ in series}
-    placed = [index for index, _, value in series if value is not None]
-    unplaced = unsampled = False
+    recorded = {point.position: point.gap for point in series}
+    placed = [point.position for point in series if point.value is not None]
+    unplaced: set[str] = set()
+    unsampled = False
     for first, second in zip(placed, placed[1:], strict=False):
         for gap in range(first + 1, second):
-            if gap in present:
-                unplaced = True
+            if gap in recorded:
+                unplaced.add(recorded[gap] or "")
             else:
                 unsampled = True
-    return unplaced, unsampled
+    return frozenset(unplaced), unsampled
 
 
 def _trajectory(
@@ -2956,7 +3055,7 @@ def _trajectory(
     and `_no_trajectory_sentence` refuses for a whole gene.
     """
     series = _tissue_medians(entry, tissue)
-    placed = [(index, value) for index, _, value in series if value is not None]
+    placed = [(point.position, point.value) for point in series if point.value is not None]
     if not placed:
         return ""
     count = len(entry["stages"])
@@ -2978,9 +3077,9 @@ def _trajectory(
         + _axis_label(low, _PLOT_BOTTOM - _FLOOR_GAP - scale.x(low))
     )
     ticks = "".join(
-        marker(_stage_x(index, count), _PLOT_BOTTOM, css_class="chart-absent")
-        for index, _, value in series
-        if value is None
+        marker(_stage_x(point.position, count), _PLOT_BOTTOM, css_class="chart-absent")
+        for point in series
+        if point.value is None
     )
     enough = len(points) >= _STAGES_FOR_A_TRAJECTORY
     lines = (
@@ -2997,7 +3096,7 @@ def _trajectory(
     floor = dataset.detection_floor if dataset is not None else None
     floor_words = f", above a detection floor of {_fmt(floor)} {unit}" if floor is not None else ""
     title = (
-        f"Median abundance in whole {tissue}, {series[0][1]} to {series[-1][1]}: "
+        f"Median abundance in whole {tissue}, {series[0].label} to {series[-1].label}: "
         f"{len(placed)} of {len(series)} sampled developmental stages placed against this "
         f"dataset's percentile grid{floor_words}, banded by this atlas's own curated "
         "cardiac phases."
@@ -3088,9 +3187,9 @@ def _anything_placed(entry: DatasetProfileEntry, cardiac: frozenset[str]) -> boo
     one sentence for the whole dataset block.
     """
     return any(
-        value is not None
+        point.value is not None
         for tissue in sorted(cardiac)
-        for _, _, value in _tissue_medians(entry, tissue)
+        for point in _tissue_medians(entry, tissue)
     )
 
 
@@ -3286,12 +3385,14 @@ def _small_multiples(entry: DatasetProfileEntry, dataset: Dataset | None) -> str
     # and by the time a series is filtered to its placed points the two are
     # the same absence. Handed down rather than re-derived, the reason
     # `_adjacent_runs` takes its points beside its indices.
-    wholes: dict[str, list[tuple[int, str, float | None]]] = {}
+    wholes: dict[str, list[_Median]] = {}
     for tissue in _sampled_tissues(entry):
         whole = _tissue_medians(entry, tissue)
         sampled_at[tissue] = len(whole)
         wholes[tissue] = whole
-        series[tissue] = [(index, value) for index, _, value in whole if value is not None]
+        series[tissue] = [
+            (point.position, point.value) for point in whole if point.value is not None
+        ]
     drawn = [tissue for tissue in series if series[tissue]]
     if not drawn:
         return ""
@@ -3339,7 +3440,7 @@ def _spark_caption(
     cardiac: frozenset[str],
     low: float,
     high: float,
-    wholes: Mapping[str, Sequence[tuple[int, str, float | None]]],
+    wholes: Mapping[str, Sequence[_Median]],
 ) -> str:
     """What the grid of panels cannot say about itself, in words beside it.
 
@@ -3380,14 +3481,18 @@ def _spark_caption(
     conclude the atlas never declared one.
     """
     unit = html.escape(_dominant_unit(entry, set(drawn)))
-    below_floor = any(_line_breaks(wholes[tissue])[0] for tissue in drawn)
-    no_row = any(_line_breaks(wholes[tissue])[1] for tissue in drawn)
+    interrupted = [_line_breaks(wholes[tissue]) for tissue in drawn]
+    unplaced: frozenset[str] = frozenset().union(*(reasons for reasons, _ in interrupted))
+    no_row = any(unsampled for _, unsampled in interrupted)
     causes = []
-    if below_floor:
+    if ProfileGap.BELOW_DETECTION_FLOOR.value in unplaced:
         causes.append(
             "a stage measured <strong>below this dataset's detection floor</strong>, which "
             "this atlas does not place"
         )
+    other = _other_gap_clause(unplaced)
+    if other:
+        causes.append(f"a stage this atlas published no percentile for &mdash; {other}")
     if no_row:
         causes.append(
             "a stage where this dataset has <strong>no row for that organ</strong> and "

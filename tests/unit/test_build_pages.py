@@ -4115,13 +4115,27 @@ def test_the_band_caption_names_only_the_breaks_this_figure_actually_draws(
 
     Four fixtures, one per corner: a fixture where every case shares the
     value under test measures nothing (CLAUDE.md section 4.36).
+
+    **And a fifth, on the axis the four could not see.** A tick is drawn for
+    every stage this dataset sampled and did not place, whatever the recorded
+    reason; the clause explaining it was conditioned on `value is None` and
+    so named the detection floor for all of them. A stage unplaced because no
+    percentile grid was published is ticked and captioned as a low reading,
+    three lines above a table cell reading "no complete percentile grid is
+    published for this organ at this stage" -- the page contradicting itself,
+    and in the direction that invents a measurement. `_heart_series` has
+    carried `unplaced_reason` since the sentence tier was written and no test
+    had pointed it at a caption.
     """
 
-    def caption(*stages: tuple[str, float | None | EllipsisType]) -> str:
+    def caption(
+        *stages: tuple[str, float | None | EllipsisType],
+        reason: str = "below_detection_floor",
+    ) -> str:
         return _expression_section_text(
             _expression_page(
                 tmp_path,
-                {GATA4: _heart_series(*stages)},
+                {GATA4: _heart_series(*stages, unplaced_reason=reason)},
                 _HEART_DATASET,
                 phases=_cardiac_phases(),
             )
@@ -4162,6 +4176,24 @@ def test_the_band_caption_names_only_the_breaks_this_figure_actually_draws(
     clean = caption(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", 275.0))
     assert tick not in clean
     assert no_row not in clean
+
+    # The same ticked shape, unplaced for a reason that is not the floor. The
+    # mark is drawn either way, so the caption still owes the reader an
+    # explanation of it -- it may not be the floor's.
+    grid = caption(
+        ("4wpc", None), ("5wpc", 5.0), ("6wpc", 40.0), ("7wpc", 275.0), reason="no_quantile_grid"
+    )
+    assert grid.count('class="chart-absent"') == 1, "the tick is drawn whatever the reason"
+    # Scoped to the caption: `_percentile_cell` prints the same clause in the
+    # stage table below, from the same map and deliberately so, and answers a
+    # section-wide check on it whatever the caption said.
+    caption_only = _slice_between(grid, "Left to right", ("</p>",))
+    assert "Below this dataset's detection floor" not in caption_only
+    assert "no complete percentile grid is published for this organ at this stage" in caption_only
+    # And the mark is still accounted for rather than left on the axis with
+    # nothing said about it, which is the defect the floor clause was written
+    # for in the first place.
+    assert "ticked" in caption_only
 
     # And the tick is placed off the bottom of the scale rather than at a
     # value on it. Measured: KIF20A's axis starts at 42 tpm against a 1 tpm
@@ -4355,6 +4387,7 @@ def _organ_panel(
     stages: tuple[str, ...] = ("4wpc", "5wpc", "6wpc"),
     highest_in: str | None = "heart",
     phase: PhaseInfo | None = None,
+    unplaced_reason: str = "below_detection_floor",
 ) -> ExpressionProfile:
     """Several organs measured across the same stages, each at its own magnitude.
 
@@ -4373,6 +4406,13 @@ def _organ_panel(
     -- so a panel built here draws no trajectory unless a caller asks for a
     phase the vocabulary actually names. That default is what every test
     written before the trajectory landed relies on; pass one to get bands.
+
+    `unplaced_reason` is a parameter for the reason it is one on
+    `_heart_series`: a `None` here is a stage this dataset sampled and did
+    not place, and *why* decides what the caption beside the panel is
+    entitled to say about it. Below a floor is a low reading about the gene;
+    a missing percentile grid is a hole in the reference and says nothing
+    about the gene at all.
     """
     names = tuple(name for name, _ in organs)
     entries = tuple(
@@ -4387,7 +4427,7 @@ def _organ_panel(
                     unit="tpm",
                     placement=_placement() if isinstance(values[index], float) else None,
                     not_placed_reason=(
-                        None if isinstance(values[index], float) else "below_detection_floor"
+                        None if isinstance(values[index], float) else unplaced_reason
                     ),
                 )
                 for name, values in organs
@@ -4397,6 +4437,20 @@ def _organ_panel(
         for index, token in enumerate(stages)
     )
     return _expression_profile((_dataset_profile_entry(stages=entries),))
+
+
+def _spark_caption_text(section: str) -> str:
+    """The small-multiples caption alone, out of the section it sits in.
+
+    Scoped for the reason `_validity_table` is (CLAUDE.md section 4.19). Every
+    gap clause this caption can print is also printed by `_percentile_cell` in
+    the stage table a few lines below -- they share `_PLACEMENT_GAP_CLAUSE` on
+    purpose, so that a caption and a cell cannot spell one gap two ways -- and
+    a section-wide check on any of them is answered by the table whether or
+    not the caption said anything at all. Measured 2026-08-20: deleting the
+    caption's whole non-floor clause left a section-wide assertion green.
+    """
+    return _slice_between(section, "One panel per organ with a placed measurement", ("</p>",))
 
 
 def _spark_panels(section: str) -> dict[str, str]:
@@ -4531,13 +4585,29 @@ def test_the_spark_caption_names_both_ways_a_panel_line_breaks(tmp_path: Path) -
 
     Both clauses conditional on the cause being in *this* gene's panels, and
     four fixtures so no clause is measured only in the state where it fires.
+
+    **A fifth for the reason axis**, which `_line_breaks` could not see: it
+    reports *that* a placed run was interrupted, and the caption read the
+    first half of that pair as "below the floor". A panel split by a stage
+    with no percentile grid behind it was captioned as a low reading, the
+    same conflation `_percentile_cell` refuses in words and `_band_caption`
+    made on the picture above.
     """
 
-    def caption(*organs: tuple[str, tuple[float | None | EllipsisType, ...]]) -> str:
+    def caption(
+        *organs: tuple[str, tuple[float | None | EllipsisType, ...]],
+        reason: str = "below_detection_floor",
+    ) -> str:
         return _expression_section_text(
             _expression_page(
                 tmp_path,
-                {GATA4: _organ_panel(*organs, stages=("4wpc", "5wpc", "6wpc", "7wpc"))},
+                {
+                    GATA4: _organ_panel(
+                        *organs,
+                        stages=("4wpc", "5wpc", "6wpc", "7wpc"),
+                        unplaced_reason=reason,
+                    )
+                },
                 _HEART_DATASET,
             )
         )
@@ -4560,6 +4630,17 @@ def test_the_spark_caption_names_both_ways_a_panel_line_breaks(tmp_path: Path) -
     unbroken = caption(("heart", (50.0, 90.0, 150.0, 275.0)), ("liver", (0.5, 1.2, 2.0, 2.4)))
     assert floor not in unbroken
     assert no_row not in unbroken
+
+    # The same broken shape, broken for a reason that is not the floor.
+    grid = _spark_caption_text(
+        caption(
+            ("heart", (50.0, None, 150.0, 275.0)),
+            ("liver", (0.5, 1.2, 2.0, 2.4)),
+            reason="no_quantile_grid",
+        )
+    )
+    assert floor not in grid
+    assert "no complete percentile grid is published for this organ at this stage" in grid
     # The sentence the two clauses hang off stays regardless: what is drawn
     # is what this atlas placed, whether or not anything is missing.
     assert "Only medians this dataset placed against its percentile grid are drawn" in unbroken
