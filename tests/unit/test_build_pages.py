@@ -2880,6 +2880,79 @@ def test_a_gene_with_no_plottable_row_gets_a_sentence_and_no_chart(
     assert "<table" in re.sub(r"<details.*?</details>", "", section, flags=re.S)
 
 
+@pytest.mark.parametrize(
+    ("measure", "label", "gloss"),
+    [
+        ("odds_ratio", "OR", "no association"),
+        ("enrichment_ratio", "enrichment", "no enrichment"),
+        ("rate_ratio", "rate ratio", "no difference in rate"),
+        ("hazard_ratio", "hazard_ratio", "no difference between the arms"),
+    ],
+)
+def test_the_axis_key_glosses_the_null_line_in_its_own_panels_vocabulary(
+    tmp_path: Path,
+    facts_uncurated: dict[str, GeneFacts],
+    measure: str,
+    label: str,
+    gloss: str,
+) -> None:
+    """What 1 means depends on what is on the axis, and the key said one thing.
+
+    `_forest_caption` made the measure label dynamic and then hardcoded the
+    gloss as "no enrichment". Measured 2026-08-20 on the built site: 112 of
+    the 137 panels, across 88 gene pages, read "Axis: **OR** ... the vertical
+    line is **1**, no enrichment" -- and for an odds ratio 1 is *no
+    association*. "No enrichment" is the de-novo-against-expectation
+    vocabulary that belongs to the 25 `enrichment_ratio` panels. That is the
+    conflation `effect_measure` exists to prevent (`_effect`'s docstring: an
+    odds ratio of 3.1 and an enrichment of 3.1 are different claims), stated
+    in the sentence whose whole job is telling the reader how to read the
+    axis. The sibling `<title>` on the same figure already varied correctly.
+
+    Each gloss is pinned against a **literal**, never against
+    `_NULL_LINE_GLOSS`, per CLAUDE.md section 4.38: asserting the constant
+    would pass for any rewording including a reintroduction of the single
+    hardcoded gloss. `rate_ratio` is in `EffectMeasure` and carries 0 rows
+    today; it is parametrised so the third vocabulary is written before a
+    study needs it rather than after. The fourth case is an unrecognised
+    token, which must still be glossed -- `_effect` has no branch that omits
+    its label and this has none that omits its gloss -- with a phrase true of
+    any ratio rather than one borrowed from a vocabulary the token may not
+    belong to.
+
+    Scoped to the `<figure class="forest">` and then to the axis sentence
+    inside it (section 4.19): "no enrichment" also appears in this section's
+    prose elsewhere, so a section-wide or even figure-wide assertion is
+    answered by a sentence that is not the one under test.
+    """
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                _burden_row(
+                    effect=2.45,
+                    effect_measure=measure,
+                    effect_bound=None,
+                    ci_low=1.2,
+                    ci_high=8.1,
+                )
+            ],
+        )
+    )
+
+    figure = _forest_figures(section)[0]
+    axis = re.search(r"Axis: .*?\. ", figure, re.S)
+    assert axis is not None, "the panel prints no axis sentence"
+    sentence = axis.group(0)
+
+    assert f"<strong>{label}</strong>" in sentence
+    assert f"the vertical line is <strong>1</strong>, {gloss}." in sentence
+    for other in ("no association", "no enrichment", "no difference in rate"):
+        if other != gloss:
+            assert other not in sentence, f"the {measure} axis also claims 1 is {other!r}"
+
+
 def test_the_forest_carries_no_summary_diamond(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
