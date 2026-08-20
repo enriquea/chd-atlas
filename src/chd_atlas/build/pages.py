@@ -1630,6 +1630,12 @@ def _union_kinds(rows: Sequence[BurdenRow]) -> tuple[bool, bool]:
     publishes no syndromic or non-syndromic row at all, so its `all` rows are
     the whole cohort rather than the sum of two rows a reader can see. Tagging
     them `union` would point at rows that are not on the page.
+
+    **This answers for the panel, and a tag is worn by a row.** A panel can
+    turn a union on for one consequence and then hang the tag on a row whose
+    own components are not all drawn -- 10 panels do. `_fully_split` is what
+    asks the per-row question, and `_forest_caption` is where the answer
+    changes what the key promises.
     """
     composite, parts = _CONSEQUENCE_UNION
     consequence = any(row.consequence_class == composite for row in rows) and any(
@@ -1648,6 +1654,48 @@ def _is_union(row: BurdenRow, kinds: tuple[bool, bool]) -> bool:
     return (consequence and row.consequence_class == _CONSEQUENCE_UNION[0]) or (
         stratum and row.cohort_stratum == _STRATUM_UNION[0]
     )
+
+
+def _fully_split(row: BurdenRow, rows: Sequence[BurdenRow], kinds: tuple[bool, bool]) -> bool:
+    """Whether **every** row this union contains is itself drawn on this panel.
+
+    `_union_kinds` asks its question of the panel; a tag is worn by a row, and
+    the two are not the same question. A panel carrying `all cases · missense`
+    beside `syndromic · missense` and `non-syndromic · missense` turns the
+    stratum union on for the whole panel -- and then `all cases · loss-of-
+    function`, whose non-syndromic half the study never published, wears the
+    same tag with only one component under it.
+
+    Measured 2026-08-20 on the built corpus: 288 rows carry the tag, **0 of
+    them with neither component present**, so the tag is never false; but on
+    10 panels a tagged row has one of its two components missing. All 10 are
+    a (stratum, consequence) cell absent from the mirror entirely -- and a
+    missing cell is not a null result, so nothing here may read as one.
+
+    Both axes are checked with the *other* axis held fixed, because that is
+    what the union is: `damaging` for `all cases` is the loss-of-function and
+    damaging-missense rows **for `all cases`**, not for any stratum.
+    """
+    consequence, stratum = kinds
+    if consequence and row.consequence_class == _CONSEQUENCE_UNION[0]:
+        drawn = {
+            other.consequence_class
+            for other in rows
+            if other.cohort_stratum == row.cohort_stratum
+            and other.consequence_class in _CONSEQUENCE_UNION[1]
+        }
+        if drawn != set(_CONSEQUENCE_UNION[1]):
+            return False
+    if stratum and row.cohort_stratum == _STRATUM_UNION[0]:
+        drawn = {
+            other.cohort_stratum
+            for other in rows
+            if other.consequence_class == row.consequence_class
+            and other.cohort_stratum in _STRATUM_UNION[1]
+        }
+        if drawn != set(_STRATUM_UNION[1]):
+            return False
+    return True
 
 
 def _survived_correction(row: BurdenRow) -> bool:
@@ -1903,6 +1951,12 @@ def _forest_caption(
     The filled clause excludes a surviving *synonymous* row, which is drawn
     muted rather than in the result colour and has its own clause below.
 
+    **The union clause is conditional twice**: once on a union being shown as
+    one at all, and once more on whether every tagged row is fully split.
+    Measured 2026-08-20: 10 panels tag a row with only one of its two
+    components drawn, TBX5's Audain odds-ratio panel among them, and the key
+    told the reader to reconcile it against a row that is not there.
+
     The pooling clause is **not** conditional, and it is worded as policy
     rather than as an observation about this page. It is here at all because
     the forest idiom ends in a summary diamond and a reader who knows the
@@ -1962,9 +2016,16 @@ def _forest_caption(
         reasons.append("<code>all cases</code> is the syndromic and non-syndromic rows together")
     if reasons:
         parts.append(
-            "A row tagged <strong>union</strong> contains other rows in this panel and is not "
-            "an independent finding: " + "; ".join(reasons) + ". "
+            "A row tagged <strong>union</strong> contains at least one other row in this panel "
+            "and is not an independent finding: " + "; ".join(reasons) + ". "
         )
+        if any(_is_union(row, kinds) and not _fully_split(row, rows, kinds) for row in rows):
+            parts.append(
+                "Here a tagged row is <strong>not fully split</strong>: at least one of the "
+                "rows it contains is not itself plotted, so what sits under a union on this "
+                "panel is part of it and not all of it. The table below carries every row "
+                "this study published for this gene. "
+            )
     if any(row.consequence_class == "synonymous" for row in rows):
         # Not the words "negative control", deliberately. That teaching is
         # `_SYNONYMOUS_NOTICE`'s and it is behind the fold, where

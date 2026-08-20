@@ -2491,6 +2491,96 @@ def test_a_union_row_is_marked_as_one(
     assert "syndromic and non-syndromic rows together" in figures[1]
 
 
+def test_the_union_key_never_promises_a_component_row_the_panel_does_not_draw(
+    tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
+) -> None:
+    """`_union_kinds` tests the components panel-wide; a tag is worn per row.
+
+    Measured 2026-08-20 on the built corpus: 288 rows carry the tag, **0 of
+    them with neither component on the panel** -- so the tag itself is never
+    false -- but on 10 panels a tagged row has only one of its two components
+    drawn. TBX5's Audain odds-ratio panel is one: `all cases · loss-of-
+    function` is tagged and the key says "`all cases` is the syndromic and
+    non-syndromic rows together", while the panel carries `syndromic · loss-
+    of-function` and no non-syndromic one. All 10 are a cell the study
+    published no row for at all -- a missing (stratum, consequence) cell is
+    not a null result -- so the row below the union is part of it, not all of
+    it, and the key said otherwise.
+
+    The tag stays: `all cases · loss-of-function` really does contain the
+    syndromic row beneath it, and dropping the tag would publish the two as
+    independent findings, which is the defect the tag exists to prevent. It
+    is the key's reconciliation instruction that has to become conditional.
+
+    Three panels, because the corpus can only show one of the two axes: all
+    10 measured cases split on the **stratum** axis, so a fixture built from
+    the corpus alone would leave the consequence branch unmeasured.
+    """
+    enrichment: dict[str, object] = {
+        "study": "PMID:40127276",
+        "comparator": "mutation_model",
+        "n_control_carriers": None,
+        "n_controls": None,
+        "control_cohorts": (),
+        "expected_count": 0.42,
+        "effect_measure": "enrichment_ratio",
+        "pvalue_test": "poisson",
+    }
+    placed: dict[str, object] = {"effect_bound": None, "ci_low": 1.2, "ci_high": 8.1}
+    section = _burden_section_text(
+        _burden_page(
+            tmp_path,
+            facts_uncurated,
+            [
+                # Panel one, Audain odds ratios: `all cases · lof` is tagged
+                # and both of its components are drawn. Nothing to warn about.
+                _burden_row(cohort_stratum="all", effect=2.45, **placed),
+                _burden_row(cohort_stratum="syndromic", effect=3.1, **placed),
+                _burden_row(cohort_stratum="nonsyndromic", effect=4.2, **placed),
+                # Panel two, Sierant enrichment ratios: `all cases · damaging`
+                # is tagged on the consequence axis with only one of the two
+                # component consequences drawn. No published panel is in this
+                # state; every measured case splits on the other axis.
+                _burden_row(
+                    cohort_stratum="all",
+                    consequence_class="damaging",
+                    effect=5.0,
+                    **placed,
+                    **enrichment,
+                ),
+                _burden_row(
+                    cohort_stratum="all",
+                    consequence_class="lof",
+                    effect=6.0,
+                    **placed,
+                    **enrichment,
+                ),
+                # Panel three, Sierant odds ratios: TBX5's real shape -- a
+                # stratum union with the non-syndromic side missing.
+                _burden_row(study="PMID:40127276", cohort_stratum="all", effect=7.0, **placed),
+                _burden_row(
+                    study="PMID:40127276", cohort_stratum="syndromic", effect=8.0, **placed
+                ),
+            ],
+            publications={_PUBLICATION.id: _PUBLICATION, **_SIERANT_PUBLICATION},
+        )
+    )
+
+    # PMID:40127276 sorts first and `enrichment_ratio` before `odds_ratio`.
+    consequence_short, stratum_short, complete = _forest_figures(section)
+    warning = "a tagged row is <strong>not fully split</strong>"
+    assert warning in consequence_short
+    assert warning in stratum_short
+    assert warning not in complete
+    # The tag itself is untouched on every one of them: the row really does
+    # contain the row below it, and saying otherwise would publish two
+    # overlapping rows as independent findings.
+    assert all(
+        figure.count('class="chart-union"') >= 1
+        for figure in (consequence_short, stratum_short, complete)
+    )
+
+
 def test_an_arrow_carries_the_same_correction_fill_as_a_circle(
     tmp_path: Path, facts_uncurated: dict[str, GeneFacts]
 ) -> None:
