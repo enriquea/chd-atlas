@@ -1531,13 +1531,16 @@ def _effect_compact(row: BurdenRow) -> str:
 # PMID:40127276 on 0% of its 150 -- and PMID:40127276 is the study with the
 # findings that survive correction. On TBX5 it reports de novo loss-of-function
 # enriched 297x at q 5.6e-08, while none of PMID:42230622's eight TBX5 rows
-# carries a corrected p at all: seven of their intervals cross 1, and the
-# eighth is the study's own negative control running the wrong way -- the
-# non-syndromic synonymous row, OR 0.251 (95% CI 0.030-0.924, p 0.0375),
-# entirely below 1. Drawing only where an interval
-# exists would put a picture of the null result on the page and leave the
-# surviving finding as text -- curated evidence visually demoted, which is this
-# repository's characteristic failure in a new medium.
+# carries a corrected p at all and seven of their intervals cross 1. The eighth
+# does not, and this comment said all eight did until it was measured: the
+# non-syndromic synonymous row sits entirely below 1, at OR 0.251 (95% CI
+# 0.030-0.924, p 0.0375). It is that study's own negative control, so it is the
+# one interval a sentence about this panel least ought to misdescribe.
+#
+# Drawing only where an interval exists would put a picture of the uncorrected
+# result on the page and leave the surviving finding as text -- curated
+# evidence visually demoted, which is this repository's characteristic failure
+# in a new medium.
 
 # One panel's geometry, in the SVG's own coordinates. The label column is wide
 # because the longest label this vocabulary produces -- "non-syndromic ·
@@ -2562,9 +2565,9 @@ _AXIS_LABEL_DROP: Final = 3.4
 # placed stage, 2 tpm), TFAP2B (one placed stage, 1 tpm) and MMP21 -- which is
 # placed at *three* stages, all of them 1.0 tpm. A count of genes with few
 # placed stages would be a different set: 9 of the 92 are placed at fewer than
-# two heart stages, and 7 of those 9 place nothing at all and draw no chart to
-# scale. No gene reaches this branch through `_small_multiples`, whose axis
-# pools every drawn organ.
+# two heart stages, and 7 of those 9 place nothing at all, so `_trajectory`
+# returns before there is an axis to scale. No gene reaches this branch
+# through `_small_multiples`, whose axis pools every drawn organ.
 _FLAT_SERIES_SPAN: Final = 10.0**0.5
 
 
@@ -3397,10 +3400,10 @@ def _dataset_block(
     its tokens sit inside a repeated 4-gram. The figure is about *lines*, and
     the lines are mostly table cells.
 
-    A chart that *replaced* them would take every exact figure
-    out of the HTML, which is this repository's characteristic defect (curated
-    work reaching no page) wearing a redesign. The summary is what a reader
-    sees first; the record is one click away and still complete.
+    A chart that *replaced* them would take every exact figure out of the
+    HTML, which is this repository's characteristic defect (curated work
+    reaching no page) wearing a redesign. The summary is what a reader sees
+    first; the record is one click away and still complete.
     """
     heading = f"<h3>{html.escape(entry['dataset'])}"
     shard = entry["quantile_shard"]

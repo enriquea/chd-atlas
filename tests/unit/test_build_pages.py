@@ -4611,14 +4611,16 @@ def test_an_organ_with_nothing_placed_is_named_rather_than_silently_dropped(
 
 # --- The order every cardiac organ is named in (CLAUDE.md section 4.36) ------
 #
-# `_stage_details` builds `cardiac` as a `frozenset`, and three places walk it:
+# `_dataset_block` builds `cardiac` as a `frozenset`, and three places walk it:
 # the trajectory charts, `_sampled_cardiac`'s sentence and `_spark_caption`'s
 # "this atlas declares" clause. All three sort it, and until 2026-08-20 nothing
 # could tell. `Dataset.cardiac_tissues` has exactly one member on the committed
 # corpus and every fixture above declares one, so a one-element set iterates in
-# one order under every seed: replacing all three `sorted(cardiac)` calls with
-# a bare `cardiac` left the build byte-identical under two seeds and the whole
-# suite green.
+# one order under every seed. Two measurements: replacing all three
+# `sorted(cardiac)` calls with a bare `cardiac` leaves the build byte-identical
+# under PYTHONHASHSEED 0 and 12345, and mutating them one at a time was killed
+# by 0 of the 1,050 tests that existed at 38fb290, the commit before this
+# section.
 #
 # **Seven organs, and the number is measured rather than chosen.** A `frozenset`
 # of *two* names iterates in sorted order about half the time, so a two-organ
