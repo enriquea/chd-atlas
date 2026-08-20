@@ -3200,13 +3200,19 @@ _HEART_DATASET = {"E-MTAB-6814": _profile_dataset(cardiac_tissues=("heart",))}
 def _heart_series(
     *stages: tuple[str, float | None],
     phase_ids: tuple[str, ...] = ("atrial_septum_morphogenesis",),
+    unplaced_reason: str = "below_detection_floor",
 ) -> ExpressionProfile:
     """A heart series over `stages`, in the order given.
 
     A `float` is a median this dataset placed against its percentile grid; a
-    `None` is a stage sampled and left below the detection floor. The order
+    `None` is a stage sampled and not placed, for `unplaced_reason`. The order
     given is the published order -- `gene_expression_profiles` emits stages
     by `Stage.order`, so a fixture's own sequence is the trajectory's.
+
+    `unplaced_reason` is a parameter rather than a constant because the reason
+    changes what a page is entitled to say: below a floor is a low reading
+    about the gene, and a missing percentile grid is a hole in the reference
+    that says nothing about the gene at all.
     """
     entries = [
         _stage_entry(
@@ -3218,7 +3224,7 @@ def _heart_series(
                     median=median if median is not None else 0.3,
                     unit="tpm",
                     placement=_placement() if median is not None else None,
-                    not_placed_reason=None if median is not None else "below_detection_floor",
+                    not_placed_reason=None if median is not None else unplaced_reason,
                 ),
             ),
         )
@@ -3377,6 +3383,19 @@ def test_a_gene_placed_at_one_stage_gets_markers_and_no_line(tmp_path: Path) -> 
     assert "<polyline" not in section
     assert "chart-point" in section
 
+    # Two adjacent placed stages is the case the constant actually gates, and
+    # the one above cannot reach it: a run of a single point is dropped
+    # whatever the threshold says, so `_STAGES_FOR_A_TRAJECTORY = 1` survives
+    # a one-stage fixture. Two measurements draw a segment that claims
+    # something about the interval between them.
+    pair = _heart_series(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", None))
+    boundary = _expression_section_text(
+        _expression_page(tmp_path, {GATA4: pair}, _HEART_DATASET, phases=_cardiac_phases())
+    )
+
+    assert "<polyline" not in boundary
+    assert boundary.count('class="chart-point"') == 2
+
 
 def test_a_gene_never_above_the_floor_gets_a_sentence_and_no_chart(tmp_path: Path) -> None:
     """D42, tier 4, and the reason it is not cosmetic.
@@ -3408,6 +3427,34 @@ def test_a_gene_never_above_the_floor_gets_a_sentence_and_no_chart(tmp_path: Pat
     assert "3 stages sampled" in section
 
 
+def test_a_gap_in_the_reference_is_never_reported_as_a_low_reading(tmp_path: Path) -> None:
+    """ "Nothing placed" is not one fact, and only one of them is about the gene.
+
+    `below_detection_floor` says this dataset measured the gene under its own
+    floor, which is what earns the dilution argument beside it. Every other
+    gap -- no percentile grid published for this organ and stage, no floor
+    declared, the dataset unregistered -- is a hole in the *reference*, and
+    reporting it as a low reading asserts a measurement this dataset never
+    made. Shares its shape with the below-floor test above and differs only in
+    the recorded reason, which is the value the branch reads.
+    """
+    profile = _heart_series(
+        ("4wpc", None),
+        ("5wpc", None),
+        ("6wpc", None),
+        unplaced_reason="no_quantile_grid",
+    )
+    section = _dataset_lede(
+        _expression_section_text(
+            _expression_page(tmp_path, {GATA4: profile}, _HEART_DATASET, phases=_cardiac_phases())
+        )
+    )
+
+    assert "<svg" not in section
+    assert "detection floor at every" not in section
+    assert "no complete percentile grid is published for this organ at this stage" in section
+
+
 def test_a_chart_never_replaces_the_figures_it_summarises(tmp_path: Path) -> None:
     """The evidence-loss mutant.
 
@@ -3421,8 +3468,16 @@ def test_a_chart_never_replaces_the_figures_it_summarises(tmp_path: Path) -> Non
     )
 
     assert "<svg" in section
-    assert "<details" in section
-    assert "<table" in section
-    # Not merely present: every figure the 21 blocks carried is still there.
-    assert "275 tpm (n=3 samples)" in section
-    assert "97 of 19,842 genes" in section
+    folded = re.search(r'<details class="stage-figures">.*?</details>', section, re.S)
+    assert folded is not None, "the stage figures must be folded, not deleted"
+    # Not merely present, and not merely somewhere on the page: every figure
+    # the 21 blocks carried is inside the fold the chart summarises.
+    assert "<table" in folded.group(0)
+    assert "275 tpm (n=3 samples)" in folded.group(0)
+    assert "97 of 19,842 genes" in folded.group(0)
+    # And the section-wide `<details` assertion this replaces is not enough on
+    # its own: `_EXPRESSION_READING_NOTES` renders one a few lines above,
+    # so a renderer that dropped the wrapper entirely would still satisfy it
+    # (CLAUDE.md section 4.19).
+    unfolded = re.sub(r"<details.*?</details>", "", section, flags=re.S)
+    assert "<table" not in unfolded
