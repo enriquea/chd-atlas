@@ -2525,6 +2525,17 @@ _PLOT_BOTTOM: Final = 124.0
 # conflation `_percentile_cell` refuses to make in words.
 _FLOOR_GAP: Final = 8.0
 
+# The value axis's own two labels, in the margin `_PLOT_LEFT` already
+# reserves. Without them the 104 px between `_PLOT_TOP` and the foot of the
+# scale carried no number at all, and every gene's curve filled all of it:
+# measured 2026-08-20, PKD1L1 spans 1 to 2 tpm and TBX20 spans 1 to 526, and
+# the two were drawn as the same full-height excursion. Right-anchored, so a
+# four-digit median (MYH6 reaches 4,761 tpm in heart) grows leftward into the
+# margin rather than across the plot. The drop centres the glyphs on the
+# point they label, the way `_FOREST_TEXT_DROP` centres a forest row's.
+_AXIS_LABEL_X: Final = _PLOT_LEFT - 4.0
+_AXIS_LABEL_DROP: Final = 3.4
+
 # A series whose placed values are all equal has no range, and `LogScale`
 # refuses a zero-span axis rather than silently placing every point on one
 # pixel. One decade centred on the value is the substitute: half a decade
@@ -2583,6 +2594,21 @@ def _axis_bounds(values: Sequence[float]) -> tuple[float, float]:
     if high > low:
         return low, high
     return low / _FLAT_SERIES_SPAN, high * _FLAT_SERIES_SPAN
+
+
+def _axis_label(value: float, y: float) -> str:
+    """One end of the value axis, named.
+
+    `_fmt`, never `charts.coordinate`. `coordinate` is the *pixel* formatter
+    and fixes to a tenth of a pixel, so it would publish a median of 275 tpm
+    as `275.0` and one of 4,761 as `4761.0`, beside `_fmt`'s `4,761` in the
+    table below the chart -- the same figure spelled two ways on one page.
+    """
+    return (
+        f'<text class="chart-label" x="{coordinate(_AXIS_LABEL_X)}" '
+        f'y="{coordinate(y + _AXIS_LABEL_DROP)}" text-anchor="end">'
+        f"{html.escape(_fmt(value))}</text>"
+    )
 
 
 def _stage_label(stage: StageProfileEntry) -> str:
@@ -2712,15 +2738,37 @@ def _phase_bands(entry: DatasetProfileEntry, phases: CardiacPhaseFile | None, co
 
 
 def _band_caption(
-    entry: DatasetProfileEntry, phases: CardiacPhaseFile | None, tissue: str, floor: float | None
+    entry: DatasetProfileEntry,
+    phases: CardiacPhaseFile | None,
+    tissue: str,
+    floor: float | None,
+    low: float,
+    high: float,
 ) -> str:
     """What the picture cannot say about itself, in words beside it.
 
-    Three things a reader would otherwise have to guess, and one of them is a
-    trap: the horizontal axis is stage *order*, not elapsed time, so the gap
+    Four things a reader would otherwise have to guess, and two of them are
+    traps. The horizontal axis is stage *order*, not elapsed time, so the gap
     between 13 and 16 wpc is drawn the same width as the gap between 4 and 5.
     Saying so is the difference between an ordinal axis and a false linear
     one.
+
+    **And the vertical axis is fitted to this gene alone**, which is the
+    second trap and the one that was unstated. Every gene's curve fills the
+    same 104 px whatever it spans: measured 2026-08-20, PKD1L1 runs 1 to 2
+    tpm in heart and TBX20 runs 1 to 526, and the two were drawn as the same
+    full-height excursion under a caption that named neither number. The
+    range is printed here for the reason `_spark_caption` prints its own --
+    a shared axis and a per-gene one are different claims, and a reader can
+    only tell which they are looking at if the figure says.
+
+    **It is stated as the axis's range, never as the medians'**, and the two
+    differ on exactly the genes where the wording matters most. `_axis_bounds`
+    widens a flat series by half a decade either side, because `LogScale`
+    refuses a zero-span axis; 3 of the 85 charted genes are flat (TFAP2B and
+    MMP21 at 1 tpm, FOXH1 at 2), and "median abundance in whole heart, 0.316
+    to 3.16 tpm" would attribute to their medians a spread neither end of
+    which anyone measured.
     """
     named = ", ".join(html.escape(phase.label) for phase, _, _ in _banded_phases(entry, phases))
     attribution = html.escape(phases.attributed_to) if phases is not None else ""
@@ -2741,7 +2789,9 @@ def _band_caption(
     return (
         f'<p class="method">Left to right: {span} in curated developmental '
         "order, evenly spaced &mdash; the axis is <strong>order, not elapsed time</strong>. "
-        f"Vertical: median abundance in whole {html.escape(tissue)}, {unit}, on a log scale."
+        f"Vertical: median abundance in whole {html.escape(tissue)}, {unit}, on a log scale; "
+        f"the axis runs {_fmt(low)} to {_fmt(high)} and is fitted to <strong>this gene</strong>, "
+        "so a curve's height compares nothing to another gene's."
         f"{floor_clause} Shaded: {named} ({attribution}).</p>"
     )
 
@@ -2819,6 +2869,8 @@ def _trajectory(
         f'<line class="chart-axis" x1="{coordinate(_PLOT_LEFT)}" '
         f'y1="{coordinate(_PLOT_BOTTOM)}" x2="{coordinate(_PLOT_RIGHT)}" '
         f'y2="{coordinate(_PLOT_BOTTOM)}"/>'
+        + _axis_label(high, _PLOT_BOTTOM - _FLOOR_GAP - scale.x(high))
+        + _axis_label(low, _PLOT_BOTTOM - _FLOOR_GAP - scale.x(low))
     )
     ticks = "".join(
         marker(_stage_x(index, count), _PLOT_BOTTOM, css_class="chart-absent")
@@ -2851,7 +2903,7 @@ def _trajectory(
         title=title,
         body=bands + axis + ticks + lines + markers,
     )
-    return figure + _band_caption(entry, phases, tissue, floor)
+    return figure + _band_caption(entry, phases, tissue, floor, low, high)
 
 
 def _sampled_cardiac(entry: DatasetProfileEntry, cardiac: frozenset[str]) -> list[tuple[str, int]]:

@@ -3894,6 +3894,96 @@ def test_every_chart_carries_an_atlas_specific_axis(tmp_path: Path) -> None:
     assert "<svg" not in bare
 
 
+def _trajectory_figure(section: str) -> str:
+    """The phase-banded trajectory alone, out of the section it sits in.
+
+    Sliced rather than asserted page-wide for the reason `_validity_table` is
+    (CLAUDE.md section 4.19): the organ small multiples are `<svg>`s on the
+    same page, carry their own `chart-label` text and print their own axis
+    range in words, so a section-wide check on either cannot tell which
+    picture answered it. The trajectory is the 560-wide one.
+    """
+    found = re.findall(r'<svg class="chart" viewBox="0 0 560 150".*?</svg>', section, flags=re.S)
+    assert len(found) == 1, f"expected one trajectory, found {len(found)}"
+    return found[0]
+
+
+def test_the_trajectory_says_what_its_vertical_axis_spans(tmp_path: Path) -> None:
+    """A curve with no numbers on it is a shape, not a measurement.
+
+    The trajectory contained **zero `<text>` elements** -- no ticks, no
+    labels, no numbers -- and its vertical axis is fitted to this gene's own
+    placed heart values, so every gene's curve filled the same 104 px whatever
+    it spanned. Measured 2026-08-20 on the built corpus: PKD1L1 runs 1 to 2
+    tpm and TBX20 runs 1 to 526 tpm, and the two were drawn as the same
+    full-height excursion; 8 of the 85 charted genes span under 5-fold and 39
+    span 20-fold or more. The small-multiples caption one screen below
+    condemns exactly this -- "a per-organ axis would rescale every line to its
+    own range and hide exactly that difference" -- while printing its own
+    range.
+
+    Two genes with different spans, because a fixture whose genes share the
+    value under test measures nothing (CLAUDE.md section 4.36): with one
+    gene, a renderer that labelled the axis with any constant would pass.
+
+    The numbers are `_fmt`'s, not `charts.coordinate`'s. `coordinate` is the
+    *pixel* formatter -- it fixes to a tenth, so it would publish a median of
+    275 tpm as `275.0` and one of 4,761 as `4761.0` beside `_fmt`'s `4,761`
+    in the table below. The literals here are what `_fmt` produces and what
+    `coordinate` does not.
+    """
+    wide = _expression_section_text(
+        _expression_page(
+            tmp_path,
+            {GATA4: _heart_series(("4wpc", 5.0), ("5wpc", 40.0), ("6wpc", 275.0))},
+            _HEART_DATASET,
+            phases=_cardiac_phases(),
+        )
+    )
+    narrow = _expression_section_text(
+        _expression_page(
+            tmp_path,
+            {GATA4: _heart_series(("4wpc", 1.0), ("5wpc", 1.5), ("6wpc", 2.0))},
+            _HEART_DATASET,
+            phases=_cardiac_phases(),
+        )
+    )
+
+    # Pinned as whole elements in the figure's own coordinate system: 42.0 is
+    # the right edge of the margin `_PLOT_LEFT` reserves, 15.4 is the top of
+    # the value scale and 119.4 its foot, and `text-anchor="end"` is what
+    # keeps a four-digit label off the plot.
+    top = '<text class="chart-label" x="42.0" y="15.4" text-anchor="end">'
+    foot = '<text class="chart-label" x="42.0" y="119.4" text-anchor="end">'
+    assert f"{top}275</text>" in _trajectory_figure(wide)
+    assert f"{foot}5</text>" in _trajectory_figure(wide)
+    assert f"{top}2</text>" in _trajectory_figure(narrow)
+    assert f"{foot}1</text>" in _trajectory_figure(narrow)
+
+    # And the caption says the same span in words, as the sibling figure's
+    # already does -- a reader who cannot see the axis labels still gets it.
+    #
+    # Stated as the **axis's** range and not as the medians'. `_axis_bounds`
+    # widens a flat series by half a decade either side, because `LogScale`
+    # refuses a zero-span axis, and 3 of the 85 charted genes are flat: for
+    # TFAP2B, placed at 1 tpm and nowhere else, "median abundance in whole
+    # heart, 0.316 to 3.16 tpm" attributes to its medians a spread neither
+    # end of which anyone measured. The third fixture is that gene's shape.
+    assert "the axis runs 5 to 275 and is fitted to" in wide
+    assert "the axis runs 1 to 2 and is fitted to" in narrow
+
+    flat = _expression_section_text(
+        _expression_page(
+            tmp_path,
+            {GATA4: _heart_series(("4wpc", 1.0), ("5wpc", 1.0), ("6wpc", 1.0))},
+            _HEART_DATASET,
+            phases=_cardiac_phases(),
+        )
+    )
+    assert "the axis runs 0.316 to 3.16 and is fitted to" in flat
+    assert "median abundance in whole heart, tpm, on a log scale" in flat
+
+
 def test_a_phase_the_source_never_ended_bands_nothing(tmp_path: Path) -> None:
     """`end_basis: not_stated` has no curated width, so it has no band.
 
