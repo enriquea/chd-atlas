@@ -28,7 +28,7 @@ import pytest
 
 from chd_atlas.build.profiles import LOOKUP_RULE, TAU_METHOD, TAU_SCALE
 from chd_atlas.build.runner import build_site
-from chd_atlas.models.dataset import Dataset
+from chd_atlas.models.dataset import Dataset, Stage
 
 REPO = Path(__file__).parent.parent
 DOC = REPO / "docs" / "data-api.md"
@@ -495,15 +495,25 @@ def test_the_datasets_field_list_names_every_field_the_model_declares() -> None:
     4.24 -- true when written, false by the next release, and internally
     consistent throughout, so re-reading it finds nothing).
 
-    Read from `Dataset.model_fields`, never from a real corpus record: no
-    dataset has ever been committed, so a real build's `datasets.json` is
-    always `{"datasets": []}` and there is no record on disk whose keys this
-    test could read instead. `build/literature.py::_dump` calls
-    `model_dump(mode="json")` with no field filtering, so the model's own
-    declared fields are exactly what a future record will publish -- reading
-    them here is not an approximation of the build, it is what the build
-    does, which is what makes this pin survive a field being *added* rather
-    than only catching one being *removed from the doc*.
+    Read from `Dataset.model_fields`, never from a real corpus record. That
+    was originally because no dataset had ever been committed, so a real
+    build's `datasets.json` was always `{"datasets": []}` and there was no
+    record on disk to read -- **which stopped being true on 2026-08-19, when
+    `E-MTAB-6814` landed**, and the sentence is corrected rather than deleted
+    because the reason to keep reading the model is now a different and better
+    one. `build/literature.py::_dump` calls `model_dump(mode="json")` with no
+    field filtering, so the model's declared fields are exactly what any
+    record publishes, present or future. Reading a committed record instead
+    would only pin the fields *that* record happens to exercise, and would
+    catch a field being removed from the doc while missing one being added to
+    the model -- which is the direction this guard exists for.
+
+    `Stage.model_fields` as well as `Dataset`'s, since schema 2.12. `stages`
+    is the one field on this record that is a list of structured entries
+    rather than a scalar, so it is the one whose sub-fields a consumer types
+    against without the outer field list saying anything about them. `order`
+    arrived there and not on `Dataset`, so the `Dataset` loop alone could not
+    have seen it.
     """
     doc = DOC.read_text()
     start = doc.index("## `datasets.json`")
@@ -512,6 +522,10 @@ def test_the_datasets_field_list_names_every_field_the_model_declares() -> None:
     for field in Dataset.model_fields:
         assert f"`{field}`" in section, (
             f"Dataset.{field} is not named in the datasets.json field list"
+        )
+    for field in Stage.model_fields:
+        assert f"`{field}`" in section, (
+            f"Stage.{field} is not named in the datasets.json stage description"
         )
 
 
