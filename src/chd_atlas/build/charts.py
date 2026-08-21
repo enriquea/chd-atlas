@@ -52,6 +52,12 @@ def coordinate(value: float) -> str:
     strength of operand order alone, and two builds of one commit must be
     byte-identical.
     """
+    if not math.isfinite(value):
+        raise ValueError(
+            f"a coordinate must be finite, got {value!r}; `encode_json` refuses a "
+            f"non-finite float for the JSON side and this is its counterpart for "
+            f"the geometry, which that guard cannot reach"
+        )
     text = f"{value:.1f}"
     return "0.0" if text == "-0.0" else text
 
@@ -86,11 +92,27 @@ class LogScale:
           axis silently inverts, so a rising trajectory is drawn falling.
         - `width <= 0` **raises nothing and returns `left` for every value.**
           Every measurement stacks on one pixel, which reads as "all these
-          numbers are the same" rather than as a broken axis. That is the one
-          this guard exists for; the other two would surface eventually.
+          numbers are the same" rather than as a broken axis.
+        - a **non-finite** bound. Added 2026-08-21 after a review measured it:
+          `high=inf` gives an infinite span, `finite/inf` is `0.0`, and
+          `x(1.0)`, `x(1e6)` and `x(1e300)` all returned `0.0` -- the zero-width
+          failure exactly, through a guard that did not look for it. A `nan`
+          bound passed every check below, because `nan <= x` is `False` for
+          any x.
+
+        Two of the four are silent (`high < low` and the non-finite bounds),
+        not one; this paragraph said one until the same review.
 
         `raise`, never `assert` -- `-O` strips `assert`.
         """
+        bounds = (self.low, self.high, self.left, self.width)
+        if not all(math.isfinite(bound) for bound in bounds):
+            raise ValueError(
+                f"a log axis needs finite bounds, got low={self.low!r} high={self.high!r} "
+                f"left={self.left!r} width={self.width!r}; an infinite span places every "
+                f"value at the same pixel exactly as a zero width does, and a nan bound "
+                f"passes every comparison below because nan <= x is always False"
+            )
         if self.low <= 0:
             raise ValueError(f"a log axis needs a positive low bound, got {self.low!r}")
         if self.high <= self.low:
