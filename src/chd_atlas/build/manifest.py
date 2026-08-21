@@ -325,12 +325,15 @@ from chd_atlas.corpus import Corpus
 # because sorting the tokens is precisely the bug. No version letter can carry
 # that, so `docs/data-api.md` states it where a reader meets the array.
 #
-# `datasets.json`'s own `stages` array is **not** sorted by the build: that file
-# is serialised generically from the curated record (`literature._dump`), so its
-# order is the curation file's declaration order, and nothing enforces that to
-# agree with `order`. The two agree today. A consumer wanting chronology from
-# that file sorts on `order` rather than trusting the array, and the API doc
-# says so rather than leaving the coincidence to be discovered.
+# `datasets.json`'s own `stages` array **is** sorted by the build, on `order`,
+# since 2026-08-21. It was not: the file is serialised generically from the
+# curated record (`literature._dump`), so its sequence was the curation file's
+# declaration order and agreed with `order` only because the curator typed it
+# that way. Measured -- moving the `elderly` block to the top of the YAML while
+# leaving `order: 21` alone published `elderly` first with `validate` at the
+# exact documented baseline. PRF011 and PRF014 constrain the values of `order`,
+# never the sequence a file lists them in, so the guarantee lives in the
+# emitter where it holds by construction.
 #
 # **That array moved in this release too, and measurement is the only reason
 # this sentence is here.** A diff of two real builds (2.11 against 2.12) shows

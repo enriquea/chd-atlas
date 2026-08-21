@@ -693,3 +693,36 @@ def test_every_trajectory_mark_sits_where_the_payload_puts_it(site: Path) -> Non
             checked += 1
 
     assert checked >= 80, f"only {checked} trajectories checked; the sweep found too few"
+
+
+def test_datasets_json_orders_its_stages_by_order_not_by_declaration(site: Path) -> None:
+    """The published stage array holds chronology by construction.
+
+    It agreed with `order` only because the curator typed it that way.
+    Measured before this guard: moving the `elderly` block to the top of
+    `curation/datasets/E-MTAB-6814.yaml` while leaving `order: 21` alone gave
+    `validate` the exact documented baseline -- 0 errors, 4 warnings -- and
+    published `datasets.json` with `elderly` first, with gene bundles and
+    pages unchanged. PRF011 and PRF014 constrain the *values* of `order`,
+    never the sequence a YAML file lists them in.
+
+    `bundles._concordance_for`'s lesson (CLAUDE.md 4.28): the gene bundles
+    already sorted their own stage array, and this second consumer of the same
+    input did not.
+    """
+    payload = _read(site, "datasets.json")
+    checked = 0
+    for dataset in payload["datasets"]:
+        stages = dataset.get("stages") or []
+        if not stages:
+            continue
+        orders = [stage["order"] for stage in stages]
+        assert orders == sorted(orders), (
+            f"{dataset['id']}: stages are not in `order` sequence, so the array "
+            f"carries declaration order rather than chronology"
+        )
+        assert orders == list(range(1, len(orders) + 1)), (
+            f"{dataset['id']}: `order` is not a contiguous 1..N sequence"
+        )
+        checked += 1
+    assert checked >= 1, "no dataset carried stages; this guard would pass vacuously"
