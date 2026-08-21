@@ -153,7 +153,29 @@ def build_literature(corpus: Corpus, emitter: Emitter) -> None:
         {"phenotypes": [_dump(term) for term in sorted(corpus.phenotypes, key=lambda t: t.id)]},
     )
 
-    emitter.write_json(
-        DATASETS,
-        {"datasets": [_dump(dataset) for dataset in sorted(corpus.datasets, key=lambda d: d.id)]},
-    )
+    # `stages` is re-sorted on `order` rather than dumped in declaration
+    # order. It agreed with `order` only because the curator typed it that way:
+    # measured, moving the `elderly` block to the top of
+    # `curation/datasets/E-MTAB-6814.yaml` while leaving `order: 21` alone gave
+    # `validate` the exact documented baseline (0 errors, 4 warnings) and
+    # published `datasets.json` with `elderly` first, gene bundles and pages
+    # unchanged. PRF011 and PRF014 constrain the *values* of `order`, not the
+    # sequence a YAML file happens to list them in, and no check ever will --
+    # so the guarantee belongs here, where it holds by construction.
+    #
+    # This is `bundles._concordance_for`'s lesson (CLAUDE.md 4.28): a guard on
+    # one consumer of an input is not a guard. The gene bundles already sort
+    # their own stage array; this is the other consumer, and it did not.
+    datasets: list[dict[str, Json]] = []
+    for dataset in sorted(corpus.datasets, key=lambda d: d.id):
+        payload = _dump(dataset)
+        stages = payload.get("stages")
+        if isinstance(stages, list):
+            payload["stages"] = sorted(
+                stages,
+                key=lambda stage: (
+                    stage["order"] if isinstance(stage, dict) and "order" in stage else 0
+                ),
+            )
+        datasets.append(payload)
+    emitter.write_json(DATASETS, {"datasets": datasets})

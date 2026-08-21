@@ -223,8 +223,10 @@ class Specificity(TypedDict):
     banding (<=0.5 broad, >=0.8-0.9 specific), and choosing a threshold is a
     classification the atlas would author, which D39(c) forbids. `highest_in`
     is what makes a page's wording safe -- tau measures concentration, not
-    location, so a "heart-preferential" gloss keyed on tau alone can state
-    the opposite of the truth for a gene concentrated elsewhere.
+    location, so an organ-naming gloss keyed on tau alone can state the
+    opposite of the truth for a gene concentrated elsewhere. (The page said
+    "heart-preferential" until 2026-08-21; `pages._specificity_sentence`
+    records why the adjective went and why this gate stayed.)
 
     - `scale` -- names the transform (D39(a)); the same input reads
       tissue-specific on linear and broad on log2, so this is not decoration.
@@ -262,7 +264,8 @@ def specificity(medians: Mapping[str, float], floor: float) -> Specificity | Non
     0.900 on linear RPKM -- "tissue-specific" -- and 0.480 on log2 --
     "broadly expressed". Yanai et al. 2005 and the Kryuchkova-Mostacci &
     Robinson-Rechavi benchmark both compute tau on log expression; computing
-    on linear would call ordinary genes heart-preferential across the board.
+    on linear would publish a number that reads tissue-specific for ordinary
+    genes across the board.
 
     Returns `None`, never `0.0`, when tau is undefined:
 
@@ -622,6 +625,19 @@ class ProfileGap(StrEnum):
     """Tau is undefined when every sampled organ's median is below the floor
     (the normaliser is the peak)."""
 
+    NOT_ON_A_LOG_AXIS = "not_on_a_log_axis"
+    """The atlas placed this cell, and a figure still cannot draw it: the
+    median is `<= 0`, which a logarithmic axis has no position for.
+
+    Distinct from `BELOW_DETECTION_FLOOR`, which says the atlas declined to
+    place the measurement at all. This one says it placed it and the picture
+    cannot show it, and the two owe a reader different sentences. Unreachable
+    while `Dataset.detection_floor` is `gt=0` -- a positive floor cannot admit
+    a non-positive median -- and kept because the alternative is
+    `pages._Median` carrying neither a value nor a reason, which publishes
+    "no reason was recorded for this gap" about a cell whose percentile is
+    printed three lines below."""
+
     UNDEFINED = "undefined"
     """`specificity()` refused for a reason neither of the two checks above
     predicts -- reachable only for a degenerate floor `<= 0` whose peak is
@@ -656,7 +672,13 @@ class TissueProfileEntry(TypedDict):
     unit: str
     n_samples: int
     placement: Placement | None
-    not_placed_reason: str | None
+    # `ProfileGap`, not `str`: a `StrEnum` member serialises to the same
+    # bytes, so the published payload is unchanged, and mypy starts
+    # checking the vocabulary the enum was written to constrain. Bare
+    # `str` meant nothing stopped a specificity-side member landing here,
+    # where `_PLACEMENT_GAP_CLAUSE` would miss it and the page would print
+    # "no reason was recorded for this gap" about a gap whose reason was.
+    not_placed_reason: ProfileGap | None
 
 
 class PhaseInfo(TypedDict):
@@ -693,7 +715,7 @@ class StageProfileEntry(TypedDict):
     stage: str | None
     phase: PhaseInfo
     specificity: Specificity | None
-    specificity_unavailable_reason: str | None
+    specificity_unavailable_reason: ProfileGap | None
     tissues: list[TissueProfileEntry]
 
 
@@ -876,13 +898,13 @@ def _tissue_entry(
         unit=row.unit,
         n_samples=row.n_samples,
         placement=placed,
-        not_placed_reason=reason.value if reason is not None else None,
+        not_placed_reason=reason,
     )
 
 
 def _specificity_entry(
     medians: Mapping[str, float], floor: float | None, dataset_gap: ProfileGap | None
-) -> tuple[Specificity | None, str | None]:
+) -> tuple[Specificity | None, ProfileGap | None]:
     """Tau over one stage's per-organ medians, or the reason it is absent.
 
     Checked in the same order `specificity()` itself would refuse, so the
@@ -892,16 +914,16 @@ def _specificity_entry(
     `specificity()` still refused for.
     """
     if dataset_gap is not None:
-        return None, dataset_gap.value
+        return None, dataset_gap
     if floor is None:
-        return None, ProfileGap.FLOOR_UNDECLARED.value
+        return None, ProfileGap.FLOOR_UNDECLARED
     if len(medians) < 2:
-        return None, ProfileGap.ONE_ORGAN_SAMPLED.value
+        return None, ProfileGap.ONE_ORGAN_SAMPLED
     if max(medians.values()) < floor:
-        return None, ProfileGap.PEAK_BELOW_DETECTION_FLOOR.value
+        return None, ProfileGap.PEAK_BELOW_DETECTION_FLOOR
     result = specificity(medians, floor)
     if result is None:
-        return None, ProfileGap.UNDEFINED.value
+        return None, ProfileGap.UNDEFINED
     return result, None
 
 

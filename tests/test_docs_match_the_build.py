@@ -601,3 +601,55 @@ def test_the_api_doc_states_the_expression_census_the_build_produces(site: Path)
 
     assert f"{manifest['counts']['profile_genes']} genes" in doc
     assert f"{manifest['counts']['profile_datasets']} dataset" in doc
+
+
+def test_the_doc_states_the_stage_order_datasets_json_actually_publishes(site: Path) -> None:
+    """CLAUDE.md 4.24, caught in the artifact the section itself exists to guard.
+
+    Through schema `2.11` this section told a consumer to **"Sort on `order`
+    rather than trusting this array's own sequence"**, and gave the reason:
+    `datasets.json` is serialised generically from the curated record, so
+    `stages` arrived in declaration order and "nothing enforces it" to match
+    `order`. Both halves were true when written. `build/literature.py` now
+    sorts the array at emit, so the second half became false while the advice
+    stayed harmless -- which is the shape that survives re-reading, because a
+    consumer who follows it still gets the right answer and never learns the
+    sentence is wrong.
+
+    **No published byte distinguishes the two**, and that is what makes this a
+    documentation guard rather than a build one: the curated file was already
+    in `order`, so `datasets.json` is byte-identical before and after (measured
+    2026-08-21, `cmp` over two real builds). `test_built_site_is_consumable.py
+    ::test_datasets_json_orders_its_stages_by_order_not_by_declaration` pins
+    the emitter's behaviour; nothing pinned the sentence a consumer reads about
+    it, so reverting this paragraph passed the whole suite.
+
+    Three assertions on one section, scoped to it rather than to the file
+    (4.19 -- `order` and the word "sorted" both occur elsewhere in this
+    document, so a document-wide check would pass on a section that says the
+    opposite):
+
+    - the retired instruction is **absent**. A negative assertion, for 4.35's
+      reason: the positive one below fails when the sentence is deleted, this
+      one fails when the deleted sentence comes back, and coming back is what
+      nobody is watching for.
+    - the section states the sort, against a **literal** rather than against
+      any constant the code builds it from (4.38).
+    - the claim is **true of a real build**, so the wording cannot be corrected
+      into a different false sentence.
+    """
+    doc = DOC.read_text()
+    start = doc.index("## `datasets.json`")
+    section = doc[start : doc.index("\n## ", start)]
+
+    assert "rather than trusting this array's own sequence" not in section
+    assert "a curated record printed as written" not in section
+    assert "This array is sorted by the build, on `order`" in section
+
+    published = json.loads((site / "datasets.json").read_text())
+    for record in published["datasets"]:
+        orders = [stage["order"] for stage in record["stages"]]
+        assert orders == sorted(orders), (
+            f"{record['id']} publishes its stages out of `order`, which is what "
+            f"the datasets.json section of the API doc tells a consumer it does not"
+        )

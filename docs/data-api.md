@@ -1480,19 +1480,33 @@ on the developmental axis:
   [`expression_profile`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
   above.
 
-**Sort on `order` rather than trusting this array's own sequence.** The
-records in `datasets.json` are serialised straight from the curated file, so
-`stages` here arrives in the order a curator declared it. That matches `order`
-today and nothing enforces it to — the atlas checks that `order` is unique
-(`PRF011`) and does not contradict a stage's own `wpc` (`PRF012`), not that
-the block was typed in sequence. The gene bundle's stage array *is* sorted by
-`order`; this one is a curated record printed as written.
+**This array is sorted by the build, on `order`** — the same sequence the
+gene bundle's [`stages`](#the-bundles-expression_profile-object-a-developmental-transcriptome-never-a-contrast)
+array arrives in.
 
-Which is not academic: **this array's own sequence also moved in `2.12`.** The
-same commit that numbered the stages re-sequenced the eight post-natal ones in
-the curated file, so they now arrive `neonate` first rather than `adolescent`
-first. Every token and every `wpc` is unchanged — only the order is different,
-and only for the post-natal block.
+Through schema `2.11` it was not, and the paragraph here said so. Every record
+in `datasets.json` is serialised generically from the curated file, so `stages`
+arrived in whatever sequence a curator typed and agreed with `order` only
+because they typed it in sequence. No validator could have caught a re-typed
+block: `PRF011` (two stages claiming one `order`), `PRF012` (`order`
+contradicting a stage's own `wpc`) and `PRF014` (a post-natal stage ordered
+before a prenatal one) all constrain the *values* of `order`, never the
+sequence a file lists them in. Measured — moving the `elderly` block to the top
+of the curation file while leaving `order: 21` alone published `elderly` first
+with `validate` at its exact documented baseline. The guarantee therefore lives
+in the emitter, where it holds by construction rather than by care.
+
+**No published byte changed when it landed**, which is why it carries no
+schema letter: the curated file was already in order, so this array is
+identical before and after and no consumer can tell the two builds apart. What
+changed is that it can no longer stop being in order without the build putting
+it back.
+
+**This array's own sequence did move in `2.12`.** The same commit that numbered
+the stages re-sequenced the eight post-natal ones in the curated file, so they
+arrive `neonate` first rather than `adolescent` first. Every token and every
+`wpc` is unchanged — only the order is different, and only for the post-natal
+block.
 
 The committed corpus holds one dataset today, the `"profile"`-design
 `E-MTAB-6814` shown above. No `"contrast"`-design dataset has been curated

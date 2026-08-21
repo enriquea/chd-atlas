@@ -242,3 +242,51 @@ def test_every_chart_mark_resolves_a_paint_and_no_two_meanings_share_one() -> No
         assert rules[solid]["fill"] != rules[hollow]["fill"], (
             f"{solid} and {hollow} are the same paint; the correction encoding is gone"
         )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="inf"),
+        pytest.param(float("-inf"), id="-inf"),
+    ],
+)
+def test_a_coordinate_refuses_a_non_finite_value(value: float) -> None:
+    """The geometry layer's own `allow_nan=False`.
+
+    `encode_json` refuses a non-finite float because `JSON.parse` rejects what
+    Python accepts. Charts are HTML, so that guard cannot reach them, and this
+    module had no counterpart: `coordinate(float("nan"))` returned `"nan"` and
+    `marker(float("inf"), 0.0, ...)` emitted `cx="inf"`. A browser drops an
+    unparseable coordinate silently, so the mark vanishes from a chart whose
+    checksum still verifies -- this repository's characteristic defect, in the
+    one output format the existing guard does not cover.
+    """
+    with pytest.raises(ValueError, match="finite"):
+        coordinate(value)
+
+
+@pytest.mark.parametrize(
+    ("low", "high", "width"),
+    [
+        pytest.param(1.0, float("inf"), 100.0, id="infinite high"),
+        pytest.param(float("nan"), 100.0, 100.0, id="nan low"),
+        pytest.param(1.0, 100.0, float("inf"), id="infinite width"),
+    ],
+)
+def test_an_axis_with_a_non_finite_bound_is_refused_at_construction(
+    low: float, high: float, width: float
+) -> None:
+    """`high=inf` reproduces exactly the failure the width guard exists to stop.
+
+    `__post_init__` refuses a zero-width axis because it "places every value
+    at the same pixel rather than failing". An infinite `high` does the same
+    thing and was accepted: `span` is `inf`, `finite/inf` is `0.0`, and
+    measured -- `x(1.0)`, `x(1e6)` and `x(1e300)` all returned `0.0`.
+
+    A `nan` bound slipped through for a different reason: `nan <= 0` and
+    `nan <= nan` are both `False`, so every existing comparison passed it.
+    """
+    with pytest.raises(ValueError, match="finite"):
+        LogScale(low=low, high=high, left=0.0, width=width)

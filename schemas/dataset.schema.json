@@ -147,6 +147,7 @@
     "detection_floor": {
       "anyOf": [
         {
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         {
