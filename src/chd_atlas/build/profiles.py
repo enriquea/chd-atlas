@@ -672,7 +672,13 @@ class TissueProfileEntry(TypedDict):
     unit: str
     n_samples: int
     placement: Placement | None
-    not_placed_reason: str | None
+    # `ProfileGap`, not `str`: a `StrEnum` member serialises to the same
+    # bytes, so the published payload is unchanged, and mypy starts
+    # checking the vocabulary the enum was written to constrain. Bare
+    # `str` meant nothing stopped a specificity-side member landing here,
+    # where `_PLACEMENT_GAP_CLAUSE` would miss it and the page would print
+    # "no reason was recorded for this gap" about a gap whose reason was.
+    not_placed_reason: ProfileGap | None
 
 
 class PhaseInfo(TypedDict):
@@ -709,7 +715,7 @@ class StageProfileEntry(TypedDict):
     stage: str | None
     phase: PhaseInfo
     specificity: Specificity | None
-    specificity_unavailable_reason: str | None
+    specificity_unavailable_reason: ProfileGap | None
     tissues: list[TissueProfileEntry]
 
 
@@ -892,13 +898,13 @@ def _tissue_entry(
         unit=row.unit,
         n_samples=row.n_samples,
         placement=placed,
-        not_placed_reason=reason.value if reason is not None else None,
+        not_placed_reason=reason,
     )
 
 
 def _specificity_entry(
     medians: Mapping[str, float], floor: float | None, dataset_gap: ProfileGap | None
-) -> tuple[Specificity | None, str | None]:
+) -> tuple[Specificity | None, ProfileGap | None]:
     """Tau over one stage's per-organ medians, or the reason it is absent.
 
     Checked in the same order `specificity()` itself would refuse, so the
@@ -908,16 +914,16 @@ def _specificity_entry(
     `specificity()` still refused for.
     """
     if dataset_gap is not None:
-        return None, dataset_gap.value
+        return None, dataset_gap
     if floor is None:
-        return None, ProfileGap.FLOOR_UNDECLARED.value
+        return None, ProfileGap.FLOOR_UNDECLARED
     if len(medians) < 2:
-        return None, ProfileGap.ONE_ORGAN_SAMPLED.value
+        return None, ProfileGap.ONE_ORGAN_SAMPLED
     if max(medians.values()) < floor:
-        return None, ProfileGap.PEAK_BELOW_DETECTION_FLOOR.value
+        return None, ProfileGap.PEAK_BELOW_DETECTION_FLOOR
     result = specificity(medians, floor)
     if result is None:
-        return None, ProfileGap.UNDEFINED.value
+        return None, ProfileGap.UNDEFINED
     return result, None
 
 

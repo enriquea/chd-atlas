@@ -2758,7 +2758,7 @@ class _Median(NamedTuple):
     position: int
     label: str
     value: float | None
-    gap: str | None
+    gap: ProfileGap | None
 
 
 def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[_Median]:
@@ -2804,7 +2804,7 @@ def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[_Median]:
                     gap=(
                         None
                         if placed
-                        else (measured["not_placed_reason"] or ProfileGap.NOT_ON_A_LOG_AXIS.value)
+                        else (measured["not_placed_reason"] or ProfileGap.NOT_ON_A_LOG_AXIS)
                     ),
                 )
             )
