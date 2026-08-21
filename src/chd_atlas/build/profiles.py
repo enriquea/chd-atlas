@@ -625,6 +625,19 @@ class ProfileGap(StrEnum):
     """Tau is undefined when every sampled organ's median is below the floor
     (the normaliser is the peak)."""
 
+    NOT_ON_A_LOG_AXIS = "not_on_a_log_axis"
+    """The atlas placed this cell, and a figure still cannot draw it: the
+    median is `<= 0`, which a logarithmic axis has no position for.
+
+    Distinct from `BELOW_DETECTION_FLOOR`, which says the atlas declined to
+    place the measurement at all. This one says it placed it and the picture
+    cannot show it, and the two owe a reader different sentences. Unreachable
+    while `Dataset.detection_floor` is `gt=0` -- a positive floor cannot admit
+    a non-positive median -- and kept because the alternative is
+    `pages._Median` carrying neither a value nor a reason, which publishes
+    "no reason was recorded for this gap" about a cell whose percentile is
+    printed three lines below."""
+
     UNDEFINED = "undefined"
     """`specificity()` refused for a reason neither of the two checks above
     predicts -- reachable only for a degenerate floor `<= 0` whose peak is

@@ -2307,6 +2307,10 @@ _PLACEMENT_GAP_CLAUSE: Final[dict[str, str]] = {
     ProfileGap.NO_QUANTILE_GRID.value: (
         "no complete percentile grid is published for this organ at this stage"
     ),
+    ProfileGap.NOT_ON_A_LOG_AXIS.value: (
+        "this atlas placed the measurement and a logarithmic axis has no "
+        "position for it: the median is zero or below"
+    ),
 }
 
 _SPECIFICITY_GAP_CLAUSE: Final[dict[str, str]] = {
@@ -2761,7 +2765,16 @@ def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[_Median]:
                     position=index,
                     label=_stage_label(stage),
                     value=plottable if placed else None,
-                    gap=None if placed else measured["not_placed_reason"],
+                    # `or` rather than a bare read: a cell the payload placed
+                    # whose median is `<= 0` carries no `not_placed_reason` by
+                    # `TissueProfileEntry`'s own contract, and would otherwise
+                    # reach `_Median` with neither a value nor a gap -- the one
+                    # pairing its docstring rules out.
+                    gap=(
+                        None
+                        if placed
+                        else (measured["not_placed_reason"] or ProfileGap.NOT_ON_A_LOG_AXIS.value)
+                    ),
                 )
             )
     return series
