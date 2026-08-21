@@ -20,6 +20,7 @@ from chd_atlas.build.emit import Emitter
 from chd_atlas.build.pages import (
     _EM_DASH,
     _SCOPE_RULE,
+    _forest_text,
     _phase_sentence,
     build_gene_index_page,
     build_gene_pages,
@@ -35,6 +36,7 @@ from chd_atlas.build.profiles import (
     StageProfileEntry,
     TissueProfileEntry,
 )
+from chd_atlas.build.render import Markup
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
@@ -5226,3 +5228,25 @@ def test_both_sentences_that_list_every_cardiac_organ_list_them_in_one_order(
         "No panel is drawn for aorta, atrium, endocardium, epicardium, myocardium, "
         "septum, ventricle:"
     ) in section
+
+
+def test_a_chart_label_refuses_an_anchor_outside_svgs_own_vocabulary() -> None:
+    """The one attribute *value* the chart code builds from a parameter.
+
+    `render.data_table` refuses an attribute *name* rather than escaping it,
+    because `html.escape` rewrites the quotes and leaves the space and the `=`
+    alone -- so a value reaching an attribute position can open a second
+    attribute from a payload carrying no angle bracket. This is that rule one
+    level down.
+
+    Every call site passes a literal, so this is a guard on a bypassed gate
+    (CLAUDE.md section 9): reaching it means a caller derived an attribute
+    value from data, and that must fail rather than publish.
+    """
+    hostile = '"><script>alert(1)</script>'
+    with pytest.raises(ValueError, match="text-anchor"):
+        _forest_text(0.0, 0.0, Markup("x"), anchor=hostile)
+
+    # and the vocabulary it does accept still works
+    for anchor in ("start", "middle", "end"):
+        assert f'text-anchor="{anchor}"' in _forest_text(0.0, 0.0, Markup("x"), anchor=anchor)

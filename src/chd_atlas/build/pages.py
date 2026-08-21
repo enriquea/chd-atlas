@@ -1877,13 +1877,42 @@ def _forest_arrow(x: float, y: float, *, pointing: float, css_class: str) -> str
     )
 
 
-def _forest_text(x: float, y: float, content: str, *, anchor: str) -> str:
-    """One label. `content` is already escaped markup, because a row label
-    carries a `<tspan>` for its union tag and escaping here would publish the
-    tag as literal text."""
+# SVG's own closed vocabulary for `text-anchor`. Named rather than
+# interpolated freely because this is the one *attribute value* the chart code
+# builds from a parameter, and `render.data_table` already records why that is
+# the dangerous shape: `html.escape` rewrites the quote characters and leaves
+# the space and the `=` alone, so a value reaching an attribute outside its
+# quotes opens a second attribute. That primitive *refuses* an attribute name
+# rather than escaping it, for exactly this reason; this is the same rule one
+# level down.
+_TEXT_ANCHORS: Final = frozenset({"start", "middle", "end"})
+
+
+def _forest_text(x: float, y: float, content: Markup, *, anchor: str) -> str:
+    """One label.
+
+    `content` is `Markup` rather than `str`, so the obligation is visible at
+    the call site instead of living in this sentence: a row label carries a
+    `<tspan>` for its union tag, and escaping here would publish the tag as
+    literal text. `render.py` expresses the identical contract the identical
+    way -- taking a bare `str` here was an asymmetry a review named, not a
+    considered difference.
+
+    `anchor` is checked against SVG's own closed set. Every call site passes a
+    literal, so this is a guard on a bypassed gate in `data_table`'s idiom:
+    reaching it means a caller derived an attribute value from data, and that
+    must fail rather than publish. `raise`, never `assert` -- `-O` strips
+    `assert`.
+    """
+    if anchor not in _TEXT_ANCHORS:
+        raise ValueError(
+            f"text-anchor {anchor!r} is not one of {sorted(_TEXT_ANCHORS)}; escaping "
+            f"cannot make an attribute value safe, because a space in one opens a "
+            f"second attribute"
+        )
     return (
         f'<text class="chart-label" x="{coordinate(x)}" '
-        f'y="{coordinate(y + _FOREST_TEXT_DROP)}" text-anchor="{anchor}">{content}</text>'
+        f'y="{coordinate(y + _FOREST_TEXT_DROP)}" text-anchor="{anchor}">{content.html}</text>'
     )
 
 
@@ -1963,10 +1992,12 @@ def _forest_row(row: BurdenRow, index: int, scale: LogScale, *, union: bool) -> 
     # a tag positioned by arithmetic would land on top of the longest labels.
     tag = '<tspan class="chart-union"> union</tspan>' if union else ""
     return (
-        _forest_text(_FOREST_LABEL_X, y, html.escape(label) + tag, anchor="start")
+        _forest_text(_FOREST_LABEL_X, y, Markup(html.escape(label) + tag), anchor="start")
         + _forest_interval(row, y, scale)
         + _forest_estimate(row, y, scale)
-        + _forest_text(_FOREST_STAT_X, y, html.escape(_forest_statistic(row)), anchor="start")
+        + _forest_text(
+            _FOREST_STAT_X, y, Markup(html.escape(_forest_statistic(row))), anchor="start"
+        )
     )
 
 
@@ -2136,9 +2167,9 @@ def _forest(rows: Sequence[BurdenRow], measure: str, study_label: str) -> str:
         _forest_line(_FOREST_PLOT_LEFT, _FOREST_PLOT_RIGHT, axis_y, "chart-axis")
         + f'<line class="chart-axis" x1="{coordinate(null_x)}" y1="{coordinate(top)}" '
         f'x2="{coordinate(null_x)}" y2="{coordinate(axis_y)}"/>'
-        + _forest_text(null_x, top - 6.0, "1", anchor="middle")
-        + _forest_text(_FOREST_PLOT_LEFT, axis_y + 8.0, _fmt(bounds[0]), anchor="start")
-        + _forest_text(_FOREST_PLOT_RIGHT, axis_y + 8.0, _fmt(bounds[1]), anchor="end")
+        + _forest_text(null_x, top - 6.0, Markup("1"), anchor="middle")
+        + _forest_text(_FOREST_PLOT_LEFT, axis_y + 8.0, Markup(_fmt(bounds[0])), anchor="start")
+        + _forest_text(_FOREST_PLOT_RIGHT, axis_y + 8.0, Markup(_fmt(bounds[1])), anchor="end")
         + "".join(
             _forest_row(row, index, scale, union=_is_union(row, kinds))
             for index, row in enumerate(ordered)
