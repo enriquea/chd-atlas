@@ -20,6 +20,7 @@ from chd_atlas.build.emit import Emitter
 from chd_atlas.build.pages import (
     _EM_DASH,
     _SCOPE_RULE,
+    _forest_text,
     _phase_sentence,
     build_gene_index_page,
     build_gene_pages,
@@ -35,6 +36,7 @@ from chd_atlas.build.profiles import (
     StageProfileEntry,
     TissueProfileEntry,
 )
+from chd_atlas.build.render import Markup
 from chd_atlas.build.validity import GeneValidity, ValidityRecord
 from chd_atlas.models.assertion import Evidence, InTextLocator, LesionAssertion
 from chd_atlas.models.cohort import Cohort
@@ -3587,10 +3589,17 @@ def test_the_gloss_never_calls_a_gene_heart_preferential_on_another_organs_peak(
     heart_section = _expression_section_text(_page(tmp_path, "HGNC_11604.html"))
     liver_section = _expression_section_text(_page(tmp_path, "HGNC_4173.html"))
 
-    assert "heart-preferential" in heart_section
-    assert "peaks in Heart" in heart_section
+    # The cardiac argmax names the organ and says it is cardiac. It does NOT
+    # say "preferential": measured over the committed corpus, 445 blocks
+    # carried that adjective and 30 of them sat below tau 0.20 -- TAB2 at
+    # 4 wpc scores 0.046, where heart leads the runner-up by 7% across seven
+    # organs. A negative assertion on built bytes, because the positive one
+    # fails when a sentence is deleted and only this fails when it returns
+    # (CLAUDE.md 4.35).
+    assert "preferential" not in heart_section
+    assert "peaks in Heart at this stage, one of this dataset's cardiac tissues" in heart_section
 
-    assert "heart-preferential" not in liver_section
+    assert "preferential" not in liver_section
     assert "peaks in Liver" in liver_section
     assert "does not treat as a cardiac tissue" in liver_section
 
@@ -3611,7 +3620,7 @@ def test_the_gloss_says_neither_organ_when_the_peak_is_tied(tmp_path: Path) -> N
     )
     section = _expression_section_text(page)
 
-    assert "heart-preferential" not in section
+    assert "preferential" not in section
     assert "peaks in" not in section
     assert "tied" in section
     # Rule 3 still holds in the tied case: the number, its scale and its organ
@@ -5219,3 +5228,25 @@ def test_both_sentences_that_list_every_cardiac_organ_list_them_in_one_order(
         "No panel is drawn for aorta, atrium, endocardium, epicardium, myocardium, "
         "septum, ventricle:"
     ) in section
+
+
+def test_a_chart_label_refuses_an_anchor_outside_svgs_own_vocabulary() -> None:
+    """The one attribute *value* the chart code builds from a parameter.
+
+    `render.data_table` refuses an attribute *name* rather than escaping it,
+    because `html.escape` rewrites the quotes and leaves the space and the `=`
+    alone -- so a value reaching an attribute position can open a second
+    attribute from a payload carrying no angle bracket. This is that rule one
+    level down.
+
+    Every call site passes a literal, so this is a guard on a bypassed gate
+    (CLAUDE.md section 9): reaching it means a caller derived an attribute
+    value from data, and that must fail rather than publish.
+    """
+    hostile = '"><script>alert(1)</script>'
+    with pytest.raises(ValueError, match="text-anchor"):
+        _forest_text(0.0, 0.0, Markup("x"), anchor=hostile)
+
+    # and the vocabulary it does accept still works
+    for anchor in ("start", "middle", "end"):
+        assert f'text-anchor="{anchor}"' in _forest_text(0.0, 0.0, Markup("x"), anchor=anchor)

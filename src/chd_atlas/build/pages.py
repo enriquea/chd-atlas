@@ -1877,13 +1877,42 @@ def _forest_arrow(x: float, y: float, *, pointing: float, css_class: str) -> str
     )
 
 
-def _forest_text(x: float, y: float, content: str, *, anchor: str) -> str:
-    """One label. `content` is already escaped markup, because a row label
-    carries a `<tspan>` for its union tag and escaping here would publish the
-    tag as literal text."""
+# SVG's own closed vocabulary for `text-anchor`. Named rather than
+# interpolated freely because this is the one *attribute value* the chart code
+# builds from a parameter, and `render.data_table` already records why that is
+# the dangerous shape: `html.escape` rewrites the quote characters and leaves
+# the space and the `=` alone, so a value reaching an attribute outside its
+# quotes opens a second attribute. That primitive *refuses* an attribute name
+# rather than escaping it, for exactly this reason; this is the same rule one
+# level down.
+_TEXT_ANCHORS: Final = frozenset({"start", "middle", "end"})
+
+
+def _forest_text(x: float, y: float, content: Markup, *, anchor: str) -> str:
+    """One label.
+
+    `content` is `Markup` rather than `str`, so the obligation is visible at
+    the call site instead of living in this sentence: a row label carries a
+    `<tspan>` for its union tag, and escaping here would publish the tag as
+    literal text. `render.py` expresses the identical contract the identical
+    way -- taking a bare `str` here was an asymmetry a review named, not a
+    considered difference.
+
+    `anchor` is checked against SVG's own closed set. Every call site passes a
+    literal, so this is a guard on a bypassed gate in `data_table`'s idiom:
+    reaching it means a caller derived an attribute value from data, and that
+    must fail rather than publish. `raise`, never `assert` -- `-O` strips
+    `assert`.
+    """
+    if anchor not in _TEXT_ANCHORS:
+        raise ValueError(
+            f"text-anchor {anchor!r} is not one of {sorted(_TEXT_ANCHORS)}; escaping "
+            f"cannot make an attribute value safe, because a space in one opens a "
+            f"second attribute"
+        )
     return (
         f'<text class="chart-label" x="{coordinate(x)}" '
-        f'y="{coordinate(y + _FOREST_TEXT_DROP)}" text-anchor="{anchor}">{content}</text>'
+        f'y="{coordinate(y + _FOREST_TEXT_DROP)}" text-anchor="{anchor}">{content.html}</text>'
     )
 
 
@@ -1963,10 +1992,12 @@ def _forest_row(row: BurdenRow, index: int, scale: LogScale, *, union: bool) -> 
     # a tag positioned by arithmetic would land on top of the longest labels.
     tag = '<tspan class="chart-union"> union</tspan>' if union else ""
     return (
-        _forest_text(_FOREST_LABEL_X, y, html.escape(label) + tag, anchor="start")
+        _forest_text(_FOREST_LABEL_X, y, Markup(html.escape(label) + tag), anchor="start")
         + _forest_interval(row, y, scale)
         + _forest_estimate(row, y, scale)
-        + _forest_text(_FOREST_STAT_X, y, html.escape(_forest_statistic(row)), anchor="start")
+        + _forest_text(
+            _FOREST_STAT_X, y, Markup(html.escape(_forest_statistic(row))), anchor="start"
+        )
     )
 
 
@@ -2136,9 +2167,9 @@ def _forest(rows: Sequence[BurdenRow], measure: str, study_label: str) -> str:
         _forest_line(_FOREST_PLOT_LEFT, _FOREST_PLOT_RIGHT, axis_y, "chart-axis")
         + f'<line class="chart-axis" x1="{coordinate(null_x)}" y1="{coordinate(top)}" '
         f'x2="{coordinate(null_x)}" y2="{coordinate(axis_y)}"/>'
-        + _forest_text(null_x, top - 6.0, "1", anchor="middle")
-        + _forest_text(_FOREST_PLOT_LEFT, axis_y + 8.0, _fmt(bounds[0]), anchor="start")
-        + _forest_text(_FOREST_PLOT_RIGHT, axis_y + 8.0, _fmt(bounds[1]), anchor="end")
+        + _forest_text(null_x, top - 6.0, Markup("1"), anchor="middle")
+        + _forest_text(_FOREST_PLOT_LEFT, axis_y + 8.0, Markup(_fmt(bounds[0])), anchor="start")
+        + _forest_text(_FOREST_PLOT_RIGHT, axis_y + 8.0, Markup(_fmt(bounds[1])), anchor="end")
         + "".join(
             _forest_row(row, index, scale, union=_is_union(row, kinds))
             for index, row in enumerate(ordered)
@@ -2307,6 +2338,10 @@ _PLACEMENT_GAP_CLAUSE: Final[dict[str, str]] = {
     ProfileGap.NO_QUANTILE_GRID.value: (
         "no complete percentile grid is published for this organ at this stage"
     ),
+    ProfileGap.NOT_ON_A_LOG_AXIS.value: (
+        "this atlas placed the measurement and a logarithmic axis has no "
+        "position for it: the median is zero or below"
+    ),
 }
 
 _SPECIFICITY_GAP_CLAUSE: Final[dict[str, str]] = {
@@ -2436,14 +2471,22 @@ def _specificity_sentence(spec: Specificity, cardiac_tissues: frozenset[str]) ->
     measure label, after the same near miss: a bare number under a header that
     does not say what it measures.
 
-    **"Heart-preferential" is gated on `highest_in` being one of this
-    dataset's own declared `cardiac_tissues`, never on tau alone.** tau
-    measures concentration, not location: a gene at heart 20, liver 200, five
-    other organs at 5 scores tau = 0.623 on log2 with `highest_in` = liver, and
-    a gloss keyed on the number alone would call that gene heart-preferential
-    -- the opposite of the truth. Three mutually exclusive endings -- the
-    argmax is cardiac, the argmax is some other organ, or the peak is tied
-    (`highest_in is None`) -- and only the first ever uses that phrase.
+    **It said "Expression is heart-preferential at this stage" until
+    2026-08-21, and that was an adjective this function's own last paragraph
+    already forbade.** The phrase was gated correctly -- on `highest_in` being
+    one of this dataset's declared `cardiac_tissues`, never on tau alone,
+    because tau measures concentration and not location. What it was not
+    gated on was *how much* preference the number supports. Measured over the
+    committed corpus: 445 stage blocks carried it, median tau 0.708, but **65
+    below 0.30, 30 below 0.20 and 16 below 0.15** -- at the extreme, TAB2 at
+    4 wpc with tau 0.046, where heart's 124 leads ovary's 116 and hindbrain's
+    115 across seven organs. A 7% lead is an argmax; "preferential" reads as
+    a finding.
+
+    So the argmax gate stays and the adjective goes. Three mutually exclusive
+    endings -- the argmax is cardiac, the argmax is some other organ, or the
+    peak is tied (`highest_in is None`) -- each naming the organ and leaving
+    the reader to weigh it against the tau printed in the same sentence.
 
     No adjective and no band on the number itself: this function states the
     scale, the organs and the argmax and stops there, never "highly specific"
@@ -2459,8 +2502,8 @@ def _specificity_sentence(spec: Specificity, cardiac_tissues: frozenset[str]) ->
         peak = "No single organ has the highest median at this stage; the peak is tied."
     elif highest in cardiac_tissues:
         peak = (
-            "Expression is heart-preferential at this stage: it peaks in "
-            f"{html.escape(highest)}, one of this dataset's cardiac tissues."
+            f"Expression peaks in {html.escape(highest)} at this stage, one of "
+            "this dataset's cardiac tissues."
         )
     else:
         peak = (
@@ -2715,7 +2758,7 @@ class _Median(NamedTuple):
     position: int
     label: str
     value: float | None
-    gap: str | None
+    gap: ProfileGap | None
 
 
 def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[_Median]:
@@ -2753,7 +2796,16 @@ def _tissue_medians(entry: DatasetProfileEntry, tissue: str) -> list[_Median]:
                     position=index,
                     label=_stage_label(stage),
                     value=plottable if placed else None,
-                    gap=None if placed else measured["not_placed_reason"],
+                    # `or` rather than a bare read: a cell the payload placed
+                    # whose median is `<= 0` carries no `not_placed_reason` by
+                    # `TissueProfileEntry`'s own contract, and would otherwise
+                    # reach `_Median` with neither a value nor a gap -- the one
+                    # pairing its docstring rules out.
+                    gap=(
+                        None
+                        if placed
+                        else (measured["not_placed_reason"] or ProfileGap.NOT_ON_A_LOG_AXIS)
+                    ),
                 )
             )
     return series

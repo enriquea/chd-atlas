@@ -121,7 +121,15 @@ class Dataset(BaseModel):
     # D41. Per dataset, never a constant: a floor of 1.0 is a defensible RPKM
     # convention, is meaningless in `nx`, and is actively wrong in `lfq`, where
     # intensities are log-scale and 0 is a middling abundance.
-    detection_floor: float | None = None
+    # `gt=0` because a floor of zero is not a floor. Without it a curated
+    # `0.0` places a median of `0.0` -- the gate is `median < floor`, and
+    # `0.0 < 0.0` is False -- and that cell then reaches `pages._Median` with
+    # a placement AND no gap reason, which is the one pairing that type's
+    # docstring says cannot happen. Measured: 1,309 of the 18,326 rows in
+    # `mirrors/profiles/E-MTAB-6814.tsv` carry a median of exactly 0.0, so the
+    # only thing that stood between the corpus and a page contradicting its
+    # own table was the curated value being 1.0.
+    detection_floor: float | None = Field(default=None, gt=0)
     floor_source: str | None = None
     quantile_estimator: str | None = None
     publication: Pmid | None = None
