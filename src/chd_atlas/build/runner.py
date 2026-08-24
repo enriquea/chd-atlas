@@ -134,15 +134,31 @@ def _gene_registry(root: Path) -> dict[str, GeneLabels]:
         # had already been validated and were fit to publish.
         if gene is None:
             continue
-        raw = row.get("aliases")
         registry[gene] = GeneLabels(
             symbol=_cell(row.get("symbol")) or gene,
             name=_cell(row.get("name")),
-            aliases=tuple(part.strip() for part in str(raw).split("|") if part.strip())
-            if raw
-            else (),
+            aliases=_pipes(row.get("aliases")),
+            prev_symbols=_pipes(row.get("prev_symbols")),
         )
     return registry
+
+
+def _pipes(raw: object) -> tuple[str, ...]:
+    """One pipe-separated mirror cell as its terms, blanks dropped.
+
+    Shared by `aliases` and `prev_symbols` rather than written twice. The two
+    columns have identical shape and identical failure mode -- handing the raw
+    `str` to `GeneLabels` publishes one search term per *character* -- and
+    `GeneLabels.__post_init__` refuses that for both. A second inline copy is
+    how the two drift, and the one that drifts is the one nobody was looking at.
+
+    Returns `()` for a null, an empty cell, or a cell of only separators, so a
+    caller cannot tell "no aliases" from "the column is absent". Neither should
+    reach a search term, and `TBL001`/`TBL003` are what report the difference.
+    """
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in str(raw).split("|") if part.strip())
 
 
 def _assertions_by_gene(corpus: Corpus) -> dict[str, list[LesionAssertion]]:

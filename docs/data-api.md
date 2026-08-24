@@ -54,7 +54,7 @@ What the build produced, and a checksum for every file in it.
     "genes/index.json": "sha256:<64 hex>",
     "publications.json": "sha256:<64 hex>"
   },
-  "schema_version": "2.12",
+  "schema_version": "2.13",
   "source_commit": "<40-hex commit sha, or null outside a git checkout>",
   "status": "in-development"
 }
@@ -181,6 +181,17 @@ wrong by the next one.
   MINOR by the rule above, because no field is added, removed or reshaped and
   every entry still carries every key `2.11` published; the display obligation
   is real regardless of the letter.
+
+  `2.13` added a gene's **withdrawn** HGNC symbols to its `terms` in
+  [`search/index.json.gz`](#searchindexjsongz). Measured against `2.12`: 35 of
+  the 92 indexed genes gain a term, 46 terms in total, and none of them already
+  named anything else — so a query answered by one gene before is still answered
+  by one gene, and `HOS`, `VEGF` and `HTX1` now find TBX5, VEGFA and ZIC3
+  instead of nothing. MINOR by the rule above: no field is added, removed or
+  reshaped, and `terms` was already a variable-length array no consumer may
+  depend on the length of. **One term now names two records** — `MADH7`,
+  withdrawn by both SMAD6 and SMAD7 — which `terms` already permitted through a
+  shared alias and which a client must present rather than collapse.
 - `status` is the atlas's own readiness, so a program can read it without
   scraping `index.html`'s prose. Today it is always `"in-development"` — one
   curated gene-disease assertion alongside mirrored ClinGen/GenCC validity for
@@ -1281,24 +1292,31 @@ everywhere. Where the two exist side by side they agree; `genes` is the one
 `mirrors/genes.tsv` is the mirror table this site publishes least of, and the
 one most likely to be assumed present. It holds 154 rows — exactly the genes
 ClinGen or GenCC curates within the scope `curation/chd_scope.yaml` declares, of
-which 92 clear the publication gate — across ten columns, and **six of those ten
+which 92 clear the publication gate — across ten columns, and **five of those ten
 reach no published byte at all**: `ensembl_gene`, `ncbi_gene`, `locus`,
 `uniprot` and `mane_select`, each populated on all 154 rows (measured
-2026-08-04), and `prev_symbols`, populated on 56 (measured 2026-08-24). Only
-`hgnc_id`, `symbol`, `name` and `aliases` are published, the last two as `terms`
-in `search/index.json.gz`.
+2026-08-04). `hgnc_id`, `symbol`, `name`, `aliases` and — since `2.13` —
+`prev_symbols` are published, the last three as `terms` in
+`search/index.json.gz`.
 
-**`prev_symbols` is a lookup input, not published content, and the asymmetry is
-deliberate rather than an oversight.** It carries the HGNC symbols a gene has
-had withdrawn, and it exists so that a symbol-keyed source can be joined onto
-HGNC ids in one place — the resolver in `chd_atlas/genes.py`, which ranks an
-approved symbol above a current alias above a retired name. Search does not read
-it: **35 of the 92 published genes hold a retired symbol** (`TBX5`←`HOS`,
-`VEGFA`←`VEGF`, `ZIC3`←`HTX1`, measured 2026-08-24), so a reader searching this
-site for a name a paper used ten years ago finds nothing today. Publishing them
-as `terms` would change `search/index.json.gz` and take a `schema_version` bump;
-it is a separate decision from the join this column was added for, and is
-recorded here rather than left to be noticed.
+**`prev_symbols` was a lookup input only until `2.13`, and this paragraph said
+so.** It carries the HGNC symbols a gene has had withdrawn, and it arrived for
+the join: the resolver in `chd_atlas/genes.py` ranks an approved symbol above a
+current alias above a retired name, so a source still writing an old name lands
+on the right gene. Search did not read it, which meant **35 of the 92 published
+genes held a retired symbol nothing on this site could find** — `TBX5`←`HOS`,
+`VEGFA`←`VEGF`, `ZIC3`←`HTX1`. `2.13` publishes them: 46 terms across those 35
+records, and **zero of them already named anything else in the index**, so no
+query that returned one gene before returns two by accident.
+
+**One does return two, deliberately.** `MADH7` is published on both SMAD6
+(HGNC:6772) and SMAD7 (HGNC:6773), which each retired it — and the resolver
+*refuses* that same symbol rather than picking a gene. The two are not in
+conflict. Resolution asks which single gene a string denotes, where a guess
+attributes one gene's evidence to another; search asks what a reader might be
+looking for, where showing both is the only honest answer. A consumer building
+its own index from `terms` should expect a term to name more than one record,
+as it already could for a shared alias.
 
 So **this API carries no cross-reference to any other identifier space.** A
 consumer that needs an Ensembl gene id, a MANE Select transcript, a UniProt
@@ -1637,6 +1655,20 @@ fraction of a frame.
 - `terms` is the haystack: the strings a visitor might type, deduplicated,
   including each record's own identifier. **Matching is the client's job** —
   this file ships no scoring, no stemming and no ranking.
+
+  For a gene the terms are its approved symbol, its HGNC id, its name, its
+  current aliases and — since `2.13` — the symbols HGNC has **withdrawn** from
+  it, in that order. A withdrawn symbol is what a paper published ten years ago
+  called the gene, and 35 of the 92 indexed genes have one: `HOS` finds TBX5,
+  `VEGF` finds VEGFA, `HTX1` finds ZIC3.
+
+  **A term can name more than one record, and that is not a defect to
+  de-duplicate.** It could already happen through a shared alias; `2.13` adds
+  one live instance — `MADH7`, withdrawn by both SMAD6 and SMAD7, so it is a
+  term on both. Present every hit rather than picking one: this atlas refuses to
+  guess which gene an ambiguous symbol means (see `mirrors/genes.tsv`), and a
+  client that silently kept the first would make that choice on its behalf, with
+  a 50% chance of showing the reader the wrong gene's evidence.
 - `label` is what a result row displays; `id` identifies the thing.
 - `path` is the payload that answers the query.
 - Variants and datasets are not indexed. The variant space grows without bound

@@ -97,15 +97,21 @@ class GeneLabels:
     symbol: str
     name: str | None = None
     aliases: tuple[str, ...] = ()
+    prev_symbols: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if isinstance(self.aliases, str):
-            raise ValueError(
-                f"aliases for {self.symbol} arrived as one string, {self.aliases!r}; a `str` "
-                f"is a sequence of characters, so this would publish "
-                f"{len(set(self.aliases))} single-character search terms. Split the "
-                f"pipe-separated mirror cell before constructing this."
-            )
+        # Both sequence fields, not just the one that had the bug. They are
+        # built from the same pipe-separated mirror cells by the same loop, so
+        # a caller that can forget to split one can forget to split the other,
+        # and a guard on one layer is not a guard (CLAUDE.md section 4.28).
+        for field, value in (("aliases", self.aliases), ("prev_symbols", self.prev_symbols)):
+            if isinstance(value, str):
+                raise ValueError(
+                    f"{field} for {self.symbol} arrived as one string, {value!r}; a `str` "
+                    f"is a sequence of characters, so this would publish "
+                    f"{len(set(value))} single-character search terms. Split the "
+                    f"pipe-separated mirror cell before constructing this."
+                )
 
 
 def _terms(values: Iterable[str]) -> list[str]:
@@ -222,7 +228,21 @@ def build_search(
                 "kind": "gene",
                 "id": gene,
                 "label": labels.symbol,
-                "terms": _terms([labels.symbol, gene, *name, *sorted(labels.aliases)]),
+                # Retired symbols last, after the aliases. `_terms` keeps the
+                # first occurrence of each string, so a name that is both an
+                # alias and a retired name of this gene is published once, in
+                # the alias position -- the same precedence `genes.py` resolves
+                # by, so the search index and the resolver cannot disagree
+                # about which tier a string belongs to.
+                "terms": _terms(
+                    [
+                        labels.symbol,
+                        gene,
+                        *name,
+                        *sorted(labels.aliases),
+                        *sorted(labels.prev_symbols),
+                    ]
+                ),
                 # The NewType is recovered rather than asserted, exactly as
                 # `bundles.py` recovers it over the same population: `published`
                 # is annotated `Collection[str]`, but every member `build_site`

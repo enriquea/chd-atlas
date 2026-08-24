@@ -340,6 +340,58 @@ def test_a_gene_never_repeats_a_term_and_never_publishes_a_blank_one(
     assert records[1]["terms"] == [GATA4]
 
 
+def test_a_withdrawn_symbol_is_searchable_and_may_name_two_genes(tmp_path: Path) -> None:
+    """Schema 2.13. The half that is easy and the half that a tidy-up breaks.
+
+    **The easy half:** a gene's withdrawn HGNC symbols reach `terms`, after its
+    aliases. 35 of the 92 published genes hold one (measured 2026-08-24), so
+    before this a reader typing the name a paper used ten years ago -- `HOS`,
+    `VEGF`, `HTX1` -- got nothing at all from a site that holds the gene.
+
+    Ordering is asserted against a literal list rather than a membership check.
+    `_terms` keeps the *first* occurrence of a string, so where a symbol is both
+    a current alias and a withdrawn name of the same gene it must publish once,
+    in the alias position -- the same precedence `genes.py` resolves by. A
+    membership assertion passes whichever slot it lands in and would let the two
+    disagree about which tier a string belongs to. `POPDC1` below carries
+    `HBVES` in both cells for exactly that reason.
+
+    **The half a tidy-up breaks:** `MADH7` is published on *both* SMAD6 and
+    SMAD7, which each withdrew it -- while `genes.py` **refuses** that symbol,
+    returning `AMBIGUOUS` and no id. Someone reconciling the two would filter
+    ambiguous withdrawn symbols out of the index and make `MADH7` findable
+    nowhere, which serves no reader.
+
+    They are not inconsistent, because they answer different questions.
+    Resolution asks *which single gene does this string denote* -- a guess there
+    attributes one gene's burden evidence to another, which is why it refuses.
+    Search asks *what might this reader be looking for* -- and both genes are a
+    true answer, so both are shown and the reader picks. Pinned here because
+    nothing else would fail if a future change collapsed it.
+    """
+    smad6, smad7 = "HGNC:6772", "HGNC:6773"
+    corpus = _corpus(assertions=(), publications=(), phenotypes=())
+    emitter = Emitter(root=tmp_path)
+
+    build_search(
+        corpus,
+        emitter,
+        genes={
+            TBX5: GeneLabels(
+                symbol="POPDC1", name="popeye 1", aliases=("HBVES",), prev_symbols=("HBVES", "BVES")
+            ),
+            smad6: GeneLabels(symbol="SMAD6", prev_symbols=("MADH7",)),
+            smad7: GeneLabels(symbol="SMAD7", prev_symbols=("MADH7",)),
+        },
+        published={TBX5, smad6, smad7},
+    )
+
+    terms = {record["id"]: record["terms"] for record in _records(tmp_path)}
+    assert terms[TBX5] == ["POPDC1", TBX5, "popeye 1", "HBVES", "BVES"]
+    assert terms[smad6] == ["SMAD6", smad6, "MADH7"]
+    assert terms[smad7] == ["SMAD7", smad7, "MADH7"]
+
+
 def test_only_a_published_gene_is_searchable(tmp_path: Path) -> None:
     """`path` is a promise, and this is the direction that can dangle.
 
@@ -467,5 +519,13 @@ def test_an_unsplit_alias_cell_is_refused_rather_than_indexed_as_characters() ->
     The `type: ignore` below is the point rather than an inconvenience: it defeats
     the annotation deliberately, which is what an `Any` does by accident.
     """
-    with pytest.raises(ValueError, match="single-character search terms"):
+    with pytest.raises(ValueError, match="aliases for TBX5 arrived as one string"):
         GeneLabels(symbol="TBX5", aliases="T-box 5|TBX5B")  # type: ignore[arg-type]
+
+    # `prev_symbols` is built from a sibling cell by the same loop and fails the
+    # same way, so it is guarded and asserted the same way. A guard added to one
+    # layer is not a guard (CLAUDE.md section 4.28), and the field name is
+    # matched rather than the shared tail so a mutant reporting both as
+    # "aliases" fails here rather than passing on a message that reads right.
+    with pytest.raises(ValueError, match="prev_symbols for TBX5 arrived as one string"):
+        GeneLabels(symbol="TBX5", prev_symbols="HOS|TBX5B")  # type: ignore[arg-type]
