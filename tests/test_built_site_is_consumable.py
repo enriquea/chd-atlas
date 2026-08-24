@@ -500,26 +500,49 @@ def test_the_curated_phase_vocabulary_reaches_the_pages_it_is_drawn_on(site: Pat
     * every label drawn is one a curator wrote in
       `curation/cardiac_phases.yaml` — a renderer inventing its own phase
       names would satisfy the first;
-    * the one phase whose end the source never states is banded nowhere.
-      `_banded_phases` refuses it and `CardiacPhaseFile.phases_for` refuses
-      it, and this is the only check that either rule survives the real
-      pipeline rather than a fixture. A band has to run to an edge, so
-      drawing one for `heart_looping` would assert in the encoding a reader
-      takes at a glance the very boundary `end_basis: not_stated` exists to
-      refuse.
+    * the phases banded are **exactly** those whose window a sampled stage
+      falls inside — not a subset, not a superset. This is the only check that
+      the renderer and `CardiacPhaseFile.phases_for` agree over the real
+      corpus rather than over a fixture, and unlike a subset assertion it
+      catches a band that should be drawn and is not.
 
-    Measured 2026-08-20 on the committed corpus: 85 gene pages, 4 bands each,
-    4 distinct labels of the 5 the vocabulary makes eligible.
-    `embryonic_heart_tube_morphogenesis` ends before this dataset's first
-    sampled stage, so it is eligible and unbanded — which is why the labels
-    are asserted as a non-empty subset rather than pinned to a literal set
-    that a second dataset would falsify.
+    **The third assertion used to be "the one phase whose end the source never
+    states is banded nowhere", and it retired on 2026-08-24 rather than being
+    quietly rewritten.** `heart_looping` was that phase; it now carries a
+    `derived` end from GO:0001947's own definition, so **no curated phase is
+    unended** and the assertion had nothing left to range over. It failed
+    loudly rather than passing vacuously, because whoever wrote it put
+    `assert unended, "the third assertion below is vacuous"` above it — and
+    that guard is the only reason this is a paragraph rather than a dead check
+    nobody noticed. The rule itself is unchanged and still tested, at the layer
+    where a fixture can build the state the real pipeline no longer produces:
+    `test_build_pages.py::test_a_phase_the_source_never_ended_bands_nothing`.
+    What is genuinely lost is real-pipeline confirmation of that rule, and it
+    is lost because the corpus stopped containing an instance — not because
+    anyone judged it less important.
+
+    Measured 2026-08-24 on the committed corpus: 85 gene pages, 4 bands each,
+    4 distinct labels out of 6 curated phases. **Two** phases close before this
+    dataset's first sampled stage (4 wpc) and are therefore eligible and
+    unbanded — `embryonic_heart_tube_morphogenesis` ending 3.29 and
+    `heart_looping` ending 3.71. That is why the expected set is computed from
+    the vocabulary and the dataset rather than pinned to a literal that a
+    second dataset would falsify.
     """
-    phases = load_curation(REPO)[0].cardiac_phases
+    corpus = load_curation(REPO)[0]
+    phases = corpus.cardiac_phases
     assert phases is not None, "the committed corpus has no phase vocabulary; fixture is broken"
     curated = {phase.label for phase in phases.phases}
-    unended = {phase.label for phase in phases.phases if phase.end_wpc is None}
-    assert unended, "no unended phase is curated; the third assertion below is vacuous"
+
+    sampled = {
+        stage.wpc
+        for dataset in corpus.datasets
+        for stage in dataset.stages
+        if stage.wpc is not None
+    }
+    assert sampled, "no dataset declares a prenatal stage; the expected set would be empty"
+    expected = {phase.label for wpc in sampled for phase in phases.phases_for(wpc)}
+    assert expected, "no sampled stage falls in any curated phase; this test would assert nothing"
 
     banded: set[str] = set()
     pages_with_a_band = 0
@@ -531,9 +554,10 @@ def test_the_curated_phase_vocabulary_reaches_the_pages_it_is_drawn_on(site: Pat
 
     assert pages_with_a_band, "no page carries a phase band; the vocabulary reached no page"
     assert banded <= curated, f"a band names a phase no curator wrote: {sorted(banded - curated)}"
-    assert banded, "bands were drawn with no phase named in any of them"
-    assert not banded & unended, (
-        f"a phase whose end the source never states is banded: {sorted(banded & unended)}"
+    assert banded == expected, (
+        f"the bands drawn are not the phases the vocabulary places at a sampled stage; "
+        f"drawn but not expected: {sorted(banded - expected)}; "
+        f"expected but not drawn: {sorted(expected - banded)}"
     )
 
 

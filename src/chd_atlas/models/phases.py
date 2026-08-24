@@ -65,32 +65,56 @@ from chd_atlas.duplicates import duplicates
 
 
 class EndBasis(StrEnum):
-    """Whether a phase's `end_wpc` is one of the source's own statements, or absent.
+    """Where a phase's `end_wpc` comes from: the source, an ontology, or nowhere.
 
-    **Two members, not three.** An earlier revision of this vocabulary had a
-    third, `CURATOR_CAPPED`, for a phase the source names no end for --
-    "capped" at the last Carnegie stage the source discusses at all, on the
-    reasoning that the heart "already resembles the postnatal configuration"
-    by then. That statement turned out to describe arterial-pole remodelling,
-    not any of the three processes it was used to cap, and was this atlas
-    inventing a boundary the source never gave -- once for a genuine gap
-    (`heart_looping`) and twice for phases whose real completion had simply
-    not been extracted yet (`ventricular_septum_morphogenesis`,
-    `heart_valve_morphogenesis` -- both now `STATED`, at the source's own
-    words). `CURATOR_CAPPED` is retired rather than kept unused: a vocabulary
-    member no curated phase exercises is a guard nobody has seen fail, and a
-    future phase with a genuinely unknown end should be modelled the way
-    `heart_looping` now is -- `NOT_STATED`, with `end_wpc` left null rather
-    than a boundary invented to fill it.
+    **A retired member first, because the third one below has to be read
+    against it.** An earlier revision had `CURATOR_CAPPED`, for a phase the
+    source names no end for -- "capped" at the last Carnegie stage the source
+    discusses at all, on the reasoning that the heart "already resembles the
+    postnatal configuration" by then. That statement turned out to describe
+    arterial-pole remodelling, not any of the three processes it was used to
+    cap, and was this atlas inventing a boundary the source never gave -- once
+    for a genuine gap (`heart_looping`) and twice for phases whose real
+    completion had simply not been extracted yet
+    (`ventricular_septum_morphogenesis`, `heart_valve_morphogenesis` -- both
+    now `STATED`, at the source's own words). It is retired rather than kept
+    unused: a vocabulary member no curated phase exercises is a guard nobody
+    has seen fail.
 
-    `STATED` means the source names this boundary directly, and every end
-    field (`end_wpc`, `end_carnegie_stage`, `end_hsapdv_id`) is populated.
-    `NOT_STATED` means the source names no end for this process at all, and
-    every end field is `None` -- `CardiacPhase.end_fields_match_end_basis`
-    enforces that the two can never disagree.
+    - `STATED` -- the source names this boundary directly. Every end field
+      (`end_wpc`, `end_carnegie_stage`, `end_hsapdv_id`) is populated.
+    - `DERIVED` -- the boundary is not in the source's prose, but follows from
+      the phase's **own ontology term** plus a boundary this file already
+      carries as `STATED`. Every end field is populated, exactly as for
+      `STATED`, and the two are kept apart so a reader can tell which
+      sentences came from the cited paper and which this atlas concluded.
+    - `NOT_STATED` -- nothing gives an end. Every end field is `None`.
+
+    `CardiacPhase.end_fields_match_end_basis` enforces the pairing in both
+    directions, so the basis and the fields can never disagree.
+
+    **`DERIVED` is not `CURATOR_CAPPED` under a new name, and the difference is
+    the whole reason it is allowed.** `CURATOR_CAPPED` took a statement about a
+    *different* process and applied it to this one; there was no relation
+    between the sentence and the boundary beyond both appearing in the same
+    paper. `DERIVED` requires an actual entailment, and the live case is the
+    only kind that qualifies: GO:0001947 -- the term `heart_looping` already
+    carries in its own `go_id` -- *defines* the process as ending "preceding
+    septation", and this file already dates the start of septation at CS12
+    from the source, `end_basis: stated`. The end is not a guess at what the
+    paper might have meant; it is what the phase's own definition says, read
+    against a boundary already curated here.
+
+    A `DERIVED` end is still weaker than a `STATED` one and must stay
+    visible as such: it inherits every uncertainty of the boundary it is
+    anchored to, and it would move if that anchor moved. A future phase whose
+    end follows from nothing at all is `NOT_STATED`, with `end_wpc` left null
+    rather than a boundary invented to fill it -- that is what this vocabulary
+    exists to make expressible.
     """
 
     STATED = "stated"
+    DERIVED = "derived"
     NOT_STATED = "not_stated"
 
 
@@ -145,19 +169,30 @@ class CardiacPhase(BaseModel):
     def end_fields_match_end_basis(self) -> CardiacPhase:
         """`end_basis` and the three end fields must never disagree.
 
-        `STATED` requires all three (`end_wpc`, `end_carnegie_stage`,
-        `end_hsapdv_id`) to be present; `NOT_STATED` requires all three to be
-        absent. Without this check a curator could write `end_basis: stated`
-        with `end_wpc: null` (a claimed boundary with no number behind it) or
-        `end_basis: not_stated` with a real `end_wpc` (a value this atlas
-        would then treat as unsourced everywhere it matters -- `phases_for`
-        and PRF006's coverage-span merge both key on `end_wpc is None`, not
-        on `end_basis`, so a mismatch here would silently reintroduce exactly
-        the invented-boundary defect `NOT_STATED` exists to rule out).
+        `STATED` and `DERIVED` require all three (`end_wpc`,
+        `end_carnegie_stage`, `end_hsapdv_id`) to be present; `NOT_STATED`
+        requires all three to be absent. Without this check a curator could
+        write `end_basis: stated` with `end_wpc: null` (a claimed boundary
+        with no number behind it) or `end_basis: not_stated` with a real
+        `end_wpc` (a value this atlas would then treat as unsourced everywhere
+        it matters -- `phases_for` and PRF006's coverage-span merge both key
+        on `end_wpc is None`, not on `end_basis`, so a mismatch here would
+        silently reintroduce exactly the invented-boundary defect
+        `NOT_STATED` exists to rule out).
+
+        **The "has an end" test is written as `is not NOT_STATED`, not as a
+        list of the two members that do.** A fourth member added later
+        inherits the requirement by default, so the failure mode of forgetting
+        to extend this check is a phase that *cannot* be curated rather than
+        one that publishes a boundary with nothing behind it. Only
+        `NOT_STATED` may leave the fields empty, and that is the property
+        worth stating positively.
         """
         end_fields = (self.end_wpc, self.end_carnegie_stage, self.end_hsapdv_id)
-        if self.end_basis is EndBasis.STATED and any(field is None for field in end_fields):
-            raise ValueError(f"phase {self.id}: end_basis is stated but an end field is missing")
+        if self.end_basis is not EndBasis.NOT_STATED and any(field is None for field in end_fields):
+            raise ValueError(
+                f"phase {self.id}: end_basis is {self.end_basis.value} but an end field is missing"
+            )
         if self.end_basis is EndBasis.NOT_STATED and any(field is not None for field in end_fields):
             raise ValueError(f"phase {self.id}: end_basis is not_stated but an end field is set")
         return self

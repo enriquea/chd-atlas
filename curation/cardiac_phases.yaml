@@ -60,8 +60,16 @@
 # hole rather than an overlap).
 #
 # ---------------------------------------------------------------------------
-# WHY heart_looping HAS NO end_wpc, AND A CORRECTION TO THIS FILE
+# heart_looping's END: TWO CORRECTIONS, IN OPPOSITE DIRECTIONS
 # ---------------------------------------------------------------------------
+# This section is kept in full because the two mistakes it records point
+# opposite ways, and a reader who sees only one of them will make the other.
+# The first was inventing a boundary. The second was concluding, from the
+# source's silence, that no boundary was available anywhere -- and leaving a
+# real hole in the curated window for five days because of it. Read on; the
+# phase's own comment below carries the boundary that now closes it.
+#
+# THE FIRST CORRECTION (an invented boundary):
 # This file originally capped three phases' ends (heart_looping, ventricular
 # septum morphogenesis, heart valve morphogenesis) at Carnegie stage 23,
 # reasoning from the review's statement that the heart "already resembles
@@ -78,18 +86,45 @@
 # second, targeted query asking specifically for a completion time.
 #
 # Rather than invent a boundary the source does not give, `heart_looping`
-# below carries `end_wpc: null` and `end_basis: not_stated`. Both
-# `CardiacPhaseFile.phases_for` (`models/phases.py`) and the coverage-span
-# merge PRF006 checks (`validate/profiles.py`) exclude any phase with a null
-# `end_wpc` entirely -- it is recorded here, with its real sourced start, but
-# it never appears in a stage's `phase_ids` and never contributes to closing
-# a gap in the curated window. A phase whose end the source does not give
-# must not be asserted as still running at some later stage nothing
-# supports; a missing claim beats a wrong one in this atlas. This is also
-# why PRF006 now finds a real interior gap (2.71-3.29 then 3.71-8.57,
-# leaving 3.29-3.71 uncovered) instead of the seamless window the earlier,
-# invented cap produced -- that gap is a true statement about what this
-# source does and does not say, not a defect in this file.
+# carried `end_wpc: null` and `end_basis: not_stated` from 2026-08-19 to
+# 2026-08-24, and PRF006 reported the interior gap that left: 2.71-3.29 then
+# 3.71-8.57, with 3.29-3.71 (CS11) uncovered. That was a true statement about
+# what this source does and does not say, and it was the right thing to
+# publish while it stood.
+#
+# THE SECOND CORRECTION (a boundary that was available all along):
+#
+# What was wrong was the next inference -- that because the *source* states no
+# end, this atlas had nothing to go on. A literature search on 2026-08-24
+# confirmed the first half thoroughly and refuted the second. Six sources
+# (listed on the phase itself below) state no completion for human cardiac
+# looping; the field describes its onset precisely and its end loosely or not
+# at all. But GO:0001947, the ontology term this phase already carried in its
+# own `go_id`, *defines* looping as ending "preceding septation" -- and this
+# file already dates the start of septation at CS12 from the source's own
+# words. The end was derivable from two things already in this file. Nobody
+# had looked at the definition of the term the phase was annotated with.
+#
+# `heart_looping` therefore now carries `end_wpc: 3.71` / `CS12` /
+# `HsapDv:0000019` with `end_basis: derived` -- a third vocabulary member
+# added for this, kept distinct from `stated` so a reader can tell which
+# boundaries came from the paper and which this atlas concluded. PRF006
+# clears; the curated window is continuous from 2.71 to 8.57.
+#
+# Measured 2026-08-24: **this changed no published byte.** The span it closes,
+# 3.14-3.71, ends before 4 wpc, and this dataset's earliest prenatal stage is
+# 4 wpc, so no published stage falls inside `heart_looping` and none names it.
+# The derived boundary closes a validator gap, not a display one -- which also
+# means it is unexercised in published output today and a second dataset with
+# sub-weekly stages would be the first to render it.
+#
+# The rule the first correction established is unchanged and still governs:
+# a phase whose end nothing gives must not be asserted as still running at a
+# stage nothing supports, and `end_basis: not_stated` with a null `end_wpc`
+# remains how that is expressed. `DERIVED` is not a licence to fill gaps by
+# reasoning -- see `EndBasis` in `models/phases.py` for why an entailment from
+# the phase's own ontology term is a different act from capping a phase at
+# whatever the paper last mentioned.
 attributed_to: "Buijtendijk MFJ, Barnett P, van den Hoff MJB (2020)"
 citation: "PMID:32048790"
 phases:
@@ -111,19 +146,59 @@ phases:
     go_id: "GO:0001947"
     label: "Heart looping"
     # "At the beginning of the fourth week of development (CS10) the straight
-    # heart tube undergoes looping" -- start = CS10's own start. No end is
-    # stated anywhere in the source (confirmed by a targeted second query),
-    # so end_wpc is null rather than invented -- see the header comment.
-    # Excluded from phases_for and from PRF006's coverage-span merge for
-    # exactly that reason: this phase must never be asserted as still
-    # running at a stage the source gives no basis for.
+    # heart tube undergoes looping" -- start = CS10's own start.
+    #
+    # THE END IS DERIVED, NOT STATED. The review names no completion for this
+    # process, and a literature search on 2026-08-24 found none anywhere:
+    # Hikspoors 2022 (PMC8917235) and Hikspoors 2025 (PMC11925143), from the
+    # same group as this file's source, both describe looping through CS11 and
+    # move on at CS12 without ever closing it; Maenner 2024 (PMC11354783), the
+    # specialist review on looping, gives no human completion; StatPearls
+    # (NBK499934) says "eventually, the tube loops"; UNSW Embryology gives
+    # "late in the fourth week to early in the fifth" with no stage. Six
+    # sources: the field states looping's onset precisely and its completion
+    # loosely or not at all.
+    #
+    # The boundary below therefore does not come from any paper's prose. It
+    # comes from the ontology term this phase already carries. GO:0001947's
+    # own definition, verbatim from EBI OLS on 2026-08-24 -- the same service
+    # this file used to verify every go_id above:
+    #
+    #   "The tube morphogenesis process in which the primitive heart tube
+    #    loops asymmetrically. This looping brings the primitive heart
+    #    chambers into alignment preceding their future integration. Heart
+    #    looping begins with dextral-looping and ends when the main regional
+    #    divisions of the mature heart and primordium of the great arterial
+    #    trunks become established preceding septation."
+    #
+    # "ends ... preceding septation" is an endpoint, and this file already
+    # dates the start of septation: atrial_septum_morphogenesis and
+    # ventricular_septum_morphogenesis both begin at CS12 / 3.71 wpc /
+    # HsapDv:0000019, end_basis: stated, from the source's own words. Looping
+    # therefore ends where septation begins, and the three end fields below
+    # are that boundary rather than an independent claim.
+    #
+    # WHY THIS IS NOT `curator_capped` RETURNING. The retired member took a
+    # sentence about a *different* process (arterial-pole remodelling) and
+    # applied it here; the sentence and the boundary were related only by
+    # appearing in one paper. This is an entailment: the phase's own
+    # definition says when it ends, in terms of another phase this file has
+    # already sourced. It is still weaker than a stated end -- it inherits
+    # every uncertainty of the CS12 boundary it is anchored to, and it would
+    # move if that boundary moved -- which is exactly why `end_basis: derived`
+    # exists rather than writing `stated` and losing the distinction.
+    #
+    # Corroborating, though not the basis: Hikspoors 2022 has the loop still
+    # visibly progressing at CS11 ("the loop extends ventrally ... becomes the
+    # more pronounced 'C' loop"), so a boundary earlier than CS12 would
+    # contradict a published description. Nothing found puts it later.
     start_wpc: 3.14
-    end_wpc: null
+    end_wpc: 3.71
     start_carnegie_stage: "CS10"
-    end_carnegie_stage: null
+    end_carnegie_stage: "CS12"
     start_hsapdv_id: "HsapDv:0000017"
-    end_hsapdv_id: null
-    end_basis: not_stated
+    end_hsapdv_id: "HsapDv:0000019"
+    end_basis: derived
 
   - id: atrial_septum_morphogenesis
     go_id: "GO:0060413"
