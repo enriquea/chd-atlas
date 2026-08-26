@@ -326,6 +326,15 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
     to have (TBL003) and the one A38 found unreachable: a visitor typing
     "T-box transcription factor" must find TBX5.
 
+    `prev_symbols` is asserted beside `aliases` since schema 2.13, because it
+    is the second pipe-separated cell the same reader splits and it fails in
+    exactly the same two ways. The expected list pins the **order** as well as
+    the membership: aliases sort among themselves and come first, retired names
+    sort among themselves and follow. That is the precedence `genes.py`
+    resolves by, so the index and the resolver cannot disagree about which tier
+    a string belongs to, and a membership check would pass with the two
+    interleaved.
+
     The row is located by id rather than taken as the first line, and the rest
     of the mirror is left intact. Rewriting the file down to its first row
     worked only while the registry held TBX5 alone; against the 154-gene mirror
@@ -340,16 +349,31 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
     """
     mirror = repo / "mirrors" / "genes.tsv"
     header, *rows = mirror.read_text().splitlines()
-    aliases = header.split("\t").index("aliases")
+    columns = header.split("\t")
+    aliases, previous = columns.index("aliases"), columns.index("prev_symbols")
 
-    def with_aliases(row: str) -> str:
+    def with_names(row: str) -> str:
         cells = row.split("\t")
         if cells[0] != "HGNC:11604":
             return row
         cells[aliases] = "T-box 5|Chr12q24.1"
+        # Set here rather than left at the mirror's own value, so the expected
+        # list below is a fact about this fixture and not about whatever HGNC
+        # last withdrew from TBX5. Two retired names, both distinct from the two
+        # aliases, so the assertion can tell the columns apart -- with one value
+        # each, "read prev_symbols" and "read aliases twice" publish the same
+        # list (CLAUDE.md section 4.36).
+        #
+        # **Written out of sorted order deliberately.** These arrived as
+        # `HOS|HOS2`, which is what the mirror would plausibly hold and is
+        # already sorted -- so dropping the `sorted()` in `search.py` published
+        # the identical list and the mutant survived the whole matrix. A cell
+        # whose own order differs from its sorted order is the only fixture
+        # that can tell a sort from a pass-through.
+        cells[previous] = "HOS2|HOS"
         return "\t".join(cells)
 
-    edited = [with_aliases(row) for row in rows]
+    edited = [with_names(row) for row in rows]
     assert edited != rows, "TBX5 left the registry; this test would assert nothing"
     mirror.write_text("\n".join((header, *edited)) + "\n")
     out = tmp_path / "dist"
@@ -379,6 +403,8 @@ def test_every_gene_label_the_registry_holds_reaches_the_site(repo: Path, tmp_pa
         "T-box transcription factor 5",
         "Chr12q24.1",
         "T-box 5",
+        "HOS",
+        "HOS2",
     ]
 
 
