@@ -7,23 +7,39 @@ from chd_atlas.genes import GeneRegistry, Resolution
 from chd_atlas.issues import Severity
 from chd_atlas.validate.genes import validate_mirror_symbols, validate_symbol_resolution
 
-# Two genes and a third that shares nothing, so every lookup below has a wrong
-# answer available to it. `POPDC1` carries the real registry's own aliases, and
-# `BVES` is deliberately absent from them -- that is the committed state this
-# whole issue is about.
+# Three genes, and no two of them carry the same combination of columns, so a
+# lookup cannot pass by accident: `POPDC1` has both aliases and a retired name,
+# `TBX5` an alias and no retired name, `GATA4` neither. A fixture whose rows all
+# populate the same columns cannot distinguish "read the alias index" from "read
+# the previous index" (CLAUDE.md 4.36).
+#
+# The values are the real registry's, and `POPDC1` is the whole issue in one
+# row: ClinGen labels HGNC:1152 `BVES`, which is **not** among its aliases
+# (`HBVES` is a different string) and **is** its previous symbol.
 _ROWS = (
-    {"hgnc_id": "HGNC:1152", "symbol": "POPDC1", "aliases": "POP1|HBVES"},
-    {"hgnc_id": "HGNC:11604", "symbol": "TBX5", "aliases": "HOS"},
-    {"hgnc_id": "HGNC:4173", "symbol": "GATA4", "aliases": ""},
+    {
+        "hgnc_id": "HGNC:1152",
+        "symbol": "POPDC1",
+        "aliases": "POP1|HBVES",
+        "prev_symbols": "BVES",
+    },
+    {"hgnc_id": "HGNC:11604", "symbol": "TBX5", "aliases": "HOS", "prev_symbols": ""},
+    {"hgnc_id": "HGNC:4173", "symbol": "GATA4", "aliases": "", "prev_symbols": ""},
 )
 
 
-def test_a_symbol_resolves_by_approved_name_then_by_alias() -> None:
-    """Approved wins, an alias resolves, and each says which it was.
+def test_a_symbol_resolves_by_approved_name_then_alias_then_retired_name() -> None:
+    """All three tiers, each reporting which one answered.
 
     The `Resolution` is not decoration. A caller that only got the id back could
     not tell a current symbol from a retired one, and those want different
-    treatment when a source disagrees with the registry about a gene's name.
+    treatment when a source disagrees with the registry about a gene's name --
+    a source still writing `BVES` is using a name HGNC withdrew, which is worth
+    knowing even though the row resolves.
+
+    Each tier is asserted on the gene that *only* that tier can answer for, so
+    a mutant collapsing two indexes into one fails here rather than passing on
+    a row both would have resolved.
     """
     registry = GeneRegistry(_ROWS)
     assert len(registry) == 3
@@ -37,6 +53,12 @@ def test_a_symbol_resolves_by_approved_name_then_by_alias() -> None:
     assert alias.resolution is Resolution.ALIAS
     assert alias.gene == "HGNC:11604"
 
+    retired = registry.resolve("BVES")
+    assert retired.resolution is Resolution.PREVIOUS
+    assert retired.gene == "HGNC:1152"
+    assert retired.ok is True
+    assert retired.candidates == ("HGNC:1152",)
+
     # Surrounding whitespace is a formatting artefact of a source file, not a
     # different gene; a bare dict lookup would miss it and drop the row.
     assert registry.resolve("  TBX5  ").gene == "HGNC:11604"
@@ -45,15 +67,23 @@ def test_a_symbol_resolves_by_approved_name_then_by_alias() -> None:
 def test_an_unknown_symbol_is_reported_and_never_resolved_to_a_guess() -> None:
     """The load-bearing rule: a symbol that maps to nothing must not vanish.
 
-    `BVES` is the live case and the reason this issue exists. ClinGen labels
-    HGNC:1152 `BVES`; `mirrors/genes.tsv` calls it `POPDC1` with aliases
-    `POP1|HBVES` -- and `HBVES` is a *different string*. A symbol-keyed join on
-    `BVES` therefore resolves to nothing, and a build that dropped the row would
-    stay green with the gene simply absent.
+    **`BVES` was this test's subject and is no longer**, which is worth
+    recording rather than quietly rewriting. From 2026-08-06 to 2026-08-24 it
+    was the live case: ClinGen labels HGNC:1152 `BVES`, the mirror called it
+    `POPDC1` with aliases `POP1|HBVES`, and `HBVES` is a *different string*, so
+    a symbol-keyed join on `BVES` resolved to nothing. It resolves now -- via
+    the previous tier, asserted above -- because the mirror gained the
+    `prev_symbols` column that issue #33 asked for and the resolver gained a
+    tier to read it with.
+
+    The rule it guarded is unchanged and still needs a subject, so the subject
+    is a string no tier claims. A gene whose symbol resolves to nothing and is
+    then dropped leaves a green build with the gene simply absent, which is this
+    project's characteristic failure.
     """
     registry = GeneRegistry(_ROWS)
 
-    unknown = registry.resolve("BVES")
+    unknown = registry.resolve("NOSUCHSYMBOL")
     assert unknown.resolution is Resolution.UNKNOWN
     assert unknown.gene is None
     assert unknown.ok is False
@@ -103,6 +133,69 @@ def test_a_symbol_two_genes_claim_is_refused_rather_than_picked() -> None:
     assert resolved.gene == "HGNC:1"
 
 
+def test_a_live_alias_outranks_a_retired_name_and_two_retired_names_are_refused() -> None:
+    """Why previous symbols are a *third* tier and not more entries in the
+    alias map -- the two cases that decide it, both measured on the real
+    registry rather than invented.
+
+    **`ODD` is the reason the tiers are ranked.** It is a current alias of GJA1
+    (HGNC:4274) and the withdrawn name of OSR1 (HGNC:8111), and it is the only
+    string in the committed registry that any two tiers both claim (measured
+    2026-08-24: `approved & alias` and `approved & previous` are empty,
+    `alias & previous` is exactly `{"ODD"}`). Merged into one index it is
+    claimed twice and resolves to nothing; ranked, the live alias wins. HGNC
+    retires a name into `prev_symbol` and leaves current synonyms in
+    `alias_symbol`, so "still in use" beating "formerly official" is the
+    upstream's semantics, not a preference invented here.
+
+    **`MADH7` is the reason precedence never breaks a tie inside a tier.**
+    SMAD6 (HGNC:6772) and SMAD7 (HGNC:6773) both retired it, so it is ambiguous
+    *within* the previous tier and is refused, exactly as an ambiguous alias is.
+
+    **The third case has no live instance and is the one a mutant reaches.** A
+    symbol two genes claim as an alias must not fall through to a third gene's
+    retired name: `resolve` stops at the first tier that claims the name at all,
+    including when that tier claims it twice. Written as separate branches
+    rather than one `len(claimed) == 1` for exactly this, and a fall-through
+    would turn a reportable collision into a confident wrong id -- the failure
+    this module exists to prevent, arriving through the code added to prevent
+    it.
+    """
+    ranked = GeneRegistry(
+        (
+            {"hgnc_id": "HGNC:4274", "symbol": "GJA1", "aliases": "ODD", "prev_symbols": ""},
+            {"hgnc_id": "HGNC:8111", "symbol": "OSR1", "aliases": "", "prev_symbols": "ODD"},
+        )
+    )
+    live = ranked.resolve("ODD")
+    assert live.resolution is Resolution.ALIAS
+    assert live.gene == "HGNC:4274"
+    assert live.candidates == ("HGNC:4274",)
+
+    retired_twice = GeneRegistry(
+        (
+            {"hgnc_id": "HGNC:6772", "symbol": "SMAD6", "aliases": "", "prev_symbols": "MADH7"},
+            {"hgnc_id": "HGNC:6773", "symbol": "SMAD7", "aliases": "", "prev_symbols": "MADH7"},
+        )
+    )
+    refused = retired_twice.resolve("MADH7")
+    assert refused.resolution is Resolution.AMBIGUOUS
+    assert refused.gene is None
+    assert refused.candidates == ("HGNC:6772", "HGNC:6773")
+
+    shadowed = GeneRegistry(
+        (
+            {"hgnc_id": "HGNC:1", "symbol": "AAA", "aliases": "TWICE", "prev_symbols": ""},
+            {"hgnc_id": "HGNC:2", "symbol": "BBB", "aliases": "TWICE", "prev_symbols": ""},
+            {"hgnc_id": "HGNC:3", "symbol": "CCC", "aliases": "", "prev_symbols": "TWICE"},
+        )
+    )
+    stopped = shadowed.resolve("TWICE")
+    assert stopped.resolution is Resolution.AMBIGUOUS
+    assert stopped.gene is None
+    assert stopped.candidates == ("HGNC:1", "HGNC:2")
+
+
 def test_a_row_with_no_id_is_skipped_without_taking_the_registry_with_it() -> None:
     """A blank `hgnc_id` has nothing to key on; every other row still loads."""
     registry = GeneRegistry(({"hgnc_id": "  ", "symbol": "GHOST", "aliases": ""}, *_ROWS))
@@ -114,14 +207,26 @@ def test_a_row_with_no_id_is_skipped_without_taking_the_registry_with_it() -> No
 def test_gen003_reports_a_mirror_symbol_the_registry_cannot_resolve() -> None:
     """The check that fires on the committed data, and what it must not report.
 
-    Three rows, one finding. `POPDC1`/`BVES` is the disagreement; `TBX5` agrees
-    and must stay silent; and HGNC:9999 is a gene the registry does not carry at
-    all, which is **not** a naming disagreement -- `mirrors/genes.tsv` is
-    deliberately narrower than the validity mirrors, and reporting those would
-    bury the one real finding under thousands.
+    Four rows, one finding.
+
+    - `GATA4`/`GATA4-OLD` is a **genuinely stale registry**: a name no tier
+      claims. That is the failure mode GEN003 is for now that a retired symbol
+      resolves on its own.
+    - `POPDC1`/`BVES` **must stay silent**, and it is the case that changed.
+      Until 2026-08-24 this was the finding -- the only one on the committed
+      corpus, and the whole standing warning on the validate baseline. `BVES`
+      now resolves through the previous tier, so a mirror using it is
+      consistent, not stale. Kept as a row here precisely so a mutant deleting
+      the previous tier re-reports it and fails.
+    - `TBX5` agrees outright and must stay silent.
+    - HGNC:9999 is a gene the registry does not carry at all, which is **not** a
+      naming disagreement -- `mirrors/genes.tsv` is deliberately narrower than
+      the validity mirrors, and reporting those would bury the real finding
+      under thousands.
     """
     issues = validate_mirror_symbols(
         (
+            ("HGNC:4173", "GATA4-OLD", "mirrors/clingen_gene_validity.tsv"),
             ("HGNC:1152", "BVES", "mirrors/clingen_gene_validity.tsv"),
             ("HGNC:11604", "TBX5", "mirrors/clingen_gene_validity.tsv"),
             ("HGNC:9999", "NOTINREGISTRY", "mirrors/gencc_submissions.tsv"),
@@ -132,9 +237,47 @@ def test_gen003_reports_a_mirror_symbol_the_registry_cannot_resolve() -> None:
 
     assert [issue.code for issue in issues] == ["GEN003"]
     assert issues[0].severity is Severity.WARNING
-    assert "HGNC:1152" in issues[0].message
-    assert "'BVES'" in issues[0].message
+    assert "HGNC:4173" in issues[0].message
+    assert "'GATA4-OLD'" in issues[0].message
     assert "convert_hgnc.py" in issues[0].message
+
+
+def test_losing_the_prev_symbols_column_brings_gen003_back_rather_than_going_quiet() -> None:
+    """GEN003 is the *second* detector for a vanished column, and independent.
+
+    **The first is `TBL001`, and this docstring claimed otherwise for one
+    revision.** It said a mirror without `prev_symbols` "loads with zero
+    issues", which was measured against `read_table` -- the wrong entry point.
+    `validate_table` is what the repository actually runs, and it reports
+    `TBL001 missing required column 'prev_symbols'` (measured 2026-08-24). A
+    nullable column may hold nulls; it may not be absent. So the column cannot
+    disappear quietly, and the test that would have shipped asserting it can
+    was wrong about its own subject.
+
+    What survives the correction is worth keeping, because the two guards fail
+    for different reasons and neither implies the other. `TBL001` reads the
+    *file* and fires on a header. GEN003 reads the *resolutions* and fires on a
+    consequence -- a symbol our own validity mirrors print that the registry
+    can no longer answer for. A `GeneRegistry` built from rows that never went
+    through `validate_table` (a bypassed gate, which CLAUDE.md section 9 keeps
+    guards for deliberately) reaches the second and not the first.
+
+    The demonstration is the nicest available one: the warning that cleared
+    when this column landed is the warning that comes back if it leaves.
+    Asserted in both directions so a mutant reporting GEN003 unconditionally
+    fails the first half.
+    """
+    stripped = GeneRegistry(
+        tuple({key: value for key, value in row.items() if key != "prev_symbols"} for row in _ROWS)
+    )
+    assert stripped.resolve("BVES").resolution is Resolution.UNKNOWN
+
+    labelled = (("HGNC:1152", "BVES", "mirrors/clingen_gene_validity.tsv"),)
+    assert validate_mirror_symbols(labelled, GeneRegistry(_ROWS), "mirrors/genes.tsv") == []
+
+    reported = validate_mirror_symbols(labelled, stripped, "mirrors/genes.tsv")
+    assert [issue.code for issue in reported] == ["GEN003"]
+    assert "'BVES'" in reported[0].message
 
 
 def test_a_mirror_symbol_naming_a_different_gene_is_reported_as_such() -> None:
@@ -190,7 +333,14 @@ def test_gen001_and_gen002_report_an_unmapped_and_an_ambiguous_symbol() -> None:
     every row would be noise, and the report has to be readable to be read.
     """
     issues = validate_symbol_resolution(
-        (("BVES", "chdgene.csv:row 4"), ("SHARED", "chdgene.csv:row 9"), ("TBX5", "ok")),
+        (
+            ("NOSUCHSYMBOL", "chdgene.csv:row 4"),
+            ("SHARED", "chdgene.csv:row 9"),
+            ("TBX5", "ok"),
+            # Resolvable only through the previous tier, and therefore silent.
+            # A source still writing a withdrawn name is not an unmapped row.
+            ("BVES", "chdgene.csv:row 12"),
+        ),
         GeneRegistry(
             (
                 *_ROWS,

@@ -1281,11 +1281,24 @@ everywhere. Where the two exist side by side they agree; `genes` is the one
 `mirrors/genes.tsv` is the mirror table this site publishes least of, and the
 one most likely to be assumed present. It holds 154 rows — exactly the genes
 ClinGen or GenCC curates within the scope `curation/chd_scope.yaml` declares, of
-which 92 clear the publication gate — across nine columns, and **five of those
-nine reach no published byte at all**: `ensembl_gene`, `ncbi_gene`, `locus`,
+which 92 clear the publication gate — across ten columns, and **six of those ten
+reach no published byte at all**: `ensembl_gene`, `ncbi_gene`, `locus`,
 `uniprot` and `mane_select`, each populated on all 154 rows (measured
-2026-08-04). Only `hgnc_id`, `symbol`, `name` and `aliases` are published, the
-last two as `terms` in `search/index.json.gz`.
+2026-08-04), and `prev_symbols`, populated on 56 (measured 2026-08-24). Only
+`hgnc_id`, `symbol`, `name` and `aliases` are published, the last two as `terms`
+in `search/index.json.gz`.
+
+**`prev_symbols` is a lookup input, not published content, and the asymmetry is
+deliberate rather than an oversight.** It carries the HGNC symbols a gene has
+had withdrawn, and it exists so that a symbol-keyed source can be joined onto
+HGNC ids in one place — the resolver in `chd_atlas/genes.py`, which ranks an
+approved symbol above a current alias above a retired name. Search does not read
+it: **35 of the 92 published genes hold a retired symbol** (`TBX5`←`HOS`,
+`VEGFA`←`VEGF`, `ZIC3`←`HTX1`, measured 2026-08-24), so a reader searching this
+site for a name a paper used ten years ago finds nothing today. Publishing them
+as `terms` would change `search/index.json.gz` and take a `schema_version` bump;
+it is a separate decision from the join this column was added for, and is
+recorded here rather than left to be noticed.
 
 So **this API carries no cross-reference to any other identifier space.** A
 consumer that needs an Ensembl gene id, a MANE Select transcript, a UniProt

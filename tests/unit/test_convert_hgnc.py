@@ -13,14 +13,68 @@ from scripts.convert_hgnc import convert
 
 _HEADER = (
     "hgnc_id\tsymbol\tname\talias_symbol\tensembl_gene_id\tentrez_id\t"
-    "location\tuniprot_ids\tmane_select\tstatus"
+    "location\tuniprot_ids\tmane_select\tstatus\tprev_symbol"
 )
+_WIDTH = _HEADER.count("\t") + 1
 
 
 def _source(tmp_path: Path, *rows: str) -> Path:
+    """The fixture source file, padding a row that declares no previous symbol.
+
+    `prev_symbol` is last in `_HEADER` and every row here predates it, so a row
+    one field short means "this gene has no retired name" rather than a typo.
+    Padded rather than spelled out on each row because `convert` selects
+    columns by name; the position carries no meaning and a trailing tab on four
+    unrelated fixtures would just be noise. **Only one field of slack** -- a row
+    two short is a mistake and raises here rather than silently mirroring a
+    shifted value.
+    """
+    padded: list[str] = []
+    for row in rows:
+        missing = _WIDTH - (row.count("\t") + 1)
+        if missing not in (0, 1):
+            raise ValueError(f"row has {_WIDTH - missing} of {_WIDTH} fields: {row!r}")
+        padded.append(row + "\t" * missing)
     path = tmp_path / "hgnc.tsv"
-    path.write_text("\n".join((_HEADER, *rows)) + "\n", encoding="utf-8")
+    path.write_text("\n".join((_HEADER, *padded)) + "\n", encoding="utf-8")
     return path
+
+
+def test_a_retired_symbol_is_mirrored_verbatim_and_never_folded_into_aliases(tmp_path):
+    """`prev_symbols` is the column issue #33 asked for and the reason the
+    standing `GEN003` on HGNC:1152 could not be cleared by regenerating the
+    mirror: `BVES` is that gene's *previous* symbol, and the converter read
+    `alias_symbol` alone.
+
+    Two genes rather than one, because a fixture whose rows all carry the same
+    shape cannot tell "copied the column" from "copied every column"
+    (CLAUDE.md 4.36). One gene retires two names, so the pipe survives; the
+    other retires none, so the null does.
+
+    The `aliases` assertions are the load-bearing half. `genes.py` ranks a live
+    alias *above* a retired name, and that precedence is what makes `ODD`
+    resolve to GJA1 rather than to nothing -- a converter that merged the two
+    columns would erase the distinction upstream of the module that depends on
+    it, and every resolution test would still pass.
+    """
+    source = _source(
+        tmp_path,
+        "HGNC:1152\tPOPDC1\tpopeye domain cAMP effector 1\tPOP1|HBVES\tENSG00000112276\t"
+        '11149\t6q21\tQ8NE79\t"ENST00000265242.9|NM_001199563.2"\tApproved\tBVES|POPDC',
+        "HGNC:11604\tTBX5\tT-box transcription factor 5\t\tENSG00000089225\t6910\t"
+        '12q24.21\tQ99593\t"ENST00000405440.7|NM_181486.4"\tApproved',
+    )
+    out = tmp_path / "genes.tsv"
+    convert(source, out, keep={"HGNC:1152", "HGNC:11604"})
+
+    rows = {
+        row["hgnc_id"]: row
+        for row in pl.read_csv(out, separator="\t", infer_schema_length=0).iter_rows(named=True)
+    }
+    assert rows["HGNC:1152"]["prev_symbols"] == "BVES|POPDC"
+    assert rows["HGNC:1152"]["aliases"] == "POP1|HBVES"
+    assert rows["HGNC:11604"]["prev_symbols"] is None
+    assert rows["HGNC:11604"]["aliases"] is None
 
 
 def test_the_refseq_half_of_mane_select_is_kept_and_the_ensembl_half_dropped(tmp_path):

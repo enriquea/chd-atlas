@@ -36,6 +36,33 @@ two sets and **zero** aliases claimed by more than one gene -- but the guard is
 structural rather than a bet on that staying true, because the registry is
 regenerated from upstream and the number that matters is the one after the next
 refresh.
+
+**Three tiers, not two: approved, then alias, then previous.** `prev_symbols`
+arrived with the mirror column of the same name; before it this module could
+not resolve a retired name at all, which is what left `BVES` unresolvable while
+ClinGen used it (the standing `GEN003`). Measured over the regenerated registry
+on 2026-08-24 -- 154 approved, 309 alias, **69 distinct** previous symbols
+across 56 genes:
+
+- `approved & alias` and `approved & previous` are both **empty**.
+- `alias & previous` holds exactly one string, **`ODD`**: a live alias of GJA1
+  (HGNC:4274) and the retired name of OSR1 (HGNC:8111). It is the whole reason
+  the previous symbols are a *third* tier rather than more entries in the alias
+  map. Merged, `ODD` is claimed twice and resolves to nothing; ranked, the live
+  alias wins, which is what a source writing `ODD` today means. HGNC retires a
+  name into `prev_symbol` and leaves the live synonyms in `alias_symbol`, so
+  "currently used" beating "formerly official" is the upstream's own semantics
+  rather than a preference invented here.
+- **`MADH7`** is claimed by two genes *within* the previous tier -- SMAD6
+  (HGNC:6772) and SMAD7 (HGNC:6773) both retired it -- and is refused, exactly
+  as an ambiguous alias would be. Precedence resolves *between* tiers; it never
+  breaks a tie inside one.
+
+**A tier is consulted only when every tier above it is silent, and an ambiguous
+tier stops the search.** A symbol two genes claim as an alias must not be
+quietly answered by some third gene's retired name: that would turn a reportable
+collision into a confident wrong id, which is the failure this module exists to
+prevent.
 """
 
 from __future__ import annotations
@@ -52,7 +79,22 @@ class Resolution(StrEnum):
     """The symbol is some gene's current HGNC-approved symbol."""
 
     ALIAS = "alias"
-    """The symbol is an alias or previous symbol of exactly one gene."""
+    """The symbol is a current alias of exactly one gene.
+
+    **Aliases only.** This docstring read "an alias or previous symbol" while
+    the registry carried no previous symbols at all, so it described a tier
+    that did not exist and would have been the natural place to merge them
+    when one did -- see `PREVIOUS` for why they are ranked instead.
+    """
+
+    PREVIOUS = "previous"
+    """The symbol is the retired HGNC symbol of exactly one gene, and no gene
+    claims it as an approved symbol or a current alias.
+
+    Ranked below `ALIAS` rather than merged into it, on the module docstring's
+    measurement: `ODD` is GJA1's live alias and OSR1's retired name, and only
+    an ordering answers it.
+    """
 
     UNKNOWN = "unknown"
     """No gene in the registry claims this symbol. Report it; do not drop the row."""
@@ -90,16 +132,20 @@ class GeneRegistry:
     `validate_scope_terms` and `validate_source_references` have, and what lets
     it be tested without a filesystem.
 
-    **Approved symbols win over aliases, and the precedence is not a tie-break
-    to be tidied away.** HGNC retires a symbol by making it a *previous* symbol
-    of the gene that kept the name, so a string that is one gene's approved
-    symbol and another's alias names the first gene today. Resolving to the
-    alias would attribute a row to a gene the source did not mean.
+    **Approved symbols win over aliases, which win over previous symbols, and
+    the precedence is not a tie-break to be tidied away.** HGNC retires a symbol
+    by making it a *previous* symbol of the gene that kept the name, so a string
+    that is one gene's approved symbol and another's alias names the first gene
+    today. Resolving to the alias would attribute a row to a gene the source did
+    not mean. The same argument one rung down puts a live alias ahead of a
+    retired name -- see the module docstring, where the one string this actually
+    decides (`ODD`) is named and measured.
     """
 
     def __init__(self, rows: Iterable[Mapping[str, object]]) -> None:
         approved: dict[str, str] = {}
         aliases: dict[str, set[str]] = {}
+        previous: dict[str, set[str]] = {}
         for row in rows:
             gene = _text(row.get("hgnc_id"))
             if gene is None:
@@ -111,12 +157,14 @@ class GeneRegistry:
             symbol = _text(row.get("symbol"))
             if symbol is not None:
                 approved[symbol] = gene
-            raw = _text(row.get("aliases"))
-            for alias in (part.strip() for part in (raw or "").split("|")):
-                if alias:
-                    aliases.setdefault(alias, set()).add(gene)
+            for column, index in (("aliases", aliases), ("prev_symbols", previous)):
+                raw = _text(row.get(column))
+                for name in (part.strip() for part in (raw or "").split("|")):
+                    if name:
+                        index.setdefault(name, set()).add(gene)
         self._approved = approved
         self._aliases = aliases
+        self._previous = previous
 
     def __len__(self) -> int:
         return len(self._approved)
@@ -131,7 +179,16 @@ class GeneRegistry:
         return tuple(sorted(self._approved))
 
     def resolve(self, symbol: str) -> Resolved:
-        """One symbol, resolved or reported. Never guesses, never raises."""
+        """One symbol, resolved or reported. Never guesses, never raises.
+
+        Walks the three tiers in order and **stops at the first that claims the
+        name at all** -- including when that tier claims it twice. Falling
+        through an ambiguous tier to a quieter one below would answer `MADH7`
+        (SMAD6 and SMAD7 both retired it) with whichever gene happened to hold
+        it further down, turning a reportable collision into a confident wrong
+        id. The empty-tier check and the ambiguity check are therefore separate
+        branches, not one `len(claimed) == 1`.
+        """
         name = symbol.strip()
         if not name:
             return Resolved(symbol=symbol, resolution=Resolution.UNKNOWN)
@@ -140,17 +197,22 @@ class GeneRegistry:
             return Resolved(
                 symbol=name, resolution=Resolution.APPROVED, gene=gene, candidates=(gene,)
             )
-        claimed = self._aliases.get(name)
-        if not claimed:
-            return Resolved(symbol=name, resolution=Resolution.UNKNOWN)
-        if len(claimed) > 1:
-            return Resolved(
-                symbol=name,
-                resolution=Resolution.AMBIGUOUS,
-                candidates=tuple(sorted(claimed)),
-            )
-        only = next(iter(claimed))
-        return Resolved(symbol=name, resolution=Resolution.ALIAS, gene=only, candidates=(only,))
+        for index, resolution in (
+            (self._aliases, Resolution.ALIAS),
+            (self._previous, Resolution.PREVIOUS),
+        ):
+            claimed = index.get(name)
+            if not claimed:
+                continue
+            if len(claimed) > 1:
+                return Resolved(
+                    symbol=name,
+                    resolution=Resolution.AMBIGUOUS,
+                    candidates=tuple(sorted(claimed)),
+                )
+            only = next(iter(claimed))
+            return Resolved(symbol=name, resolution=resolution, gene=only, candidates=(only,))
+        return Resolved(symbol=name, resolution=Resolution.UNKNOWN)
 
 
 def _text(value: object) -> str | None:

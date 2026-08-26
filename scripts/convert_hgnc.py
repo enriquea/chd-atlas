@@ -16,6 +16,21 @@ registry is deliberately wider than what the site publishes (23 genes under
 D21), because it is a lookup table rather than published content: widening the
 gate later must not require re-mirroring.
 
+`prev_symbols` is a straight copy of HGNC's `prev_symbol`, and it is the
+column #33 asked for and this script did not have. HGNC retires a name by
+moving it from `symbol` to `prev_symbol`, and essentially never to
+`alias_symbol` -- measured over the whole 2026-07-31 complete set, 3 of 15,882
+previous symbols are also listed as an alias of the same gene. So a mirror
+carrying aliases alone cannot resolve a source still using an old name.
+Measured the same day: 56 of the 154
+in-scope genes hold a previous symbol -- 70 entries, 69 distinct, the
+repeat being `MADH7` which SMAD6 and SMAD7 both retired -- and exactly one of
+those (`BVES`, HGNC:1152) is already named by a committed mirror that the
+registry could not resolve -- the standing `GEN003`. Copied verbatim, pipes
+and all, exactly as `aliases` is: `genes.py` owns the precedence between the
+two, and a converter that pre-merged them would destroy the distinction that
+precedence turns on.
+
 Two columns need a rule, and both were measured against the live file rather
 than assumed:
 
@@ -50,6 +65,7 @@ _COLUMNS: dict[str, str] = {
     "symbol": "symbol",
     "name": "name",
     "alias_symbol": "aliases",
+    "prev_symbol": "prev_symbols",
     "ensembl_gene_id": "ensembl_gene",
     "entrez_id": "ncbi_gene",
     "location": "locus",
@@ -64,6 +80,7 @@ _ORDER = (
     "symbol",
     "name",
     "aliases",
+    "prev_symbols",
     "ensembl_gene",
     "ncbi_gene",
     "locus",
@@ -107,6 +124,7 @@ def convert(source: Path, out: Path, keep: Collection[str]) -> int:
             pl.col("symbol"),
             pl.col("name"),
             pl.col("alias_symbol").alias("aliases"),
+            pl.col("prev_symbol").alias("prev_symbols"),
             pl.col("ensembl_gene_id").alias("ensembl_gene"),
             pl.col("entrez_id").alias("ncbi_gene"),
             pl.col("location").alias("locus"),
