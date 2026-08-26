@@ -19,12 +19,23 @@ time. Only duplicate ids are still rejected.
 
 **A phase may also have no stated end at all, and this file used to invent
 one.** An earlier revision capped every open-ended phase at a curator-chosen
-boundary (`end_basis: curator_capped`); that concept is retired --
-`EndBasis` now has exactly two members, `STATED` and `NOT_STATED` -- because
-two of the three phases originally capped turned out to have a real, stated
-end the first extraction missed, and the third (`heart_looping`, still
-open-ended for real) must never be asserted as running at a stage the source
-gives no basis for. `_open_phase()` below builds that shape.
+boundary (`end_basis: curator_capped`); that concept is retired, because two
+of the three phases originally capped turned out to have a real, stated end
+the first extraction missed, and the third (`heart_looping`) must never be
+asserted as running at a stage nothing gives a basis for.
+
+`EndBasis` has **three** members since 2026-08-24 -- `STATED`, `DERIVED` and
+`NOT_STATED`. `DERIVED` was added for `heart_looping`, whose end follows from
+GO:0001947's own definition ("ends ... preceding septation") read against a
+septation boundary this file already carries as `STATED`. It is deliberately
+*not* `curator_capped` returning: that took a sentence about a different
+process, this is an entailment from the phase's own ontology term. See
+`EndBasis` in `models/phases.py`, where the distinction is argued in full.
+
+**No curated phase is `NOT_STATED` any more**, and the member is kept and
+exercised here on fixtures precisely for that reason -- `_open_phase()` below
+builds that shape, so the rule survives the corpus no longer containing an
+instance of it.
 """
 
 from __future__ import annotations
@@ -244,11 +255,16 @@ def test_end_basis_distinguishes_a_stated_end_from_a_not_stated_one() -> None:
     assert stated.end_basis is not open_ended.end_basis
 
 
-def test_end_basis_rejects_a_value_outside_the_two_member_vocabulary() -> None:
-    """A closed vocabulary: 'stated' and 'not_stated' are the only two facts
-    a boundary can be, and a third spelling (a typo, the retired
+def test_end_basis_rejects_a_value_outside_the_vocabulary() -> None:
+    """A closed vocabulary: 'stated', 'derived' and 'not_stated' are the only
+    three facts a boundary can be, and a fourth spelling (a typo, the retired
     'curator_capped', or a future value nobody has designed yet) must not
     silently pass through as a string.
+
+    `curator_capped` is named explicitly rather than left to the generic case.
+    It is the one rejected value that was once *valid* here, so it is the one a
+    stale YAML file or an old branch could actually carry -- and the one whose
+    meaning `DERIVED` is closest to and must not be confused with.
     """
     with pytest.raises(ValidationError):
         _phase("a", 1.0, 2.0, end_basis="estimated")
@@ -256,15 +272,28 @@ def test_end_basis_rejects_a_value_outside_the_two_member_vocabulary() -> None:
         _phase("a", 1.0, 2.0, end_basis="curator_capped")
 
 
+@pytest.mark.parametrize("basis", [EndBasis.STATED, EndBasis.DERIVED])
 @pytest.mark.parametrize("missing_field", ["end_wpc", "end_carnegie_stage", "end_hsapdv_id"])
-def test_end_basis_stated_requires_every_end_field(missing_field: str) -> None:
-    """`end_basis: stated` with an end field left `None` is a claimed boundary
-    with no number behind it -- caught for each end field independently, so a
-    guard checking only `end_wpc` cannot silently let the other two drift.
+def test_a_basis_that_claims_an_end_requires_every_end_field(
+    missing_field: str, basis: EndBasis
+) -> None:
+    """An `end_basis` that claims a boundary, with an end field left `None`, is
+    a claimed boundary with no number behind it -- caught for each end field
+    independently, so a guard checking only `end_wpc` cannot silently let the
+    other two drift.
 
-    Built from an explicit, fully-STATED dict rather than through `_phase()`
-    -- `_phase()` binds `end_wpc` positionally, which collides with also
-    overriding it by keyword when `missing_field == "end_wpc"`.
+    **Parametrised over the basis, not just `STATED`, and that is the point.**
+    `end_fields_match_end_basis` is written as `is not NOT_STATED` rather than
+    as a list of the members that do require fields, precisely so a member
+    added later inherits the requirement. Measured 2026-08-24: reverting it to
+    `is EndBasis.STATED` -- which is what it said before `DERIVED` existed --
+    passed the whole suite. The defensive phrasing was itself unguarded
+    (CLAUDE.md section 4.40), and only a case that exercises the non-`STATED`
+    branch can tell the two spellings apart.
+
+    Built from an explicit dict rather than through `_phase()` -- `_phase()`
+    binds `end_wpc` positionally, which collides with also overriding it by
+    keyword when `missing_field == "end_wpc"`.
     """
     fields: dict[str, object] = {
         "id": "a",
@@ -276,7 +305,7 @@ def test_end_basis_stated_requires_every_end_field(missing_field: str) -> None:
         "end_carnegie_stage": "CS2",
         "start_hsapdv_id": "HsapDv:0000001",
         "end_hsapdv_id": "HsapDv:0000002",
-        "end_basis": EndBasis.STATED,
+        "end_basis": basis,
     }
     fields[missing_field] = None
     with pytest.raises(ValidationError, match="end field is missing"):
@@ -376,19 +405,51 @@ def test_the_committed_phase_vocabulary_loads_and_matches_the_verified_table() -
     assert basis["outflow_tract_septum_morphogenesis"] is EndBasis.STATED
     assert basis["ventricular_septum_morphogenesis"] is EndBasis.STATED
     assert basis["heart_valve_morphogenesis"] is EndBasis.STATED
-    assert basis["heart_looping"] is EndBasis.NOT_STATED
+    assert basis["heart_looping"] is EndBasis.DERIVED
 
     by_id = {phase.id: phase for phase in parsed.phases}
-    assert by_id["heart_looping"].end_wpc is None
     assert by_id["heart_looping"].start_wpc == pytest.approx(3.14)
+    # The derived end, pinned against literals rather than read back from the
+    # septation phase it is anchored to. Anchoring the assertion the same way
+    # the value is anchored would pass for any pair that happened to agree,
+    # including both being wrong together; these three numbers are what
+    # `curation/cardiac_phases.yaml` must actually publish.
+    assert by_id["heart_looping"].end_wpc == pytest.approx(3.71)
+    assert by_id["heart_looping"].end_carnegie_stage == "CS12"
+    assert by_id["heart_looping"].end_hsapdv_id == "HsapDv:0000019"
+    # ...and they are the same boundary septation starts at, which is the
+    # entailment `end_basis: derived` records. Asserted as an equality so the
+    # two cannot drift apart silently: if a curator moves septation's start,
+    # this fails rather than leaving looping ending where nothing begins.
+    assert by_id["heart_looping"].end_wpc == by_id["atrial_septum_morphogenesis"].start_wpc
     assert by_id["ventricular_septum_morphogenesis"].end_wpc == pytest.approx(7.29)
     assert by_id["heart_valve_morphogenesis"].end_wpc == pytest.approx(8.57)
 
-    # heart_looping's own stated start (3.14) is the wpc where its exclusion
-    # is closest to mattering -- it still must not appear, even here; only
-    # embryonic_heart_tube_morphogenesis (whose own window, [2.71, 3.29),
-    # already contains 3.14) is a real match.
-    assert [phase.id for phase in parsed.phases_for(3.14)] == ["embryonic_heart_tube_morphogenesis"]
+    # heart_looping now *does* match, and this assertion is the one that
+    # changed when its end became derived rather than absent. Through
+    # 2026-08-24 it read `== ["embryonic_heart_tube_morphogenesis"]`, because a
+    # phase with a null `end_wpc` is excluded at every wpc including its own
+    # start. With an end it participates, and 3.14 is the wpc where that is
+    # most visible: both phases genuinely contain it, since
+    # embryonic_heart_tube_morphogenesis runs [2.71, 3.29) and heart_looping
+    # runs [3.14, 3.71). The overlap is real biology, not a transcription
+    # error -- see the header of `curation/cardiac_phases.yaml`.
+    assert [phase.id for phase in parsed.phases_for(3.14)] == [
+        "embryonic_heart_tube_morphogenesis",
+        "heart_looping",
+    ]
+
+    # The two ends of heart_looping's own window, because a half-open interval
+    # is exactly where an off-by-one hides and neither bound is checked above.
+    # Just inside its end, it is the only match -- the heart tube closed at
+    # 3.29. Exactly at its end it is gone and septation has begun, which is
+    # the entailment `derived` encodes: the two phases meet at 3.71 with no
+    # gap and no overlap.
+    assert [phase.id for phase in parsed.phases_for(3.70)] == ["heart_looping"]
+    assert [phase.id for phase in parsed.phases_for(3.71)] == [
+        "atrial_septum_morphogenesis",
+        "ventricular_septum_morphogenesis",
+    ]
     assert [phase.id for phase in parsed.phases_for(4.0)] == [
         "atrial_septum_morphogenesis",
         "ventricular_septum_morphogenesis",

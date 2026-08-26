@@ -93,19 +93,24 @@ def validate_mirror_symbols(
     carries in both columns, so this is a *self-consistency* check on data that
     is already keyed correctly rather than a join.
 
-    **GEN003 exists because the registry goes stale and nothing else notices.**
-    Measured 2026-08-14 against the committed mirrors: `mirrors/genes.tsv`
-    records HGNC:1152 as `POPDC1` with aliases `POP1|HBVES`, while ClinGen labels
-    the same gene `BVES` -- and `BVES` is not among those aliases (`HBVES` is a
-    different string). Nothing published is wrong today, because every join in
-    this repository already keys on the id. But a symbol-keyed source naming
-    `BVES` would resolve to nothing and the gene would vanish silently, which is
-    the exact failure #33 exists to prevent, sitting in committed data.
+    **GEN003 exists because the registry goes stale and nothing else notices,
+    and its first finding was not staleness at all.** From 2026-08-06 to
+    2026-08-24 it stood on HGNC:1152: `mirrors/genes.tsv` recorded `POPDC1`
+    with aliases `POP1|HBVES` while ClinGen labelled the same gene `BVES`, and
+    `BVES` was not among those aliases (`HBVES` is a different string). The
+    mirror was **current**. `BVES` is HGNC:1152's *previous* symbol, the
+    converter read `alias_symbol` and nothing else, and the mirror had no
+    column to hold a retired name -- so the recorded remedy, "regenerate the
+    registry", reproduced the same row byte-for-byte and the warning survived
+    every refresh. It cleared when `prev_symbols` and this module's third
+    resolution tier landed, not when anyone re-ran the converter.
 
-    The remedy is a curator regenerating the mirror with
-    `scripts/convert_hgnc.py` -- HGNC renames genes and `aliases` is where the
-    old and new names are supposed to meet. Design decision D6 keeps that a
-    human action rather than something a build does, so this reports and stops.
+    Kept, because the failure mode it was written for is real and now
+    reachable: a mirror that genuinely lags upstream. A symbol-keyed source
+    naming a symbol the registry cannot resolve would drop the gene silently,
+    which is the exact failure #33 exists to prevent. Design decision D6 keeps
+    regeneration a human action rather than something a build does, so this
+    reports and stops.
 
     A symbol resolving to a *different* gene is the serious case and is reported
     the same way rather than more loudly, because it is not reachable from a

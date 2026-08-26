@@ -344,7 +344,36 @@ from chd_atlas.corpus import Corpus
 # *set* is unchanged and every `wpc` is unchanged; the sequence is not. It was
 # first recorded as "gained exactly one key, with identical stage tokens",
 # which is true of the set and false of the order (CLAUDE.md section 4.24).
-SCHEMA_VERSION: Final = "2.12"
+# ---------------------------------------------------------------------------
+# 2.13 -- a gene's retired HGNC symbols become search terms.
+#
+# `mirrors/genes.tsv` gained `prev_symbols` with issue #33, for the join: the
+# resolver in `chd_atlas/genes.py` needs it so a source still writing a
+# withdrawn name lands on the right gene. That change published nothing. This
+# one does -- `search/index.json.gz` now carries those symbols in a gene
+# record's `terms`.
+#
+# MINOR, by the same rule as 2.2's population change and 2.12's reordering: no
+# field is added, removed or reshaped, every record still carries every key
+# 2.12 published, and `terms` was already a variable-length array of strings a
+# consumer must not depend on the length of.
+#
+# Measured over the committed corpus, one real build against the previous one:
+# 35 of the 92 published gene records gain a term, 46 terms in total, and
+# **zero** of them already named anything else in the index -- so no query that
+# returned one gene before now returns two by accident. `TBX5` gains `HOS`,
+# `VEGFA` gains `VEGF`, `ZIC3` gains `HTX1`.
+#
+# **One term is deliberately published on two genes: `MADH7`, on SMAD6
+# (HGNC:6772) and SMAD7 (HGNC:6773), which both retired it.** `genes.py`
+# *refuses* that symbol -- `Resolution.AMBIGUOUS`, no id -- and the two are not
+# in conflict, because they answer different questions. The resolver is asked
+# "which single gene does this string denote?", where guessing attributes one
+# gene's evidence to another. Search is asked "what might this reader be looking
+# for?", where showing both is the only honest answer and the reader picks.
+# Filtering ambiguous retired symbols out of the index to make the two agree
+# would make `MADH7` unfindable, which serves nobody.
+SCHEMA_VERSION: Final = "2.13"
 
 # What `status` publishes today. A literal rather than something derived from
 # the corpus, unlike every field in `counts`: there is no measurement of "is
